@@ -1,0 +1,21 @@
+# Build / package artifacts
+build/
+dist/
+*.egg-info/
+ascendc/_work/
+ascendc/dist/
+# 统一产物目录（OPP .run + whl）
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+
+# Editor / OS
+.DS_Store
+*.swp
+.vscode/
+.idea/
+test_result/
