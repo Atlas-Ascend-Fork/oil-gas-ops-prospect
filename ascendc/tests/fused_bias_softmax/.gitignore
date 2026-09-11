@@ -1,0 +1,5 @@
+# 调试/测试临时产物
+mindstudio_sanitizer_log/
+__pycache__/
+*.so
+build/

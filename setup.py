@@ -32,6 +32,40 @@ except ImportError:
     TORCH_NPU_PATH = Path(torch.__file__).parent / ".." / "torch_npu"
 
 
+def _fused_bias_softmax_extension():
+    """pybind 扩展 fused_bias_softmax_npu：直连 aclnnFusedBiasSoftmaxOg / aclnnFusedSoftmaxGradOg。"""
+    if os.environ.get("OIL_GAS_OPS_SKIP_EXT", "0") == "1":
+        return []
+
+    cpp = ROOT / "ascendc" / "tests" / "fused_bias_softmax" / "cpp" / "bindings.cpp"
+    if not cpp.is_file():
+        return []
+
+    include_dirs = [
+        str(TORCH_NPU_PATH / "include"),
+        str(TORCH_NPU_PATH / "include" / "third_party" / "acl" / "inc"),
+        str(TORCH_NPU_PATH / "include" / "third_party" / "op-plugin"),
+        f"{ASCEND_DIR}/include",
+        f"{ASCEND_DIR}/opp/vendors/customize/op_api/include",
+    ]
+    library_dirs = [
+        f"{ASCEND_DIR}/lib64",
+        f"{ASCEND_DIR}/opp/vendors/customize/op_api/lib",
+        str(TORCH_NPU_PATH / "lib"),
+    ]
+
+    return [
+        CppExtension(
+            name="fused_bias_softmax_npu",
+            sources=[str(cpp.relative_to(ROOT))],
+            include_dirs=include_dirs,
+            library_dirs=library_dirs,
+            libraries=["cust_opapi", "ascendcl", "nnopbase", "opapi", "torch_npu"],
+            extra_compile_args=["-O2", "-std=c++17"],
+        )
+    ]
+
+
 def _complex_mul_extension():
     """pybind 扩展 complex_mul_npu：直连 aclnnComplexMulOg / aclnnComplexMulGradOg。"""
     if os.environ.get("OIL_GAS_OPS_SKIP_EXT", "0") == "1":
@@ -83,6 +117,6 @@ setup(
         "oil_gas_ops_prospect.triton": "python/oil_gas_ops_prospect/triton",
         "oil_gas_ops_prospect.triton.real_fft": "triton-ascend/real_fft",
     },
-    ext_modules=_complex_mul_extension(),
+    ext_modules=_complex_mul_extension() + _fused_bias_softmax_extension(),
     cmdclass={"build_ext": BuildExtension},
 )

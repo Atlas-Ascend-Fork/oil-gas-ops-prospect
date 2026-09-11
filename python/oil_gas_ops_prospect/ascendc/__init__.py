@@ -14,10 +14,22 @@ __all__ = [
     "complex_mul",
     "torch_complex_mul",
     "torch_complex_mul_grad",
+    "fused_bias_softmax",
+    "fused_softmax_grad",
+    "attention_core",
+    "torch_fused_bias_softmax",
+    "torch_fused_softmax_grad",
 ]
 
 from .complex_mul import (
     complex_mul,
     torch_complex_mul,
     torch_complex_mul_grad,
+)
+from .fused_bias_softmax import (
+    fused_bias_softmax,
+    fused_softmax_grad,
+    attention_core,
+    torch_fused_bias_softmax,
+    torch_fused_softmax_grad,
 )

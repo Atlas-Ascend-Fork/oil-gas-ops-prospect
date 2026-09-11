@@ -22,12 +22,26 @@ import torch
 def test_oil_gas_ops_prospect_distribution_and_public_imports():
     assert importlib.metadata.version("oil-gas-ops-prospect")
 
-    from oil_gas_ops_prospect.ascendc import complex_mul, torch_complex_mul, torch_complex_mul_grad
+    from oil_gas_ops_prospect.ascendc import (
+        attention_core,
+        complex_mul,
+        fused_bias_softmax,
+        fused_softmax_grad,
+        torch_complex_mul,
+        torch_complex_mul_grad,
+        torch_fused_bias_softmax,
+        torch_fused_softmax_grad,
+    )
     from oil_gas_ops_prospect.triton.real_fft import real_irfft, real_rfft
 
     assert callable(complex_mul)
     assert callable(torch_complex_mul)
     assert callable(torch_complex_mul_grad)
+    assert callable(fused_bias_softmax)
+    assert callable(fused_softmax_grad)
+    assert callable(attention_core)
+    assert callable(torch_fused_bias_softmax)
+    assert callable(torch_fused_softmax_grad)
     assert callable(real_rfft)
     assert callable(real_irfft)
 

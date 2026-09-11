@@ -69,6 +69,8 @@ set(OPHOST_UT_INCLUDE_DIRS
     "${OPERATORS_DIR}/_common/op_host"
     "${OPERATORS_DIR}/complex_mul/op_host"
     "${OPERATORS_DIR}/complex_mul_grad/op_host"
+    "${OPERATORS_DIR}/fused_bias_softmax/op_host"
+    "${OPERATORS_DIR}/fused_softmax_grad/op_host"
 )
 foreach(_dir ${OPHOST_UT_INCLUDE_DIRS})
     if(NOT IS_DIRECTORY "${_dir}")
@@ -81,6 +83,8 @@ enable_testing()
 
 add_executable(ophost_ut
     test_complex_mul_tiling.cpp
+    test_fused_bias_softmax_tiling.cpp
+    test_fused_softmax_grad_tiling.cpp
 )
 target_include_directories(ophost_ut PRIVATE ${OPHOST_UT_INCLUDE_DIRS})
 target_link_libraries(ophost_ut PRIVATE ${_GTEST_TARGETS})

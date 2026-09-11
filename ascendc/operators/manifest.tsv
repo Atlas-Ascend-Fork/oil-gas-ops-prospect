@@ -1,3 +1,4 @@
-# 目录名	OpType(CANN)	kernel入口文件名
 complex_mul	ComplexMulOg	complex_mul.cpp
 complex_mul_grad	ComplexMulGradOg	complex_mul_grad.cpp
+fused_bias_softmax	FusedBiasSoftmaxOg	fused_bias_softmax.cpp
+fused_softmax_grad	FusedSoftmaxGradOg	fused_softmax_grad.cpp
