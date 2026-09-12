@@ -1,15 +1,20 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
- * FusedBiasSoftmaxOg 切分：platform 读取与 SoftMax 高阶 api tiling 在此桥接，
+ * FusedBiasSoftmax 切分：platform 读取与 SoftMax 高阶 api tiling 在此桥接，
  * 平台无关的切分算法在 fused_bias_softmax_tiling_core.h（ophost UT 覆盖）。
  */
 
@@ -39,9 +44,9 @@ struct FusedBiasSoftmaxShape {
 };
 
 /** platform 读取并委托 core；结果写入 tiling 数据结构。 */
-inline bool ComputeFusedBiasSoftmaxTiling(const FusedBiasSoftmaxShape &shape,
-    platform_ascendc::PlatformAscendC &platform, optiling::FusedBiasSoftmaxTilingData &tilingData,
-    FusedBiasSoftmaxPlan &plan)
+inline bool ComputeFusedBiasSoftmaxTiling(const FusedBiasSoftmaxShape& shape,
+                                          platform_ascendc::PlatformAscendC& platform,
+                                          optiling::FusedBiasSoftmaxTilingData& tilingData, FusedBiasSoftmaxPlan& plan)
 {
     uint64_t ubSize = 0;
     platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
@@ -55,7 +60,8 @@ inline bool ComputeFusedBiasSoftmaxTiling(const FusedBiasSoftmaxShape &shape,
 
     FusedBiasSoftmaxCoreParams params;
     if (!ComputeFusedBiasSoftmaxTilingCore(shape.batch, shape.channel, shape.height, shape.width, shape.dtypeSize,
-        shape.dtypeKey, shape.hasB1, shape.hasB2, shape.b1Full, ubSize, aivNum, params, plan)) {
+                                           shape.dtypeKey, shape.hasB1, shape.hasB2, shape.b1Full, ubSize, aivNum,
+                                           params, plan)) {
         return false;
     }
 
@@ -81,8 +87,7 @@ inline bool ComputeFusedBiasSoftmaxTiling(const FusedBiasSoftmaxShape &shape,
     tilingData.set_lineLastTailIter(params.lineLastTailIter);
 
     // SoftMax 高阶 api tiling（host 侧 API）
-    const ge::Shape softmaxShape(
-        {static_cast<int64_t>(params.lineHeadIter), static_cast<int64_t>(params.padLineNum)});
+    const ge::Shape softmaxShape({static_cast<int64_t>(params.lineHeadIter), static_cast<int64_t>(params.padLineNum)});
     uint64_t softmaxTmpSize = AscendC::GetSoftMaxMaxTmpSize(softmaxShape, FBS_FP32_SIZE, false);
     if (softmaxTmpSize > FBS_SOFTMAX_BUF_SIZE) {
         softmaxTmpSize = FBS_SOFTMAX_BUF_SIZE;

@@ -1,15 +1,20 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
- * FusedBiasSoftmaxOg kernel 实现：bias*2 + in-place 行 softmax 融合（AIV）。
+ * FusedBiasSoftmax kernel 实现：bias*2 + in-place 行 softmax 融合（AIV）。
  *
  * 源自 CANN scaled_masked_softmax_v2 生产模板改造（tiling/pipeline/DataCopyPad/
  * SoftMax 高阶 api 保留），验证与性能数据见 PR 测试报告。
@@ -17,32 +22,29 @@
 #ifndef FUSED_BIAS_SOFTMAX_IMPL_H
 #define FUSED_BIAS_SOFTMAX_IMPL_H
 
-
 #include "kernel_operator.h"
 
 namespace AscendC {
 
-template<typename T1, typename T2>
+template <typename T1, typename T2>
 __aicore__ inline T1 FbsCeilDiv(T1 a, T2 b)
 {
     return (b == 0) ? 0 : (a + b - 1) / b;
 }
 
-template<typename T>
+template <typename T>
 class FusedBiasSoftmax {
 public:
-    __aicore__ inline FusedBiasSoftmax()
-    {
-    }
+    __aicore__ inline FusedBiasSoftmax() {}
 
     __aicore__ inline void Init(GM_ADDR x, GM_ADDR bias1, GM_ADDR bias2, GM_ADDR y,
                                 const FusedBiasSoftmaxTilingData& tilingData)
-                                {
+    {
         this->blockIdx = GetBlockIdx();
-        this->coreOffset = (this->blockIdx >= tilingData.headCoreNum ? tilingData.headCoreNum : this->blockIdx)
-                        * (tilingData.lineHeadCore * tilingData.width)
-                        + (this->blockIdx >= tilingData.headCoreNum ? this->blockIdx - tilingData.headCoreNum : 0)
-                        * (tilingData.lineTailCore * tilingData.width);
+        this->coreOffset = (this->blockIdx >= tilingData.headCoreNum ? tilingData.headCoreNum : this->blockIdx) *
+                               (tilingData.lineHeadCore * tilingData.width) +
+                           (this->blockIdx >= tilingData.headCoreNum ? this->blockIdx - tilingData.headCoreNum : 0) *
+                               (tilingData.lineTailCore * tilingData.width);
         this->startLineOffset = this->coreOffset / tilingData.width;
         gmX.SetGlobalBuffer((__gm__ T*)x + this->coreOffset);
         gmY.SetGlobalBuffer((__gm__ T*)y + this->coreOffset);
@@ -88,8 +90,8 @@ public:
         }
 
         this->linesPerIter = tilingData.lineHeadIter;
-        this->linesLastIter = this->blockIdx >= tilingData.headCoreNum ? tilingData.lineLastTailIter
-                              : tilingData.lineLastHeadIter;
+        this->linesLastIter = this->blockIdx >= tilingData.headCoreNum ? tilingData.lineLastTailIter :
+                                                                         tilingData.lineLastHeadIter;
         this->width = tilingData.width;
         this->padLineNum = tilingData.padLineNum;
     }
@@ -138,31 +140,21 @@ private:
     __aicore__ inline void CopyXIn(uint64_t idx, uint64_t linePerIter)
     {
         LocalTensor<T> xTensor = inQueueX.AllocTensor<T>();
-        DataCopyExtParams params = {
-            static_cast<uint16_t>(linePerIter),
-            static_cast<uint32_t>(this->width * sizeof(T)),
-            0, 0, 0
-        };
-        DataCopyPadExtParams<T> extParams = {
-            true, 0, static_cast<uint8_t>(tilingData.paddingNum), 0.0
-        };
+        DataCopyExtParams params = {static_cast<uint16_t>(linePerIter), static_cast<uint32_t>(this->width * sizeof(T)),
+                                    0, 0, 0};
+        DataCopyPadExtParams<T> extParams = {true, 0, static_cast<uint8_t>(tilingData.paddingNum), 0.0};
         DataCopyPad(xTensor, gmX[idx * this->linesPerIter * this->width], params, extParams);
         inQueueX.EnQue(xTensor);
     }
 
     // 多行批量载入 bias 行, 每行落位 padLineNum 对齐(rightPadding 补齐), 与 x 布局一致
-    __aicore__ inline void CopyBiasRows(TQue<QuePosition::VECIN, 1>& queue, GlobalTensor<T>& gm,
-                                        uint64_t firstRow, uint64_t rows)
-                                        {
+    __aicore__ inline void CopyBiasRows(TQue<QuePosition::VECIN, 1>& queue, GlobalTensor<T>& gm, uint64_t firstRow,
+                                        uint64_t rows)
+    {
         LocalTensor<T> bTensor = queue.AllocTensor<T>();
-        DataCopyExtParams params = {
-            static_cast<uint16_t>(rows),
-            static_cast<uint32_t>(this->width * sizeof(T)),
-            0, 0, 0
-        };
-        DataCopyPadExtParams<T> extParams = {
-            true, 0, static_cast<uint8_t>(tilingData.paddingNum), 0.0
-        };
+        DataCopyExtParams params = {static_cast<uint16_t>(rows), static_cast<uint32_t>(this->width * sizeof(T)), 0, 0,
+                                    0};
+        DataCopyPadExtParams<T> extParams = {true, 0, static_cast<uint8_t>(tilingData.paddingNum), 0.0};
         DataCopyPad(bTensor, gm[firstRow * this->width], params, extParams);
         queue.EnQue(bTensor);
     }
@@ -219,8 +211,8 @@ private:
     }
 
     // 广播 bias: 每行叠加所属 plane 的 bias 行 (fp32 域)
-    __aicore__ inline void AddBiasBcast(LocalTensor<T>& xT, LocalTensor<T>& b1Tensor,
-                                        uint64_t curLine, uint64_t linePerIter)
+    __aicore__ inline void AddBiasBcast(LocalTensor<T>& xT, LocalTensor<T>& b1Tensor, uint64_t curLine,
+                                        uint64_t linePerIter)
     {
         uint64_t p0 = curLine / this->qPerPlane;
         if constexpr (std::is_same<T, float>::value) {
@@ -240,7 +232,7 @@ private:
         }
     }
 
-    template<typename DST, typename SRC>
+    template <typename DST, typename SRC>
     __aicore__ inline void ChunkedCast(DST& dst, SRC& src, RoundMode mode, uint64_t count)
     {
         constexpr uint64_t CHUNK = 16384; // Level-2 算子 repeatTimes 上限保护
@@ -250,7 +242,7 @@ private:
         }
     }
 
-    template<typename D1, typename D2>
+    template <typename D1, typename D2>
     __aicore__ inline void ChunkedAdd(D1& dst, D2& src2, uint64_t count)
     {
         constexpr uint64_t CHUNK = 16384;
@@ -262,7 +254,7 @@ private:
 
     __aicore__ inline void SoftmaxX(LocalTensor<float>& dstTensor, LocalTensor<float>& srcTensor,
                                     LocalTensor<uint8_t> sharedBuffer, uint64_t lines)
-                                    {
+    {
         SoftMaxTiling softmaxTilingData = tilingData.softmaxTilingData;
         SoftMaxShapeInfo softmaxShapeInfoData = {
             static_cast<uint32_t>(lines),
@@ -277,11 +269,8 @@ private:
     __aicore__ inline void CopyOut(uint64_t idx, uint64_t linePerIter)
     {
         LocalTensor<T> yTensor = outQueueY.DeQue<T>();
-        DataCopyExtParams params = {
-            static_cast<uint16_t>(linePerIter),
-            static_cast<uint32_t>(this->width * sizeof(T)),
-            0, 0, 0
-        };
+        DataCopyExtParams params = {static_cast<uint16_t>(linePerIter), static_cast<uint32_t>(this->width * sizeof(T)),
+                                    0, 0, 0};
         DataCopyPad(gmY[idx * this->linesPerIter * this->width], yTensor, params);
         outQueueY.FreeTensor(yTensor);
     }

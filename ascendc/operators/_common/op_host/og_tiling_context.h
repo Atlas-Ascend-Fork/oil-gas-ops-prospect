@@ -1,11 +1,16 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
@@ -31,7 +36,7 @@
 namespace OgOpsCommon {
 
 /** shape 的元素总数（空 shape 记 1，与 gert 语义一致）。 */
-inline int64_t NumelOf(const gert::Shape &shape)
+inline int64_t NumelOf(const gert::Shape& shape)
 {
     int64_t n = 1;
     for (size_t i = 0; i < shape.GetDimNum(); ++i) {
@@ -42,7 +47,7 @@ inline int64_t NumelOf(const gert::Shape &shape)
 
 /** 把 POD tiling 结构写进 gert raw tiling buffer。 */
 template <typename TilingT>
-inline bool StoreTilingData(gert::TilingData *rawTiling, const TilingT &tilingData)
+inline bool StoreTilingData(gert::TilingData* rawTiling, const TilingT& tilingData)
 {
     if (rawTiling == nullptr || rawTiling->GetData() == nullptr) {
         return false;
@@ -50,8 +55,8 @@ inline bool StoreTilingData(gert::TilingData *rawTiling, const TilingT &tilingDa
     if (rawTiling->GetCapacity() < sizeof(TilingT)) {
         return false;
     }
-    const auto *src = reinterpret_cast<const unsigned char *>(&tilingData);
-    auto *dst = static_cast<unsigned char *>(rawTiling->GetData());
+    const auto* src = reinterpret_cast<const unsigned char*>(&tilingData);
+    auto* dst = static_cast<unsigned char*>(rawTiling->GetData());
     std::copy_n(src, sizeof(TilingT), dst);
     rawTiling->SetDataSize(sizeof(TilingT));
     return true;
@@ -59,7 +64,7 @@ inline bool StoreTilingData(gert::TilingData *rawTiling, const TilingT &tilingDa
 
 /** raw tiling 落盘，并设置 blockDim、tilingKey 和 workspace。 */
 template <typename TilingT, typename PlanT>
-inline bool FinalizeTilingContext(gert::TilingContext *context, const TilingT &tilingData, const PlanT &plan)
+inline bool FinalizeTilingContext(gert::TilingContext* context, const TilingT& tilingData, const PlanT& plan)
 {
     if (context == nullptr) {
         return false;
@@ -71,7 +76,7 @@ inline bool FinalizeTilingContext(gert::TilingContext *context, const TilingT &t
     context->SetBlockDim(plan.blockDim);
     context->SetTilingKey(plan.tilingKey);
 
-    size_t *workspaces = context->GetWorkspaceSizes(1);
+    size_t* workspaces = context->GetWorkspaceSizes(1);
     if (workspaces == nullptr) {
         return false;
     }
@@ -84,15 +89,15 @@ inline bool FinalizeTilingContext(gert::TilingContext *context, const TilingT &t
  * 计算，仅把 platform、shape、落盘等固定流程集中到一处。
  */
 template <typename TilingT, typename PlanT>
-inline ge::graphStatus RunElementwiseTiling(
-    gert::TilingContext *context, uint32_t shapeInputIndex,
-    bool (*compute)(int64_t, platform_ascendc::PlatformAscendC &, TilingT &, PlanT &))
+inline ge::graphStatus RunElementwiseTiling(gert::TilingContext* context, uint32_t shapeInputIndex,
+                                            bool (*compute)(int64_t, platform_ascendc::PlatformAscendC&, TilingT&,
+                                                            PlanT&))
 {
     if (context == nullptr || context->GetPlatformInfo() == nullptr) {
         return ge::GRAPH_FAILED;
     }
 
-    const gert::StorageShape *storage = context->GetInputShape(shapeInputIndex);
+    const gert::StorageShape* storage = context->GetInputShape(shapeInputIndex);
     if (storage == nullptr) {
         return ge::GRAPH_FAILED;
     }
@@ -108,10 +113,10 @@ inline ge::graphStatus RunElementwiseTiling(
 }
 
 /** 将一个输入 shape 原样复制到前 outputCount 个输出。 */
-inline ge::graphStatus InferSameShapeOutputs(
-    gert::InferShapeContext *context, uint32_t sourceInputIndex, uint32_t outputCount)
+inline ge::graphStatus InferSameShapeOutputs(gert::InferShapeContext* context, uint32_t sourceInputIndex,
+                                             uint32_t outputCount)
 {
-    const gert::Shape *source = context->GetInputShape(sourceInputIndex);
+    const gert::Shape* source = context->GetInputShape(sourceInputIndex);
     if (source == nullptr) {
         return ge::GRAPH_FAILED;
     }
@@ -127,7 +132,7 @@ inline ge::graphStatus InferSameShapeOutputs(
 }
 
 /** 将前 outputCount 个输出 dtype 固定为 float32。 */
-inline ge::graphStatus InferFloatOutputs(gert::InferDataTypeContext *context, uint32_t outputCount)
+inline ge::graphStatus InferFloatOutputs(gert::InferDataTypeContext* context, uint32_t outputCount)
 {
     for (uint32_t i = 0; i < outputCount; ++i) {
         context->SetOutputDataType(i, ge::DT_FLOAT);
@@ -141,7 +146,7 @@ namespace ops {
 
 /** 为单个 OpDef 端口设置 REQUIRED / float32 / ND 属性。 */
 template <typename PortT>
-inline void ConfigureRequiredFloatNdPort(PortT &port)
+inline void ConfigureRequiredFloatNdPort(PortT& port)
 {
     port.ParamType(REQUIRED);
     port.DataType({ge::DT_FLOAT});
@@ -150,21 +155,21 @@ inline void ConfigureRequiredFloatNdPort(PortT &port)
 }
 
 /** 按给定顺序声明逐元素算子的输入和输出 ABI。 */
-inline void DeclareRequiredFloatNdIo(OpDef &op, std::initializer_list<const char *> inputs,
-    std::initializer_list<const char *> outputs)
+inline void DeclareRequiredFloatNdIo(OpDef& op, std::initializer_list<const char*> inputs,
+                                     std::initializer_list<const char*> outputs)
 {
-    for (const char *name : inputs) {
-        auto &&port = op.Input(name);
+    for (const char* name : inputs) {
+        auto&& port = op.Input(name);
         ConfigureRequiredFloatNdPort(port);
     }
-    for (const char *name : outputs) {
-        auto &&port = op.Output(name);
+    for (const char* name : outputs) {
+        auto&& port = op.Output(name);
         ConfigureRequiredFloatNdPort(port);
     }
 }
 
 /** 添加两个逐元素算子共享的 Ascend 910B 动态编译配置。 */
-inline void AddAscend910bElementwiseConfig(OpDef &op, const char *kernelEntry)
+inline void AddAscend910bElementwiseConfig(OpDef& op, const char* kernelEntry)
 {
     OpAICoreConfig config;
     config.DynamicCompileStaticFlag(true);
@@ -175,8 +180,8 @@ inline void AddAscend910bElementwiseConfig(OpDef &op, const char *kernelEntry)
     config.PrecisionReduceFlag(false);
 
     struct ExtendedSetting {
-        const char *key;
-        const char *value;
+        const char* key;
+        const char* value;
     };
     const ExtendedSetting settings[] = {
         {"opFile.value", kernelEntry},
@@ -184,7 +189,7 @@ inline void AddAscend910bElementwiseConfig(OpDef &op, const char *kernelEntry)
         {"aclnnSupport.value", "support_aclnn"},
         {"jitCompile.flag", "false"},
     };
-    for (const auto &setting : settings) {
+    for (const auto& setting : settings) {
         config.ExtendCfgInfo(setting.key, setting.value);
     }
     op.AICore().AddConfig("ascend910b", config);

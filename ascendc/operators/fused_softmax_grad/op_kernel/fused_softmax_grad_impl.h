@@ -1,15 +1,20 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
- * FusedSoftmaxGradOg kernel 实现（两条路径，同一算子 tiling key 分发）：
+ * FusedSoftmaxGrad kernel 实现（两条路径，同一算子 tiling key 分发）：
  *
  * - FusedSoftmaxGradMix：bf16 对齐形状。MIX_AIC_1_2 两阶段（vllm-ascend
  *   grouped_matmul_swiglu_quant 生产结构同构）：24 AIC 高阶 MatmulImpl 逐 plane
@@ -46,15 +51,15 @@
 
 namespace AscendC {
 
-constexpr uint64_t FSG_SUM_TMP_BYTES = 4096;   // Sum 高阶 api 自备 tmp
+constexpr uint64_t FSG_SUM_TMP_BYTES = 4096; // Sum 高阶 api 自备 tmp
 
-template<typename T1, typename T2>
+template <typename T1, typename T2>
 __aicore__ inline T1 FsgCeilDiv(T1 a, T2 b)
 {
     return (b == 0) ? 0 : (a + b - 1) / b;
 }
 
-template<typename T1, typename T2>
+template <typename T1, typename T2>
 __aicore__ inline T1 FsgMin(T1 a, T2 b)
 {
     return (a < b) ? a : b;
@@ -63,7 +68,7 @@ __aicore__ inline T1 FsgMin(T1 a, T2 b)
 // 共享辅助: 多行 DataCopyPad 载入, GM 行主序 [rows, cols] -> UB [rows, padCols] (rightPad 补齐)
 template <typename UT>
 __aicore__ inline void FsgCopyRowsIn(LocalTensor<UT>& dst, GlobalTensor<UT> src, uint64_t rows, uint64_t cols,
-    uint64_t padCols)
+                                     uint64_t padCols)
 {
     DataCopyExtParams params{static_cast<uint16_t>(rows), static_cast<uint32_t>(cols * sizeof(UT)), 0, 0, 0};
     DataCopyPadExtParams<UT> extParams{true, 0, static_cast<uint8_t>(padCols - cols), 0.0};
@@ -76,15 +81,13 @@ __aicore__ inline void FsgCopyRowsIn(LocalTensor<UT>& dst, GlobalTensor<UT> src,
 template <typename T>
 class FusedSoftmaxGradVec {
 public:
-    __aicore__ inline FusedSoftmaxGradVec()
-    {
-    }
+    __aicore__ inline FusedSoftmaxGradVec() {}
 
     __aicore__ inline void Init(GM_ADDR probs, GM_ADDR gradOutput, GM_ADDR values, GM_ADDR out,
                                 const FusedSoftmaxGradTilingData& tilingData, TPipe* pipe)
-                                {
+    {
         this->blockIdx = GetBlockIdx();
-        this->aivNum = GetBlockNum() * 2;   // MIX_AIC_1_2: AIV = 2 * blockDim
+        this->aivNum = GetBlockNum() * 2; // MIX_AIC_1_2: AIV = 2 * blockDim
         this->planes = tilingData.planes;
         this->qLen = tilingData.height;
         this->sLen = tilingData.width;
@@ -118,7 +121,7 @@ public:
     __aicore__ inline void Process()
     {
         if ASCEND_IS_AIC {
-            return;   // 向量路径: AIC 空转
+            return; // 向量路径: AIC 空转
         }
         for (uint64_t p = blockIdx; p < planes; p += aivNum) {
             ProcessPlane(p);
@@ -126,10 +129,7 @@ public:
     }
 
 private:
-    __aicore__ inline uint64_t FsgMax(uint64_t a, uint64_t b)
-    {
-    return (a > b) ? a : b;
-    }
+    __aicore__ inline uint64_t FsgMax(uint64_t a, uint64_t b) { return (a > b) ? a : b; }
 
     // 载入 V plane [S, D] -> fp32 [S, padD]（裸 TBuf 路径需显式 MTE2_V 同步）
     __aicore__ inline void LoadVPlane(uint64_t vBase, LocalTensor<float>& v32)
@@ -141,6 +141,7 @@ private:
             FsgCopyRowsIn(v16, gmV[vBase], sLen, dLen, padD);
             SyncMte2ToV();
             ChunkedCast(v32, v16, RoundMode::CAST_NONE, sLen * padD);
+            PipeBarrier<PIPE_V>();
         }
         if constexpr (std::is_same<T, float>::value) {
             SyncMte2ToV();
@@ -149,9 +150,9 @@ private:
 
     // 单 plane: V 驻留; 逐 q: S 个点积 -> g 行 -> JVP -> 原地写回
     // 载入 go 行 q [D] -> fp32 [padD]，并计算该行与 V 驻留块的全部点积写入 grow
-    __aicore__ inline void LoadGoRowAndDot(LocalTensor<float>& v32, LocalTensor<float>& goq32,
-        GlobalTensor<T>& gmGoSrc, uint64_t goRowOff, LocalTensor<float>& t, LocalTensor<float>& rs,
-        LocalTensor<uint8_t>& sumTmp, LocalTensor<float>& growOut)
+    __aicore__ inline void LoadGoRowAndDot(LocalTensor<float>& v32, LocalTensor<float>& goq32, GlobalTensor<T>& gmGoSrc,
+                                           uint64_t goRowOff, LocalTensor<float>& t, LocalTensor<float>& rs,
+                                           LocalTensor<uint8_t>& sumTmp, LocalTensor<float>& growOut)
     {
         if constexpr (std::is_same<T, float>::value) {
             FsgCopyRowsIn(goq32, gmGoSrc[goRowOff], 1, dLen, padD);
@@ -160,12 +161,14 @@ private:
             FsgCopyRowsIn(goq16, gmGoSrc[goRowOff], 1, dLen, padD);
             SyncMte2ToV();
             ChunkedCast(goq32, goq16, RoundMode::CAST_NONE, padD);
+            PipeBarrier<PIPE_V>();
         }
         if constexpr (std::is_same<T, float>::value) {
             SyncMte2ToV();
         }
         for (uint64_t s = 0; s < sLen; ++s) {
             Mul(t, v32[s * padD], goq32, padD);
+            PipeBarrier<PIPE_V>();
             SumParams dotParams{1u, static_cast<uint32_t>(padD), static_cast<uint32_t>(dLen)};
             Sum<float>(rs, t, sumTmp, dotParams);
             SetFlag<HardEvent::V_S>(EVENT_ID0);
@@ -175,11 +178,57 @@ private:
         }
     }
 
+    __aicore__ inline void LoadPRow(LocalTensor<float>& p32, uint64_t rowOff)
+    {
+        if constexpr (std::is_same<T, float>::value) {
+            FsgCopyRowsIn(p32, gmP[rowOff], 1, sLen, padS);
+        } else {
+            LocalTensor<T> p16 = bufP16.Get<T>();
+            FsgCopyRowsIn(p16, gmP[rowOff], 1, sLen, padS);
+            SyncMte2ToV();
+            ChunkedCast(p32, p16, RoundMode::CAST_NONE, padS);
+            PipeBarrier<PIPE_V>();
+        }
+        if constexpr (std::is_same<T, float>::value) {
+            SyncMte2ToV();
+        }
+    }
+
+    // JVP: out = p ⊙ (g − rowsum(p⊙g))，然后原地写回行 q。
+    // V 管道结果须经 V_MTE3 后方可用 MTE3 搬出；store 完成前禁止下一迭代
+    // 的 V 管道覆写 t/out16，需 MTE3_V 回边。
+    __aicore__ inline void ApplyJvpAndStore(LocalTensor<float>& p32, LocalTensor<float>& grow, LocalTensor<float>& t,
+                                            LocalTensor<float>& rs, LocalTensor<uint8_t>& sumTmp, uint64_t rowOff)
+    {
+        Mul(t, p32, grow, padS);
+        PipeBarrier<PIPE_V>();
+        SumParams rowParams{1u, static_cast<uint32_t>(padS), static_cast<uint32_t>(sLen)};
+        Sum<float>(rs, t, sumTmp, rowParams);
+        SetFlag<HardEvent::V_S>(EVENT_ID0);
+        WaitFlag<HardEvent::V_S>(EVENT_ID0);
+        float sc = rs.GetValue(0);
+        SetFlag<HardEvent::S_V>(EVENT_ID1);
+        WaitFlag<HardEvent::S_V>(EVENT_ID1);
+        Adds(grow, grow, -sc, sLen);
+        PipeBarrier<PIPE_V>();
+        Mul(t, p32, grow, padS);
+
+        SyncVToMte3();
+        if constexpr (std::is_same<T, float>::value) {
+            DataCopyPad(gmOut[rowOff], t, DataCopyExtParams{1u, static_cast<uint32_t>(sLen * sizeof(T)), 0, 0, 0});
+        } else {
+            LocalTensor<T> out16 = bufOut16.Get<T>();
+            ChunkedCast(out16, t, RoundMode::CAST_RINT, padS);
+            DataCopyPad(gmOut[rowOff], out16, DataCopyExtParams{1u, static_cast<uint32_t>(sLen * sizeof(T)), 0, 0, 0});
+        }
+        SyncMte3ToV();
+    }
+
     __aicore__ inline void ProcessPlane(uint64_t p)
     {
-        uint64_t vBase = p * sLen * dLen;       // values [S, D] per plane
-        uint64_t goBase = p * qLen * dLen;      // grad_output [Q, D] per plane
-        uint64_t rowBase = p * qLen * sLen;     // probs/out [Q, S] per plane
+        uint64_t vBase = p * sLen * dLen;   // values [S, D] per plane
+        uint64_t goBase = p * qLen * dLen;  // grad_output [Q, D] per plane
+        uint64_t rowBase = p * qLen * sLen; // probs/out [Q, S] per plane
 
         LocalTensor<float> v32 = bufV32.Get<float>();
         LocalTensor<float> goq32 = bufGoq32.Get<float>();
@@ -195,43 +244,8 @@ private:
             LoadGoRowAndDot(v32, goq32, gmGo, goBase + q * dLen, t, rs, sumTmp, grow);
             SetFlag<HardEvent::S_V>(EVENT_ID1);
             WaitFlag<HardEvent::S_V>(EVENT_ID1);
-
-            // p 行 q [S] -> fp32 [padS]
-            if constexpr (std::is_same<T, float>::value) {
-                FsgCopyRowsIn(p32, gmP[rowBase + q * sLen], 1, sLen, padS);
-            } else {
-                LocalTensor<T> p16 = bufP16.Get<T>();
-                FsgCopyRowsIn(p16, gmP[rowBase + q * sLen], 1, sLen, padS);
-                SyncMte2ToV();
-                ChunkedCast(p32, p16, RoundMode::CAST_NONE, padS);
-            }
-            if constexpr (std::is_same<T, float>::value) {
-                SyncMte2ToV();
-            }
-
-            // JVP: out = p ⊙ (g − rowsum(p⊙g))
-            Mul(t, p32, grow, padS);
-            SumParams rowParams{1u, static_cast<uint32_t>(padS), static_cast<uint32_t>(sLen)};
-            Sum<float>(rs, t, sumTmp, rowParams);
-            SetFlag<HardEvent::V_S>(EVENT_ID0);
-            WaitFlag<HardEvent::V_S>(EVENT_ID0);
-            float sc = rs.GetValue(0);
-            Adds(grow, grow, -sc, sLen);
-            Mul(t, p32, grow, padS);
-
-            // 原地写回行 q (V 管道结果须经 V_MTE3 事件后方可用 MTE3 搬出;
-            // store 完成前禁止下一迭代的 V 管道覆写 t/out16, 需 MTE3_V 回边)
-            SyncVToMte3();
-            if constexpr (std::is_same<T, float>::value) {
-                DataCopyPad(gmOut[rowBase + q * sLen], t,
-                            DataCopyExtParams{1u, static_cast<uint32_t>(sLen * sizeof(T)), 0, 0, 0});
-            } else {
-                LocalTensor<T> out16 = bufOut16.Get<T>();
-                ChunkedCast(out16, t, RoundMode::CAST_RINT, padS);
-                DataCopyPad(gmOut[rowBase + q * sLen], out16,
-                            DataCopyExtParams{1u, static_cast<uint32_t>(sLen * sizeof(T)), 0, 0, 0});
-            }
-            SyncMte3ToV();
+            LoadPRow(p32, rowBase + q * sLen);
+            ApplyJvpAndStore(p32, grow, t, rs, sumTmp, rowBase + q * sLen);
         }
     }
 
@@ -255,10 +269,10 @@ private:
         WaitFlag<HardEvent::MTE3_V>(EVENT_ID4);
     }
 
-    template<typename DST, typename SRC>
+    template <typename DST, typename SRC>
     __aicore__ inline void ChunkedCast(DST& dst, SRC& src, RoundMode mode, uint64_t count)
     {
-        constexpr uint64_t CHUNK = 16384;   // Level-2 repeatTimes 上限保护
+        constexpr uint64_t CHUNK = 16384; // Level-2 repeatTimes 上限保护
         for (uint64_t off = 0u; off < count; off += CHUNK) {
             uint64_t n = FsgMin(count - off, CHUNK);
             Cast(dst[off], src[off], mode, n);
@@ -283,7 +297,7 @@ private:
     TBuf<TPosition::VECCALC> bufP16;
     TBuf<TPosition::VECCALC> bufOut16;
 
-    static constexpr uint64_t FSG_RS_ELEMS = 8;   // 单行 Sum 结果缓冲 (32B 对齐)
+    static constexpr uint64_t FSG_RS_ELEMS = 8; // 单行 Sum 结果缓冲 (32B 对齐)
 
     uint64_t blockIdx;
     uint64_t aivNum;
@@ -301,16 +315,14 @@ private:
 template <typename T, typename MM_TYPE>
 class FusedSoftmaxGradMix {
 public:
-    __aicore__ inline FusedSoftmaxGradMix(MM_TYPE& mm_) : mm(mm_)
-    {
-    }
+    __aicore__ inline FusedSoftmaxGradMix(MM_TYPE& mm_) : mm(mm_) {}
 
-    __aicore__ inline void Init(GM_ADDR probs, GM_ADDR gradOutput, GM_ADDR values, GM_ADDR out,
-                                GM_ADDR gWs, const FusedSoftmaxGradTilingData& tilingData, TPipe* pipe)
-                                {
+    __aicore__ inline void Init(GM_ADDR probs, GM_ADDR gradOutput, GM_ADDR values, GM_ADDR out, GM_ADDR gWs,
+                                const FusedSoftmaxGradTilingData& tilingData, TPipe* pipe)
+    {
         this->blockIdx = GetBlockIdx();
-        this->aicNum = GetBlockNum();       // = 24
-        this->aivNum = aicNum * 2;          // = 48
+        this->aicNum = GetBlockNum(); // = 24
+        this->aivNum = aicNum * 2;    // = 48
         this->planes = tilingData.planes;
         this->qLen = tilingData.height;
         this->sLen = tilingData.width;
@@ -368,8 +380,8 @@ public:
 
 private:
     // 标量域读取 rs 并逐行 Adds 回写（V_S/S_V 事件同步）
-    __aicore__ inline void ApplyRowBias(LocalTensor<float>& rs, LocalTensor<float>& g32, uint64_t rows,
-        uint64_t padS, uint64_t sLen)
+    __aicore__ inline void ApplyRowBias(LocalTensor<float>& rs, LocalTensor<float>& g32, uint64_t rows, uint64_t padS,
+                                        uint64_t sLen)
     {
         SetFlag<HardEvent::V_S>(EVENT_ID0);
         WaitFlag<HardEvent::V_S>(EVENT_ID0);
@@ -416,8 +428,7 @@ private:
 
             // t = p⊙g; 按行求和
             Mul(t, p32, g32, elems);
-            SumParams rowParams{static_cast<uint32_t>(rows), static_cast<uint32_t>(padS),
-                                static_cast<uint32_t>(sLen)};
+            SumParams rowParams{static_cast<uint32_t>(rows), static_cast<uint32_t>(padS), static_cast<uint32_t>(sLen)};
             Sum<float>(rs, t, sumTmp, rowParams);
 
             // 每行: g[r] -= rs[r] (标量域读取 + S_V 同步回向量域)
@@ -431,9 +442,9 @@ private:
             out16 = outQueue.DeQue<T>();
             // 写回必须走 out 指针（框架缓存路径下 in/out 指针可能不同，
             // 写 probs 侧指针会导致结果不可见）
-            DataCopyPad(gmOut[row0 * sLen], out16,
-                        DataCopyExtParams{static_cast<uint16_t>(rows),
-                                          static_cast<uint32_t>(sLen * sizeof(T)), 0, 0, 0});
+            DataCopyPad(
+                gmOut[row0 * sLen], out16,
+                DataCopyExtParams{static_cast<uint16_t>(rows), static_cast<uint32_t>(sLen * sizeof(T)), 0, 0, 0});
             outQueue.FreeTensor(out16);
 
             done += rows;

@@ -1,11 +1,16 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
@@ -16,9 +21,10 @@
  *
  * 用 CRTP 而不是虚函数：AIV 上没有虚表，模板在编译期展开为直调。派生类需提供
  *   LocalTensor<float> LoadTile(int64_t gmOff, int32_t cur)                 搬入一拍
- *   void ComputeTile(LocalTensor<float> in, LocalTensor<float> out,
- *                    LocalTensor<float> tmp, int32_t cur)                   算一拍
- *   void StoreTile(int64_t gmOff, LocalTensor<float> out, int32_t cur)      搬出一拍
+ * 默认同拍计算/搬出：
+ *   void ComputeTile(...) / void StoreTile(...)
+ * 需要「每路单独 EnQue/DeQue/CopyOut」时覆盖
+ *   void ProcessTile(int64_t gmOff, int32_t cur, LocalTensor<float> tmp)
  *
  * 本文件由 scripts/merge_operators.py 从 operators/_common/op_kernel/ 拷进每个算子
  * 合并后的 op_kernel/<op>/ 目录，故用无路径 include。
@@ -53,7 +59,7 @@ __aicore__ inline int64_t AlignUp(int64_t v)
  * 这里是第二道保险）。钳位与除法在同一表达式链上，静态检查不必做路径分析
  * 即可确定除数为正。
  */
-__aicore__ inline void SplitByCore(int64_t total, int64_t coreNum, int64_t &offset, int64_t &len)
+__aicore__ inline void SplitByCore(int64_t total, int64_t coreNum, int64_t& offset, int64_t& len)
 {
     offset = 0;
     len = 0;
@@ -72,10 +78,10 @@ __aicore__ inline void SplitByCore(int64_t total, int64_t coreNum, int64_t &offs
 
 /** 把 GM 上的 tiling POD 按 uint32 逐字读进片上结构体。 */
 template <typename TilingT>
-__aicore__ inline void CopyTilingData(TilingT *dst, GM_ADDR tilingGm)
+__aicore__ inline void CopyTilingData(TilingT* dst, GM_ADDR tilingGm)
 {
-    auto *out = reinterpret_cast<uint32_t *>(dst);
-    auto *src = reinterpret_cast<__gm__ uint32_t *>(tilingGm);
+    auto* out = reinterpret_cast<uint32_t*>(dst);
+    auto* src = reinterpret_cast<__gm__ uint32_t*>(tilingGm);
     for (uint32_t i = 0; i < sizeof(TilingT) / sizeof(uint32_t); ++i) {
         out[i] = src[i];
     }
@@ -86,28 +92,49 @@ class ElementwiseTileKernel {
 public:
     __aicore__ inline ElementwiseTileKernel() {}
 
-    /** tile 循环骨架：搬入 → 计算 → 搬出，三步由派生类实现。 */
+    /** tile 循环骨架：默认搬入 → 计算 → 搬出；派生类可覆盖 ProcessTile。 */
     __aicore__ inline void Process()
     {
         if (len_ <= 0 || tileFloats_ <= 0) {
             return;
         }
-        Derived *self = static_cast<Derived *>(this);
+        Derived* self = static_cast<Derived*>(this);
         LocalTensor<float> tmp = tmpBuf_.Get<float>();
         for (int64_t done = 0; done < len_; done += tileFloats_) {
             const int32_t cur = TileLen(done);
             const int64_t gmOff = offset_ + done;
-
-            LocalTensor<float> in = self->LoadTile(gmOff, cur);
-            LocalTensor<float> out = outQue_.AllocTensor<float>();
-            self->ComputeTile(in, out, tmp, cur);
-            inQue_.FreeTensor(in);
-            outQue_.EnQue(out);
-
-            out = outQue_.DeQue<float>();
-            self->StoreTile(gmOff, out, cur);
-            outQue_.FreeTensor(out);
+            self->ProcessTile(gmOff, cur, tmp);
         }
+    }
+
+    __aicore__ inline void ProcessTile(int64_t gmOff, int32_t cur, LocalTensor<float> tmp)
+    {
+        Derived* self = static_cast<Derived*>(this);
+        LocalTensor<float> in = self->LoadTile(gmOff, cur);
+        LocalTensor<float> out = outQue_.AllocTensor<float>();
+        self->ComputeTile(in, out, tmp, cur, gmOff);
+        inQue_.FreeTensor(in);
+        outQue_.EnQue(out);
+        out = outQue_.DeQue<float>();
+        self->StoreTile(gmOff, out, cur);
+        outQue_.FreeTensor(out);
+    }
+
+    __aicore__ inline void ComputeTile(LocalTensor<float> in, LocalTensor<float> out, LocalTensor<float> tmp,
+                                       int32_t cur, int64_t gmOff)
+    {
+        (void)in;
+        (void)out;
+        (void)tmp;
+        (void)cur;
+        (void)gmOff;
+    }
+
+    __aicore__ inline void StoreTile(int64_t gmOff, LocalTensor<float> out, int32_t cur)
+    {
+        (void)gmOff;
+        (void)out;
+        (void)cur;
     }
 
 protected:
@@ -117,7 +144,7 @@ protected:
      * （BUFFER_NUM * (inSlots + outSlots) + 1）。
      */
     __aicore__ inline void InitTiles(int64_t totalElems, int64_t tileFloats, int64_t coreNum, int32_t inSlots,
-                                     int32_t outSlots, TPipe *pipe)
+                                     int32_t outSlots, TPipe* pipe)
     {
         totalElems_ = totalElems;
         tileFloats_ = tileFloats;
@@ -131,16 +158,19 @@ protected:
     }
 
     /** 每路在单槽内的元素步长（第 k 路为 tensor[k * SlotStride()]）。 */
-    __aicore__ inline uint32_t SlotStride() const
-    {
-        return static_cast<uint32_t>(tileFloats_);
-    }
+    __aicore__ inline uint32_t SlotStride() const { return static_cast<uint32_t>(tileFloats_); }
 
     /** 本拍实际元素数（尾拍可能短于 tileFloats_）。 */
     __aicore__ inline int32_t TileLen(int64_t done) const
     {
         const int64_t rest = len_ - done;
         return static_cast<int32_t>(rest < tileFloats_ ? rest : tileFloats_);
+    }
+
+    __aicore__ inline LocalTensor<float> EnqueueIn(LocalTensor<float> in)
+    {
+        inQue_.EnQue(in);
+        return inQue_.DeQue<float>();
     }
 
     __aicore__ inline void CopyInPad(LocalTensor<float> dst, GlobalTensor<float> src, int32_t cur)
@@ -170,7 +200,6 @@ protected:
     TQue<TPosition::VECOUT, BUFFER_NUM> outQue_;
     TBuf<TPosition::VECCALC> tmpBuf_;
 
-private:
     int64_t totalElems_ = 0;
     int64_t tileFloats_ = 0;
     int64_t coreNum_ = 0;

@@ -1,11 +1,16 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Agreement Version 2.0 (the "License").
-# Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-# See LICENSE in the root of the software repository for the full text of the License.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 # -----------------------------------------------------------------------------------------------------------
 
 import math
@@ -81,6 +86,8 @@ def _default_block_m() -> int:
 # 192KB and overflow. We therefore shrink BLOCK_M per shape so the accumulators
 # always fit, independent of the (fixed) other tile dim.
 _ASCEND_L0C_ACC_BYTES = 128 * 1024
+# 910B L1/cbuf ≈ 512KB。tl.dot 操作数（含 double-buffer）按 2 份计。
+_ASCEND_L1_CBUF_BYTES = 512 * 1024
 _FP32_BYTES = 4
 
 
@@ -99,15 +106,86 @@ def _cap_block_m_for_l0c(block_m: int, tile_other: int, num_acc: int) -> int:
     return max(16, min(int(block_m), max_m))
 
 
+def _cap_block_m_for_cbuf(block_m: int, tile_k: int, tile_n: int, num_operands: int = 6) -> int:
+    """Shrink ``block_m`` so ``tl.dot`` L1/cbuf operands fit in 910B L1.
+
+    ``num_operands`` counts simultaneously live tiles after multi-buffering
+    plus compiler temporaries (default 6: two (M,K) + two (K,N) + extras).
+    BiShengIR ``--enable-auto-multi-buffer`` on N=256 needed ~1.35× the
+    4-operand estimate (4980736 bits vs 4194304 available), so we also keep
+    a 65% L1 safety factor.
+    """
+    if tile_k <= 0 or tile_n <= 0 or num_operands <= 0:
+        return block_m
+    tile = max(int(tile_k), int(tile_n))
+    budget = int(_ASCEND_L1_CBUF_BYTES * 0.65)
+    max_m = budget // (num_operands * tile * _FP32_BYTES)
+    max_m -= max_m % 16
+    max_m = max(16, max_m)
+    return max(16, min(int(block_m), max_m))
+
+
+# (K,N) 单拍上限：n=128 已验证的 128×64。n=256 的 256×144 与 BLOCK_M 无关，
+# 单拍就要 4980736 bits（L1 仅 4194304）。kernel 已按 tile_k 循环，缩小 K/N 即可。
+_ASCEND_L1_MAX_KN = 128 * 64
+
+
+def _align16(x: int) -> int:
+    x = max(16, int(x))
+    return x - (x % 16)
+
+
+def _cap_block_kn_for_cbuf(tile_k: int, tile_n: int, max_kn: int = _ASCEND_L1_MAX_KN) -> tuple[int, int]:
+    """Shrink K/N tiles so a (K,N) operand pair fits in 910B L1."""
+    tk, tn = _align16(tile_k), _align16(tile_n)
+    while tk * tn > max_kn and (tk > 16 or tn > 16):
+        if tk >= tn and tk > 16:
+            tk = _align16(tk // 2)
+        elif tn > 16:
+            tn = _align16(tn // 2)
+        else:
+            break
+    return tk, tn
+
+
+def _cap_fft_tiles(block_m: int, tile_k: int, tile_n: int, num_acc: int) -> tuple[int, int, int]:
+    """Cap K/N first (L1), then M (L0C + remaining L1)."""
+    tile_k, tile_n = _cap_block_kn_for_cbuf(tile_k, tile_n)
+    block_m = _cap_block_m_for_l0c(block_m, tile_n, num_acc=num_acc)
+    block_m = _cap_block_m_for_cbuf(block_m, tile_k, tile_n)
+    return block_m, tile_k, tile_n
+
+
 # Substrings identifying BiShengIR on-chip buffer overflows that scale with the
 # row tile: "cc overflow" (L0C accumulators) and "cbuf overflow" (L1 tl.dot
 # operands). Both are fixed by shrinking BLOCK_M.
 _BLOCK_M_OVERFLOW_MARKERS = ("cbuf overflow", "cc overflow", "overflow")
 
 
+def _exception_text(err: BaseException) -> str:
+    parts: list[str] = []
+    cur: BaseException | None = err
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        parts.append(str(cur))
+        parts.append(repr(cur))
+        parts.extend(str(a) for a in getattr(cur, "args", ()))
+        for attr in ("error_detail", "detail", "message", "stderr", "output", "stdout"):
+            val = getattr(cur, attr, None)
+            if val:
+                parts.append(str(val) if not isinstance(val, bytes) else val.decode("utf-8", "replace"))
+        cur = cur.__cause__ or cur.__context__
+    return "\n".join(parts)
+
+
 def _is_block_m_overflow(err: BaseException) -> bool:
-    msg = f"{err}"
-    return any(marker in msg for marker in _BLOCK_M_OVERFLOW_MARKERS)
+    msg = _exception_text(err).lower()
+    if any(marker in msg for marker in _BLOCK_M_OVERFLOW_MARKERS):
+        return True
+    # torch_npu 有时把 BiShengIR 失败包成 ERR99999，正文不含 overflow
+    # 字样；缩小 BLOCK_M 不改变数值，对编译失败做一次回退是安全的。
+    return any(tok in msg for tok in ("bisheng", "mlircompilation", "ccec", "ttadapter"))
 
 
 # Maps a caller-supplied ``cache_key`` (kernel site + shape-dependent tile
@@ -620,7 +698,9 @@ def _real_rfft_npu_forward(
         block_b = block_m or _default_block_m()
         block_f = block_n or _round_up(freq_len)
         block_k = block_k or _round_up(n)
-        block_b = _cap_block_m_for_l0c(block_b, block_f, num_acc=2)  # acc_r + acc_i
+        # 轴上 kernel 一次 tl.dot 覆盖整段 K/F，不能缩小 tile_k/tile_f。
+        block_b = _cap_block_m_for_l0c(block_b, block_f, num_acc=2)
+        block_b = _cap_block_m_for_cbuf(block_b, block_k, block_f)
 
         def _launch(bb):
             _rfft_axis_matmul_kernel[(_get_aicore_num(),)](
@@ -648,7 +728,7 @@ def _real_rfft_npu_forward(
     block_n = block_n or _round_up(freq_len)
     block_k = block_k or _round_up(n)
     block_m = block_m or _default_block_m()
-    block_m = _cap_block_m_for_l0c(block_m, block_n, num_acc=2)  # acc_r + acc_i
+    block_m, block_k, block_n = _cap_fft_tiles(block_m, block_k, block_n, num_acc=2)
 
     def _launch(bm):
         _rfft_matmul_kernel[(_get_aicore_num(),)](
@@ -700,7 +780,8 @@ def _real_rfft_npu_backward(
         block_b = block_m or _default_block_m()
         block_k = block_n or _round_up(n)
         block_f = _round_up(freq_len)
-        block_b = _cap_block_m_for_l0c(block_b, block_k, num_acc=1)  # single acc (K, B)
+        block_b = _cap_block_m_for_l0c(block_b, block_k, num_acc=1)
+        block_b = _cap_block_m_for_cbuf(block_b, block_f, block_k)
 
         def _launch(bb):
             _rfft_axis_backward_kernel[(_get_aicore_num(),)](
@@ -727,7 +808,7 @@ def _real_rfft_npu_backward(
     block_n = block_n or _round_up(n)
     block_k = block_k or _round_up(freq_len)
     block_m = block_m or _default_block_m()
-    block_m = _cap_block_m_for_l0c(block_m, block_n, num_acc=1)  # single acc (M, n)
+    block_m, block_k, block_n = _cap_fft_tiles(block_m, block_k, block_n, num_acc=1)
     rfft_cos_t = rfft_cos.transpose(0, 1).contiguous()
     rfft_sin_t = rfft_sin.transpose(0, 1).contiguous()
 
@@ -780,7 +861,8 @@ def _real_irfft_npu_forward(
         block_b = block_m or _default_block_m()
         block_t = block_n or _round_up(n)
         block_f = block_k or _round_up(freq_len)
-        block_b = _cap_block_m_for_l0c(block_b, block_t, num_acc=1)  # single acc (T, B)
+        block_b = _cap_block_m_for_l0c(block_b, block_t, num_acc=1)
+        block_b = _cap_block_m_for_cbuf(block_b, block_f, block_t)
 
         def _launch(bb):
             _irfft_axis_matmul_kernel[(_get_aicore_num(),)](
@@ -807,7 +889,7 @@ def _real_irfft_npu_forward(
     block_n = block_n or _round_up(n)
     block_k = block_k or _round_up(freq_len)
     block_m = block_m or _default_block_m()
-    block_m = _cap_block_m_for_l0c(block_m, block_n, num_acc=1)  # single acc (M, n)
+    block_m, block_k, block_n = _cap_fft_tiles(block_m, block_k, block_n, num_acc=1)
     irfft_cos_t = irfft_cos.transpose(0, 1).contiguous()
     irfft_sin_t = irfft_sin.transpose(0, 1).contiguous()
 
@@ -857,7 +939,8 @@ def _real_irfft_npu_backward(
         block_b = block_m or _default_block_m()
         block_f = block_n or _round_up(freq_len)
         block_t = block_k or _round_up(n)
-        block_b = _cap_block_m_for_l0c(block_b, block_f, num_acc=2)  # acc_r + acc_i
+        block_b = _cap_block_m_for_l0c(block_b, block_f, num_acc=2)
+        block_b = _cap_block_m_for_cbuf(block_b, block_t, block_f)
 
         def _launch(bb):
             _irfft_axis_backward_kernel[(_get_aicore_num(),)](
@@ -883,7 +966,7 @@ def _real_irfft_npu_backward(
     block_n = block_n or _round_up(freq_len)
     block_k = block_k or _round_up(n)
     block_m = block_m or _default_block_m()
-    block_m = _cap_block_m_for_l0c(block_m, block_n, num_acc=2)  # acc_r + acc_i
+    block_m, block_k, block_n = _cap_fft_tiles(block_m, block_k, block_n, num_acc=2)
 
     def _launch(bm):
         _irfft_backward_matmul_kernel[(_get_aicore_num(),)](

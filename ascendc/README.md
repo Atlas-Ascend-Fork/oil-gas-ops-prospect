@@ -37,7 +37,7 @@ ascendc/
 ```
 output/
 ├── <SOC>/oil_gas_ops_prospect_opp_<os>_<arch>.run   # OPP 算子包（build.sh --pkg）
-└── wheels/oil_gas_ops_prospect-*.whl                # whl（build_install_ops.sh / tests/run_whl_tests.sh）
+└── wheels/oil_gas_ops_prospect-*.whl                # whl（<repo>/build.sh / tests/run_whl_tests.sh）
 ```
 
 `OIL_GAS_OPS_OUTPUT_DIR` 可覆盖该目录。
@@ -55,11 +55,14 @@ bash build.sh --pkg
 bash build.sh -u --ophost
 ```
 
-ophost UT 工程在 [`tests/ophost/`](tests/ophost/)，覆盖两部分：
+测试用例统一收在仓库根目录的 [`tests/`](../test/) 下，本目录只放算子实现。
+ophost UT 工程在 [`tests/ascendc/ophost/`](../tests/ascendc/ophost/)，覆盖两部分：
 
 | 测试文件 | 覆盖内容 |
 |----------|----------|
 | `test_complex_mul_tiling.cpp` | 两个算子的 `*_tiling_core.h`：UB 预算约束（前向 13 份 tile / 反向 21 份）、`tileFloats` 的 32B 对齐与上限、小 tensor 收缩、退化输入（负元素数、`aivNum=0`、空张量）、以及 kernel 侧核间切分的覆盖性不变量（每个元素恰好被一个 AIV 核处理一次、区间无空洞无重叠） |
+| `test_fused_bias_softmax_tiling.cpp` | `FusedBiasSoftmax` 切分：对齐 padding、bias 广播/全尺寸 UB 预算、非法输入拒绝 |
+| `test_fused_softmax_grad_tiling.cpp` | `FusedSoftmaxGrad` 切分：MIX/VEC 路径分发、V plane 驻留上限、`Q≠S` |
 
 > `<Op>TilingFunc` / `InferShape` 的入口签名依赖 `gert::TilingContext`，`Compute<Op>Tiling`
 > 依赖 `platform_ascendc::PlatformAscendC`，CANN 二进制包未提供 gert faker（该基建在
@@ -67,19 +70,19 @@ ophost UT 工程在 [`tests/ophost/`](tests/ophost/)，覆盖两部分：
 > `op_host/<op>_tiling_core.h`，UT 直接驱动核心函数，覆盖的是真实算法。产物在
 > `_work/ophost_ut/`。
 >
-> 新增算子时：把它的 `op_host` 目录加进 `tests/ophost/CMakeLists.txt` 的
+> 新增算子时：把它的 `op_host` 目录加进 `tests/ascendc/ophost/CMakeLists.txt` 的
 > `OPHOST_UT_INCLUDE_DIRS`，并把测试源加进 `ophost_ut` 目标。
 
 常用打包参数：
 
 ```bash
-bash build.sh --pkg -v Ascend910B1 --ops complex_mul complex_mul_grad -j 16
+bash build.sh --pkg -v Ascend910B1 --ops complex_mul complex_mul_grad fused_bias_softmax fused_softmax_grad -j 16
 bash build.sh --pkg --vendor-name customize --package-name oil_gas_ops_prospect
 bash build.sh clean
 bash build.sh list-ops
 ```
 
-`--ops` 支持空格分隔或逗号；当前 manifest 包含 `complex_mul`、`complex_mul_grad`。
+`--ops` 支持空格分隔或逗号；当前 manifest 包含 `complex_mul`、`complex_mul_grad`、`fused_bias_softmax`、`fused_softmax_grad`。
 
 等价的 Python 入口：
 
@@ -93,7 +96,7 @@ python3 build.py -v Ascend910B1 --ops complex_mul complex_mul_grad
 
 ```bash
 cd /root/projects/oil-gas-ops-prospect
-bash build_install_ops.sh
+bash build.sh
 ```
 
 该脚本会自动完成：
@@ -107,16 +110,18 @@ bash build_install_ops.sh
 常用参数：
 
 ```bash
-bash build_install_ops.sh --clean               # 先清理 ascendc/_work 与 output/
-bash build_install_ops.sh --ops complex_mul     # 只构建指定 AscendC 算子
-bash build_install_ops.sh --skip-tests          # 跳过 whl 冒烟测试
-bash build_install_ops.sh --soc Ascend910B1 -j 16
+bash build.sh --clean               # 先清理 ascendc/_work 与 output/
+bash build.sh --ops=complex_mul     # 只构建指定 AscendC 算子
+bash build.sh --skip-tests          # 跳过 whl 冒烟测试
+bash build.sh --soc=Ascend910B1 -j16
+bash build.sh -u                    # 无卡 UT
+bash build.sh -u --ophost --noexec  # 只编译 ophost UT
 ```
 
 如 CANN 安装路径不是默认的 `/usr/local/Ascend/cann-9.0.0`，可通过环境变量指定：
 
 ```bash
-ASCEND_HOME_PATH=/path/to/cann bash build_install_ops.sh
+ASCEND_HOME_PATH=/path/to/cann bash build.sh
 ```
 
 ### 包名与 vendor
@@ -175,12 +180,18 @@ CANN 内部框架头（`op_host/tiling_base.h`、`op_host/tiling_templates_regis
 
 ## 已集成算子
 
-| 目录名 | OpType | aclnn 接口 | 说明 |
-|--------|--------|-----------|------|
-| `complex_mul` | `ComplexMulOg` | `aclnnComplexMulOg` | 复数逐点乘（AIV-only），见 `tests/complex_mul/` |
-| `complex_mul_grad` | `ComplexMulGradOg` | `aclnnComplexMulGradOg` | 上者的反向（AIV-only） |
+`operators/manifest.tsv` 当前四行：
 
-两个算子的语义：
+| 目录名 | OpType | aclnn 接口 | Python | 说明 |
+|--------|--------|-----------|--------|------|
+| `complex_mul` | `ComplexMul` | `aclnnComplexMul` | `oil_gas_ops_prospect.complex_mul.complex_mul` | 复数逐点乘（AIV-only） |
+| `complex_mul_grad` | `ComplexMulGrad` | `aclnnComplexMulGrad` | 由 `complex_mul` 的 autograd 调用 | 上者的反向（AIV-only） |
+| `fused_bias_softmax` | `FusedBiasSoftmax` | `aclnnFusedBiasSoftmax` | `oil_gas_ops_prospect.fused_bias_softmax.fused_bias_softmax` | `softmax(x+bias1+bias2,-1)`，原地写回 |
+| `fused_softmax_grad` | `FusedSoftmaxGrad` | `aclnnFusedSoftmaxGrad` | `oil_gas_ops_prospect.fused_bias_softmax.fused_softmax_grad` | 注意力 softmax JVP，原地覆写 probs |
+
+更完整的数学定义、输入输出与约束见 [`docs/zh/op_list.md`](../docs/zh/op_list.md)；Python / aclnn 签名见 [`docs/zh/api_list.md`](../docs/zh/api_list.md)。下面按算子列出本目录实现侧必须守住的规格。
+
+### ComplexMul / ComplexMulGrad
 
 ```text
 fwd:  wr = ur*vr - ui*vi          bwd:  gur =  gwr*vr + gwi*vi
@@ -189,71 +200,123 @@ fwd:  wr = ur*vr - ui*vi          bwd:  gur =  gwr*vr + gwi*vi
                                         gvi = -gwr*ui + gwi*ur
 ```
 
-全部输入/输出为 float32、`ND`、同 shape。切分策略是按元素总数在 AIV 核间均分（32B 对齐），
-核内再按 UB 预算分拍；切分算法在各算子 `op_host/<op>_tiling_core.h`，由 ophost UT 覆盖。
+| 项 | 内容 |
+|----|------|
+| 输入 / 输出 | 前向 `ur,ui,vr,vi → wr,wi`；反向 `gwr,gwi,ur,ui,vr,vi → gur,gui,gvr,gvi` |
+| dtype / format | 全部 `float32` / `ND` / **同 shape**；支持动态 rank |
+| 核类型 | AIV-only。按元素总数在 AIV 核间均分（32B 对齐），核内按 UB 分拍 |
+| UB 预算 | 前向 13 份 tile，反向 21 份 tile（double buffer + tmp），见各 `*_tiling_core.h` |
+| Python | 只有 `complex_mul`；反向不单独导出函数 |
 
-> 算子 OpType 统一加后缀（`Og`(oil & gas) / `Custom`），避免与 CANN 内置算子注册名冲突。
-> kernel 入口函数名通过算子 def 的 `opFile.value`/`opInterface.value` 固定为
-> `complex_mul` / `complex_mul_grad`，OpType 改名不影响 kernel 源码；生成的 aclnn 接口
-> 随 OpType 变化。
+NPU 精度/性能对比：[`tests/ascendc/complex_mul/`](../tests/ascendc/complex_mul/)，相对误差阈值默认 `1e-5`。
+
+### FusedBiasSoftmax
+
+```text
+y = softmax(x + bias1(广播或全尺寸) + bias2, -1)   # 原地写回 x
+```
+
+| 项 | 内容 |
+|----|------|
+| 输入 / 输出 | `x [B,H,Q,S]`；可选 `bias1 [B,H,1,S]` 或 `[B,H,Q,S]`；可选 `bias2 [B,H,Q,S]`；输出 `y` 与 `x` 别名 |
+| dtype / format | `fp32` / `fp16` / `bf16`，`ND`，存在的 bias 必须与 `x` 同 dtype |
+| 核类型 | AIV-only。按行 `B*H*Q` 切核，行宽 `S` 对齐到 32B；SoftMax 预留 32KB UB |
+| 形状约束 | **必须 4D**；`1 ≤ S ≤ 4096`；`bias2` 若存在必须全尺寸 |
+| tiling key | `0=fp32`，`1=fp16`，`2=bf16` |
+
+### FusedSoftmaxGrad
+
+```text
+g = go @ V^T
+probs ← probs ⊙ (g − rowsum(probs ⊙ g))   # fp32 域，原地覆写 probs
+```
+
+| 项 | 内容 |
+|----|------|
+| 输入 / 输出 | `probs [B,H,Q,S]`，`gradOutput [B,H,Q,D]`，`values [B,H,S,D]` → `out` 与 `probs` 别名 |
+| dtype / format | 三输入同 dtype：`fp32` / `fp16` / `bf16`，`ND` |
+| 形状约束 | **必须 4D**；`Q ≠ S` 合法；`D` 必须一致且大于 0 |
+| 路径分发 | `fp32`/`fp16`/非对齐 `bf16` → 纯向量（key 0/1/2）；`bf16` 且 `S%16==0` 且 `D%16==0` → MIX_AIC_1_2（key 3：AIC 矩乘写 workspace，再 AIV JVP） |
+| workspace | 系统预留 16MB + MIX 路径 `B*H*Q*S*sizeof(half)` 的 `g` 缓冲 |
+| 精度注意 | fp32/fp16 不走 cube（910B fixpipe C 16bit 上限）；MIX 的 half-`g` 量化误差要求 `probs` 为 softmax 分布 |
+
+NPU 精度/性能对比（前向 + 反向 + e2e）：[`tests/ascendc/fused_bias_softmax/`](../tests/ascendc/fused_bias_softmax/)。容差：fp32 `max_diff ≤ 1e-5`；bf16 `atol=2e-2, rtol=4e-3`。
+
+Python 还提供 `attention_core(q, k, v, bias1, bias2)`，把上述两算子按 openfold `AttentionCoreFunction` 语义串起来，**不是**独立 OPP 算子。
+
+> C++ 侧 OpType 为 PascalCase（`ComplexMul`），aclnn 为 `aclnnComplexMul`。
+> Python 侧公开函数为蛇形命名（`complex_mul`），不加 `npu_` 前缀。
+> kernel 入口通过 `opFile.value`/`opInterface.value` 固定为蛇形文件名
+> （`complex_mul` / `complex_mul_grad` / `fused_bias_softmax` / `fused_softmax_grad`），
+> OpType 改名不影响 kernel 源码；aclnn 接口随 OpType 变化。
 
 ## 测试用例
 
-各算子的 NPU 对比测试在 `tests/<op>/`，统一以等价的 **PyTorch/torch_npu** 表达式为基准对比
-**精度 / 性能**。每个测试目录结构一致：
+各算子的 NPU 对比测试在 `<repo>/tests/ascendc/<op>/`，统一以等价的 **PyTorch/torch_npu**
+表达式为基准对比 **精度 / 性能**。每个测试目录结构一致：
 
 ```
-tests/<op>/
-├── cpp/bindings.cpp   # pybind：通过自定义 aclnn 接口调用算子
-├── setup.py           # 编译 torch_npu 扩展
+tests/ascendc/<op>/
 ├── test_<op>_npu.py   # 精度/性能对比脚本
 ├── run_test.sh        # 安装 OPP 包 → 编译扩展 → 运行测试
 └── README.md
 ```
 
+| 目录 | 覆盖 |
+|------|------|
+| [`tests/ascendc/complex_mul/`](../tests/ascendc/complex_mul/) | `ComplexMul` / `ComplexMulGrad` 前向、反向、autograd、时延 |
+| [`tests/ascendc/fused_bias_softmax/`](../tests/ascendc/fused_bias_softmax/) | `FusedBiasSoftmax` / `FusedSoftmaxGrad` 前向、反向、attention e2e、时延 |
+
+测试用到的 pybind 扩展是算子交付件而非测试资产，源码在
+[`pybind/`](pybind/)，详见 [`pybind/README.md`](pybind/README.md)。
+
 另有不依赖 NPU 的 ophost UT，见上文「编译与 UT」。
 
 ### 前置条件
 
-1. 已在 `ascendc-dev` 容器中构建出 OPP 包（见上文「用法」），产物在 `<repo>/output/<SOC>/oil_gas_ops_prospect_opp_*.run`。
+1. 已在 `ascendc-dev` 容器中构建出 OPP 包（见上文「编译与 UT」），产物在 `<repo>/output/<SOC>/oil_gas_ops_prospect_opp_*.run`。
 2. **测试需在带 NPU 设备的机器上运行**，且环境内有 `torch` 与 `torch_npu`。
    编译可在容器内完成，跑测试需真实 NPU。
 
 ### 运行
 
 ```bash
-cd tests/complex_mul
+# 复数乘
+cd ../tests/ascendc/complex_mul
 bash run_test.sh
-
-# 指定 shape
 bash run_test.sh --shape 1 1 96 160 160
+
+# 融合注意力（前反向一对）
+cd ../tests/ascendc/fused_bias_softmax
+bash run_test.sh
 
 # 指定 OPP 包（默认取 <repo>/output/Ascend910B1/oil_gas_ops_prospect_opp_openEuler_aarch64.run）
 OIL_GAS_OPS_RUN_PKG=/path/to/oil_gas_ops_prospect_opp_openEuler_aarch64.run bash run_test.sh
 ```
 
-`run_test.sh` 两步：安装/更新 OPP 包 → 编译 pybind 扩展并跑
-`test_complex_mul_npu.py`。也可手动分步：
+`run_test.sh` 两步：安装/更新 OPP 包 → 编译 pybind 扩展并跑对应 `test_*_npu.py`。也可手动分步：
 
 ```bash
-bash ../../../output/Ascend910B1/oil_gas_ops_prospect_opp_openEuler_aarch64.run --quiet  # 安装算子包
-python3 test_complex_mul_npu.py --build-ext                                             # 编译扩展并测试
-python3 test_complex_mul_npu.py                                                         # 复用已编译扩展
+bash ../../../output/Ascend910B1/oil_gas_ops_prospect_opp_openEuler_aarch64.run --quiet
+python3 test_complex_mul_npu.py --build-ext
+python3 test_complex_mul_npu.py
 ```
 
 ### 输出
 
-脚本打印前向/反向的相对误差、前向/反向的时延与加速比，以及 autograd 封装的梯度误差：
+`complex_mul` 脚本打印前向/反向相对误差、时延与加速比，以及 autograd 封装的梯度误差：
 
 ```text
 [fwd] shape=... rel_err wr=... wi=...
 [bwd] rel_err gur=... gui=... gvr=... gvi=...
 [perf] fwd torch=...ms ascendc=...ms speedup=...x
-[perf] bwd torch=...ms ascendc=...ms speedup=...x
 [autograd] gur=... gui=... gvr=... gvi=...
 PASS
 ```
 
+`fused_bias_softmax` 脚本按 forward / backward / e2e 打印 `max_diff`、超容差元素数与是否原地写回。
+
 退出码：`0` 精度达标；`1` 超阈值 / 无 NPU / 扩展缺失。
 
-详见 [`tests/complex_mul/README.md`](tests/complex_mul/README.md)。
+详见 [`tests/ascendc/complex_mul/README.md`](../tests/ascendc/complex_mul/README.md) 与
+[`tests/ascendc/fused_bias_softmax/README.md`](../tests/ascendc/fused_bias_softmax/README.md)。

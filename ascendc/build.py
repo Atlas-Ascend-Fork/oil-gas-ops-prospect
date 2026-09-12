@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Agreement Version 2.0 (the "License").
-# Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-# See LICENSE in the root of the software repository for the full text of the License.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 # -----------------------------------------------------------------------------------------------------------
 
 """custom_multi_op_gen — 基于 install.sh + msopgen 的多算子、多机型构建入口。"""
@@ -22,15 +27,16 @@ from pathlib import Path
 
 # ``scripts`` resolves because Python puts this script's directory (ascendc/) at
 # the head of sys.path; build.py is always invoked as ``python3 <...>/build.py``
-# (see build.sh / build_install_ops.sh), never imported as a library.
+# (see ascendc/build.sh and the repo-root build.sh), never imported as a library.
 from scripts.cann_env import run_in_cann_shell
 from scripts.config import (
     DEFAULT_PACKAGE_NAME,
     DEFAULT_VENDOR_NAME,
     OUTPUT_DIR,
-    ROOT_DIR,
+    REPO_ROOT,
     SUPPORTED_SOC_VERSIONS,
     WORK_ROOT,
+    ensure_private_work_root,
     write_dummy_op_ir_json,
 )
 from scripts.manifest import list_operator_names
@@ -167,7 +173,7 @@ def build_one_soc(
     validate_soc(soc)
     custom_op = WORK_ROOT / f"CustomOp_{soc}"
     out_dir = OUTPUT_DIR / soc
-    WORK_ROOT.mkdir(parents=True, exist_ok=True)
+    ensure_private_work_root()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n========== SOC: {soc} ==========")
@@ -226,6 +232,7 @@ def cmd_clean() -> None:
         if d.exists():
             shutil.rmtree(d)
     print(f"已清理 {WORK_ROOT}/ {OUTPUT_DIR}/")
+    ensure_private_work_root()
 
 
 def cmd_list_ops() -> None:
@@ -235,12 +242,29 @@ def cmd_list_ops() -> None:
 
 
 def cmd_ut_ophost(args: argparse.Namespace) -> None:
-    """编译并运行 ophost 侧单元测试（googletest，无需 NPU 设备）。"""
-    ut_src = ROOT_DIR / "tests" / "ophost"
+    """编译并运行 ophost 侧单元测试（googletest，无需 NPU 设备）。
+
+    测试用例统一收在仓库根目录的 tests/ 下，算子目录只放实现。
+    """
+    ut_src = REPO_ROOT / "tests" / "ascendc" / "ophost"
     if not (ut_src / "CMakeLists.txt").is_file():
         raise SystemExit(f"错误: 未找到 ophost UT 工程 {ut_src}/CMakeLists.txt")
 
     build_dir = WORK_ROOT / "ophost_ut"
+    # CMake 缓存记录了绝对源码路径，UT 工程搬家后复用旧缓存会直接报错退出。
+    cache = build_dir / "CMakeCache.txt"
+    if cache.is_file():
+        cached_src = next(
+            (
+                line.split("=", 1)[1].strip()
+                for line in cache.read_text(errors="ignore").splitlines()
+                if line.startswith("CMAKE_HOME_DIRECTORY:")
+            ),
+            None,
+        )
+        if cached_src and Path(cached_src) != ut_src:
+            print(f"[ut-ophost] 源码目录已变更（{cached_src} -> {ut_src}），清理旧缓存")
+            shutil.rmtree(build_dir)
     build_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[1/2] 配置并编译 ophost UT ({build_dir})...")

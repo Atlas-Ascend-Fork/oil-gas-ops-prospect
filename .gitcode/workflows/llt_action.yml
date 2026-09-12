@@ -1,0 +1,72 @@
+name: llt_action
+
+# 无卡门禁用例（LLT）：不依赖 NPU 设备，PR 触发时全量执行。
+#   1. ophost 侧 tiling 单元测试（googletest + ctest）
+#   2. Triton 算子 CPU 回退精度测试（pytest）
+#   3. Triton kernel 全分支 AOT 编译检查
+
+on:
+  workflow_call:
+    inputs:
+      task_name:
+        required: true
+        type: string
+      image_version:
+        required: true
+        type: string
+      arch:
+        required: false
+        type: string
+        default: 'x64'
+      spec:
+        required: false
+        type: string
+        default: 'large'
+
+jobs:
+  JOB_llt:
+    name: LLT
+    steps:
+      -
+        name: Checkout
+        identifier: process_checkout
+        uses: checkout
+        with:
+          ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
+          allow-unsafe-pr-checkout: true
+      -
+        name: ophost_ut
+        run: |
+          cd ${{ steps.process_checkout.outputs.path }}
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j "$(nproc)"
+          ctest --test-dir build --output-on-failure
+      -
+        name: triton_cpu_fallback_ut
+        run: |
+          cd ${{ steps.process_checkout.outputs.path }}
+          python3 -m pytest tests/triton/real_fft -v
+      -
+        name: triton_aot_compile_check
+        run: |
+          cd ${{ steps.process_checkout.outputs.path }}
+          python3 triton-ascend/tools/aot_compile_check.py
+      -
+        name: upload
+        uses: obs-upload
+        if: ${{ always() }}
+        with:
+          endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
+          bucket: "ascend-ci"
+          access-key: ${{ secrets.AK }}
+          secret-key: ${{ secrets.SK }}
+          artifact-path: |
+            ${{ steps.process_checkout.outputs.path }}/build/Testing/**
+          object-prefix: ${{ env.obs_path }}/llt/
+    if: "${{ default() }}"
+    runs-on:
+      - self-hosted
+      - arch=${{ inputs.arch }}
+      - spec=${{ inputs.spec }}
+    container:
+      image: swr.cn-north-4.myhuaweicloud.com/ci_cann/${{ inputs.image_version }}

@@ -1,0 +1,127 @@
+# 目录结构
+
+```text
+oil-gas-ops-prospect/
+├── LICENSE                                     # 许可证（Apache License 2.0）
+├── README.md                                   # 项目入口文档
+├── CONTRIBUTING.md                             # 贡献指南
+├── SECURITY.md                                 # 安全声明（含公网地址声明表）
+├── CHANGELOG.md                                # 变更记录
+├── OAT.xml                                     # 开源合规扫描配置
+├── Third_Party_Open_Source_Software_List.yaml  # 三方件清单
+├── Third_Party_Open_Source_Software_Notice     # 三方件版权与许可证声明
+├── .gitignore                                  # Git 忽略规则
+├── .clang-format                               # C++ 代码格式
+├── .pre-commit-config.yaml                     # 提交前检查钩子
+├── build.sh                                    # 顶层构建入口（OPP + whl + 冒烟；-u 跑无卡 UT）
+├── CMakeLists.txt                              # 顶层 CMake（无卡 C++ 目标：ophost UT）
+├── version.cmake                               # 版本与依赖定义
+├── requirements.txt                            # Python 依赖声明
+├── pyproject.toml                              # Python 打包元数据
+├── setup.py                                    # Python 打包与 pybind 扩展构建
+│
+├── .gitcode/
+│   └── workflows/                              # GitCode Action 门禁流水线
+│       ├── PR-pipeline_oil-gas-ops-prospect.yml #   门禁总编排
+│       ├── compile_action.yml                  #   编译（x86 / aarch64）
+│       ├── llt_action.yml                      #   无卡 LLT（ophost UT + Triton 精度 + AOT 编译）
+│       └── staticcheck_action.yml              #   静态检查
+│
+├── cmake/                                      # CMake 模块
+│   ├── security_flags.cmake                    #   安全编译选项
+│   └── third_party/
+│       └── googletest.cmake                    #   googletest 依赖解析（gitcode 镜像）
+│
+├── ascendc/                                    # ★ AscendC 算子（交付物：CANN OPP .run 包）
+│   ├── README.md                               #   AscendC 侧详细说明
+│   ├── build.sh                                #   AscendC 侧入口（--pkg 打包 / -u --ophost 跑 UT）
+│   ├── build.py                                #   打包实现（msopgen + merge + CustomOp）
+│   ├── operators/
+│   │   ├── manifest.tsv                        #   算子注册表（tab 分隔）
+│   │   ├── _common/                            #   多算子共用的 host/kernel 头
+│   │   ├── complex_mul/                        #   ComplexMul
+│   │   │   ├── op_host/                        #     OpDef / InferShape / Tiling
+│   │   │   └── op_kernel/                      #     kernel 实现
+│   │   ├── complex_mul_grad/                   #   ComplexMulGrad
+│   │   ├── fused_bias_softmax/                 #   FusedBiasSoftmax
+│   │   └── fused_softmax_grad/                 #   FusedSoftmaxGrad
+│   ├── pybind/                                 #   打包为 oil_gas_ops_prospect（按算子名暴露模块）
+│   │   ├── __init__.py
+│   │   ├── complex_mul.py                      #     ComplexMul Python API
+│   │   ├── fused_bias_softmax.py               #     FusedBiasSoftmax / FusedSoftmaxGrad
+│   │   └── csrc/                               #     <op_family>/bindings.cpp → <op_family>_npu
+│   ├── pybind_extensions.py                    #   C++ 扩展统一定义
+│   ├── pybind_setup.py                         #   就地编译入口
+│   ├── scripts/                                #   构建流程内部模块（被 build.py 导入）
+│   └── _work/                                  #   msopgen 临时工程（构建产生，不纳入版本管理）
+│
+├── triton-ascend/                              # ★ Triton-Ascend 算子（real_fft 打包为 oil_gas_ops_prospect.real_fft）
+│   ├── real_fft/                               #   real_rfft / real_irfft
+│   │   ├── triton_fft_real.py                  #     Triton kernel 与 autograd 封装
+│   │   └── README.md
+│   └── tools/
+│       └── aot_compile_check.py                #   无卡 AOT 编译检查
+│
+├── tests/                                       # ★ 全部测试用例（算子目录内不放用例）
+│   ├── conftest.py                             #   pytest 收集配置
+│   ├── test_oil_gas_ops_prospect_whl.py        #   基于已安装 whl 的冒烟用例
+│   ├── run_whl_tests.sh                        #   构建 whl → 安装 → 跑冒烟
+│   ├── ascendc/
+│   │   ├── ophost/                             #   tiling UT（googletest，无卡可跑）
+│   │   ├── complex_mul/                        #   NPU 精度/性能对比测试
+│   │   └── fused_bias_softmax/                 #   融合注意力 NPU 精度/性能对比
+│   └── triton/
+│       └── real_fft/                           #   rFFT / iRFFT 精度（无卡回退 CPU）
+│
+├── examples/                                   # 示例代码
+├── scripts/                                    # 辅助脚本
+│   ├── build_options.sh                        #   根目录 build.sh 的选项解析与分节帮助
+│   ├── check_license_header.sh                 #   许可证头检查
+│   └── local_pkg.py                            #   裸 checkout 下解析 oil_gas_ops_prospect 导入名
+├── docs/                                       # 文档
+│   ├── README.md                               #   文档导航
+│   ├── QUICKSTART.md                           #   快速入门
+│   └── zh/                                     #   中文文档
+│       ├── op_list.md                          #     算子列表
+│       ├── api_list.md                         #     接口列表
+│       ├── context/                            #     背景与环境
+│       ├── develop/                            #     开发指南与规格
+│       │   ├── operator_development_guide.md   #       新增算子步骤
+│       │   ├── operator-dev-spec.md            #       约束、交付件与验收
+│       │   └── precision_acceptance_template.md
+│       ├── debug/                              #     调试与性能
+│       └── invocation/                         #     调用示例
+└── output/                                     # 统一产物目录（构建产生，不纳入版本管理）
+    ├── <SOC>/oil_gas_ops_prospect_opp_<os>_<arch>.run
+    └── wheels/oil_gas_ops_prospect-*.whl
+```
+
+## 两类算子后端的分工
+
+本仓按**交付物形态**分为两个业务目录，标记为 ★：
+
+| 目录 | 后端 | 交付物 | 何时用 |
+|------|------|--------|--------|
+| `ascendc/` | AscendC | CANN OPP `.run` 算子包，暴露 `aclnn` 接口 | 需要精细控制切分与流水、追求极致性能的算子 |
+| `triton-ascend/` | Triton-Ascend | Python whl 内的 Triton kernel | 用 Python 快速表达、依赖 autograd、形态多变的算子 |
+
+两者最终都通过统一的 Python 包 `oil_gas_ops_prospect` 按**算子名**对外暴露（源码树里**没有**这个目录，由 `setup.py` 的 `package_dir` 在打包时组装，不区分后端）：
+
+- `oil_gas_ops_prospect.complex_mul` → `ascendc/pybind/complex_mul.py`
+- `oil_gas_ops_prospect.fused_bias_softmax` → `ascendc/pybind/fused_bias_softmax.py`
+- `oil_gas_ops_prospect.real_fft` → `triton-ascend/real_fft/`
+
+裸 checkout 通过 `scripts/local_pkg.py`（examples / pytest `conftest.py` 会自动激活）把上述目录挂到同一导入名下，因此装包与不装包时调用方式一致。验证已安装 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`（`tests/run_whl_tests.sh` 已处理），避免测到仓内源码。
+
+## 产物与临时目录
+
+以下目录由构建产生，已在 `.gitignore` 中排除，不纳入版本管理：
+
+| 目录 | 内容 |
+|------|------|
+| `output/` | OPP `.run` 算子包与 Python whl |
+| `ascendc/_work/` | msopgen 生成的临时算子工程、ophost UT 构建目录 |
+| `build/`、`*.egg-info/` | Python 扩展编译中间件 |
+| `test_result/` | 测试报告导出件 |
+
+`OIL_GAS_OPS_OUTPUT_DIR` 可覆盖 `output/` 的位置，对 `build.sh`、`ascendc/build.sh --pkg`、`tests/run_whl_tests.sh` 均生效。

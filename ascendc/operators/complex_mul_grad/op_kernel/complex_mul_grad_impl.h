@@ -1,15 +1,20 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
- * ComplexMulGradOg：
+ * ComplexMulGrad：
  *   gur =  gwr*vr + gwi*vi
  *   gui = -gwr*vi + gwi*vr
  *   gvr =  gwr*ur + gwi*ui
@@ -40,20 +45,20 @@ public:
     __aicore__ inline ComplexMulGradKernel() {}
 
     __aicore__ inline void Init(GM_ADDR gwr, GM_ADDR gwi, GM_ADDR ur, GM_ADDR ui, GM_ADDR vr, GM_ADDR vi, GM_ADDR gur,
-                                GM_ADDR gui, GM_ADDR gvr, GM_ADDR gvi, const ComplexMulGradTilingData &tiling,
-                                TPipe *pipe)
+                                GM_ADDR gui, GM_ADDR gvr, GM_ADDR gvi, const ComplexMulGradTilingData& tiling,
+                                TPipe* pipe)
     {
         const int64_t numel = tiling.totalElems;
-        gwrGm_.SetGlobalBuffer((__gm__ float *)gwr, numel);
-        gwiGm_.SetGlobalBuffer((__gm__ float *)gwi, numel);
-        urGm_.SetGlobalBuffer((__gm__ float *)ur, numel);
-        uiGm_.SetGlobalBuffer((__gm__ float *)ui, numel);
-        vrGm_.SetGlobalBuffer((__gm__ float *)vr, numel);
-        viGm_.SetGlobalBuffer((__gm__ float *)vi, numel);
-        gurGm_.SetGlobalBuffer((__gm__ float *)gur, numel);
-        guiGm_.SetGlobalBuffer((__gm__ float *)gui, numel);
-        gvrGm_.SetGlobalBuffer((__gm__ float *)gvr, numel);
-        gviGm_.SetGlobalBuffer((__gm__ float *)gvi, numel);
+        gwrGm_.SetGlobalBuffer((__gm__ float*)gwr, numel);
+        gwiGm_.SetGlobalBuffer((__gm__ float*)gwi, numel);
+        urGm_.SetGlobalBuffer((__gm__ float*)ur, numel);
+        uiGm_.SetGlobalBuffer((__gm__ float*)ui, numel);
+        vrGm_.SetGlobalBuffer((__gm__ float*)vr, numel);
+        viGm_.SetGlobalBuffer((__gm__ float*)vi, numel);
+        gurGm_.SetGlobalBuffer((__gm__ float*)gur, numel);
+        guiGm_.SetGlobalBuffer((__gm__ float*)gui, numel);
+        gvrGm_.SetGlobalBuffer((__gm__ float*)gvr, numel);
+        gviGm_.SetGlobalBuffer((__gm__ float*)gvi, numel);
 
         InitTiles(numel, tiling.tileFloats, tiling.coreNum, IN_SLOTS, OUT_SLOTS, pipe);
     }
@@ -68,13 +73,12 @@ public:
         CopyInPad(in[3 * t], uiGm_[gmOff], cur);
         CopyInPad(in[4 * t], vrGm_[gmOff], cur);
         CopyInPad(in[5 * t], viGm_[gmOff], cur);
-        inQue_.EnQue(in);
-        return inQue_.DeQue<float>();
+        return EnqueueIn(in);
     }
 
-    __aicore__ inline void ComputeTile(LocalTensor<float> in, LocalTensor<float> out, LocalTensor<float> tmp,
-                                       int32_t cur)
+    __aicore__ inline void ProcessTile(int64_t gmOff, int32_t cur, LocalTensor<float> tmp)
     {
+        LocalTensor<float> in = LoadTile(gmOff, cur);
         const uint32_t t = SlotStride();
         LocalTensor<float> gwr = in[0];
         LocalTensor<float> gwi = in[t];
@@ -83,43 +87,35 @@ public:
         LocalTensor<float> vr = in[4 * t];
         LocalTensor<float> vi = in[5 * t];
 
-        // gur = gwr*vr + gwi*vi
-        FusedMulAdd(out[0], tmp, gwr, vr, gwi, vi, cur);
-        // gui = -gwr*vi + gwi*vr
-        FusedMulSub(out[t], tmp, gwr, vi, gwi, vr, cur);
-        // gvr = gwr*ur + gwi*ui
-        FusedMulAdd(out[2 * t], tmp, gwr, ur, gwi, ui, cur);
-        // gvi = -gwr*ui + gwi*ur
-        FusedMulSub(out[3 * t], tmp, gwr, ui, gwi, ur, cur);
-    }
-
-    __aicore__ inline void StoreTile(int64_t gmOff, LocalTensor<float> out, int32_t cur)
-    {
-        const uint32_t t = SlotStride();
-        CopyOutPad(gurGm_[gmOff], out[0], cur);
-        CopyOutPad(guiGm_[gmOff], out[t], cur);
-        CopyOutPad(gvrGm_[gmOff], out[2 * t], cur);
-        CopyOutPad(gviGm_[gmOff], out[3 * t], cur);
+        StoreOne(gurGm_[gmOff], tmp, gwr, vr, gwi, vi, cur, false);
+        StoreOne(guiGm_[gmOff], tmp, gwr, vi, gwi, vr, cur, true);
+        StoreOne(gvrGm_[gmOff], tmp, gwr, ur, gwi, ui, cur, false);
+        StoreOne(gviGm_[gmOff], tmp, gwr, ui, gwi, ur, cur, true);
+        inQue_.FreeTensor(in);
     }
 
 private:
-    /** dst = a0*a1 + b0*b1 */
-    __aicore__ inline void FusedMulAdd(LocalTensor<float> dst, LocalTensor<float> tmp, LocalTensor<float> a0,
-                                       LocalTensor<float> a1, LocalTensor<float> b0, LocalTensor<float> b1, int32_t cur)
+    /** dstGm = ±(a0*a1) + (b0*b1)；每路单独 EnQue/DeQue/CopyOut。 */
+    __aicore__ inline void StoreOne(GlobalTensor<float> dstGm, LocalTensor<float> tmp, LocalTensor<float> a0,
+                                    LocalTensor<float> a1, LocalTensor<float> b0, LocalTensor<float> b1, int32_t cur,
+                                    bool negA)
     {
-        Mul(dst, a0, a1, cur);
-        Mul(tmp, b0, b1, cur);
-        Add(dst, dst, tmp, cur);
-    }
-
-    /** dst = -a0*a1 + b0*b1 */
-    __aicore__ inline void FusedMulSub(LocalTensor<float> dst, LocalTensor<float> tmp, LocalTensor<float> a0,
-                                       LocalTensor<float> a1, LocalTensor<float> b0, LocalTensor<float> b1, int32_t cur)
-    {
-        Mul(dst, a0, a1, cur);
-        Muls(dst, dst, -1.0f, cur);
-        Mul(tmp, b0, b1, cur);
-        Add(dst, dst, tmp, cur);
+        const int32_t n = static_cast<int32_t>((static_cast<uint32_t>(cur) + 7u) & ~7u);
+        LocalTensor<float> out = outQue_.AllocTensor<float>();
+        Mul(out, a0, a1, n);
+        if (negA) {
+            PipeBarrier<PIPE_V>();
+            Muls(out, out, -1.0f, n);
+        }
+        Mul(tmp, b0, b1, n);
+        PipeBarrier<PIPE_V>();
+        Add(out, out, tmp, n);
+        outQue_.EnQue(out);
+        out = outQue_.DeQue<float>();
+        CopyOutPad(dstGm, out, cur);
+        SetFlag<HardEvent::MTE3_V>(EVENT_ID0);
+        WaitFlag<HardEvent::MTE3_V>(EVENT_ID0);
+        outQue_.FreeTensor(out);
     }
 
     GlobalTensor<float> gwrGm_, gwiGm_, urGm_, uiGm_, vrGm_, viGm_;

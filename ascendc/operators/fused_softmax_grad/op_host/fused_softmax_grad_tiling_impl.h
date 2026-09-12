@@ -1,15 +1,20 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
- * FusedSoftmaxGradOg 切分：platform 读取与高阶 Matmul tiling（MIX 路径）在此桥接，
+ * FusedSoftmaxGrad 切分：platform 读取与高阶 Matmul tiling（MIX 路径）在此桥接，
  * 平台无关的切分算法在 fused_softmax_grad_tiling_core.h（ophost UT 覆盖）。
  */
 
@@ -27,16 +32,14 @@
 namespace FusedSoftmaxGradHost {
 
 /** MIX 路径 MatmulApiTiling：g_p = go_p @ V_p^T，A=[Q,D] bf16 ND，B=[S,D] bf16 ND(transB)，C=[Q,S] ND half。 */
-inline bool ComputeMatmulTiling(platform_ascendc::PlatformAscendC &platform, uint64_t q, uint64_t s, uint64_t dLen,
-    optiling::TCubeTiling &mmTilingOut)
+inline bool ComputeMatmulTiling(platform_ascendc::PlatformAscendC& platform, uint64_t q, uint64_t s, uint64_t dLen,
+                                optiling::TCubeTiling& mmTilingOut)
 {
     matmul_tiling::MatmulApiTiling mmApi(platform);
-    mmApi.SetAType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND,
-        matmul_tiling::DataType::DT_BF16, false);
-    mmApi.SetBType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND,
-        matmul_tiling::DataType::DT_BF16, true);
-    mmApi.SetCType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND,
-        matmul_tiling::DataType::DT_FLOAT16);
+    mmApi.SetAType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, matmul_tiling::DataType::DT_BF16,
+                   false);
+    mmApi.SetBType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, matmul_tiling::DataType::DT_BF16, true);
+    mmApi.SetCType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, matmul_tiling::DataType::DT_FLOAT16);
     mmApi.SetBias(false);
     mmApi.SetOrgShape(q, s, dLen);
     mmApi.SetShape(q, s, dLen);
@@ -46,8 +49,8 @@ inline bool ComputeMatmulTiling(platform_ascendc::PlatformAscendC &platform, uin
 
 /** platform 读取并委托 core；结果写入 tiling 数据结构。 */
 inline bool ComputeFusedSoftmaxGradTiling(uint64_t batch, uint64_t channel, uint64_t q, uint64_t s, uint64_t dLen,
-    uint64_t dtypeKey, platform_ascendc::PlatformAscendC &platform, optiling::FusedSoftmaxGradTilingData &tilingData,
-    FusedSoftmaxGradPlan &plan)
+                                          uint64_t dtypeKey, platform_ascendc::PlatformAscendC& platform,
+                                          optiling::FusedSoftmaxGradTilingData& tilingData, FusedSoftmaxGradPlan& plan)
 {
     uint64_t ubSize = 0;
     platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
@@ -59,7 +62,7 @@ inline bool ComputeFusedSoftmaxGradTiling(uint64_t batch, uint64_t channel, uint
     if (!ComputeFusedSoftmaxGradTilingCore(batch, channel, q, s, dLen, dtypeKey, ubSize, params, plan)) {
         return false;
     }
-    plan.blockDim = 24; // 统一 MIX_AIC_1_2 任务形态：24 AIC + 48 AIV（向量 key 下 AIC 空转）
+    plan.blockDim = 24; // 统一 MIX_AIC_1_2：24 AIC + 48 AIV（向量 key 下 AIC 空转）
 
     if (params.useMix == 1) {
         if (!ComputeMatmulTiling(platform, q, s, dLen, tilingData.matmulTilingData)) {

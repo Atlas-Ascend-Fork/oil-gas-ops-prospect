@@ -1,11 +1,16 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Agreement Version 2.0 (the "License").
-# Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-# See LICENSE in the root of the software repository for the full text of the License.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 # -----------------------------------------------------------------------------------------------------------
 
 """custom_multi_op_gen 公共配置与路径。"""
@@ -59,11 +64,24 @@ DUMMY_OP_IR = [
 ]
 
 
+def ensure_private_work_root() -> Path:
+    """创建 `_work` 并去掉 group/other 写权限。
+
+    NFS 默认 umask 经常给出 0775；msopgen 会拒绝这类目录（security risks）。
+    """
+    WORK_ROOT.mkdir(parents=True, exist_ok=True)
+    os.chmod(WORK_ROOT, 0o700)
+    return WORK_ROOT
+
+
 def write_dummy_op_ir_json(path: Path | None = None) -> Path:
     """写入 msopgen -i 所需的 JSON，默认放在 _work/ 下（已 gitignore）。"""
+    ensure_private_work_root()
     out = path or (WORK_ROOT / ".msopgen_dummy.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(DUMMY_OP_IR, indent=4) + "\n", encoding="utf-8")
+    # msopgen 拒绝 group/other 可写的输入文件（NFS 默认 umask 会踩中）。
+    os.chmod(out, 0o600)
     return out
 
 

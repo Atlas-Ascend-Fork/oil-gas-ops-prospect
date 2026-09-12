@@ -1,23 +1,28 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
- * FusedSoftmaxGradOg 切分算法核心（不依赖 platform_ascendc / gert / CANN 头）。
- * ophost UT（ascendc/tests/ophost/）直接驱动本文件的纯函数。
+ * FusedSoftmaxGrad 切分算法核心（不依赖 platform_ascendc / gert / CANN 头）。
+ * ophost UT（tests/ascendc/ophost/）直接驱动本文件的纯函数。
  *
  * 路径选择（tiling key，与 kernel 侧 TILING_KEY_IS 一致）：
  *   0: fp32 → 纯向量（2201 fixpipe C 16bit 结构上限：g 以 half 落盘的量化误差
  *      ~4.9e-4 必超 fp32 契约 rtol=1e-4，hi/lo split 多矩乘同样过不了 16bit 落盘）
  *   1: fp16 → 纯向量（fp16 契约 rtol=5e-4 与 half-g 量化误差 4.9e-4 过近）
- *   2: bf16 且 (S%16!=0 或 D%16!=0) → 纯向量（cube ND 对齐要求）
- *   3: bf16 且对齐 → MIX_AIC_1_2（AIC 矩乘 + AIV JVP）
+ *   2: bf16 且 V plane 能放进 UB → 纯向量（含对齐形状；精度优先）
+ *   3: bf16 且 S/D 16 对齐、且 VEC 预算溢出 → MIX_AIC_1_2（AIC 矩乘 + AIV JVP）
  */
 
 #ifndef FUSED_SOFTMAX_GRAD_TILING_CORE_H
@@ -36,6 +41,7 @@ constexpr uint64_t FSG_FP32_ALIGN = 8;          // fp32 32B 对齐元素数
 constexpr uint64_t FSG_HALF_ALIGN = 16;         // 16bit 32B 对齐元素数
 constexpr uint64_t FSG_UB_RESERVE_VEC = 49152;  // 向量路径余量：行缓冲 + Sum tmp + slack
 constexpr uint64_t FSG_UB_RESERVE_MIX = 65536;  // MIX 路径 AIV 余量：Sum tmp + slack
+constexpr uint64_t FSG_AIV_UB_910B = 196608;    // 910B AIV UB；platform 回报偏小时仍按此决策 VEC/MIX
 constexpr uint64_t FSG_MIX_ROW_BYTES_ELEM = 16; // MIX 每行每元素 UB 字节：p16(2)+g16(2)+p32(4)+g32(4)+t32(4)
 constexpr uint64_t FSG_HALF_SIZE = 2;
 
@@ -54,13 +60,10 @@ struct FusedSoftmaxGradPlan {
     uint64_t gBytes = 0;
 };
 
-inline uint64_t FsgAlignUp(uint64_t a, uint64_t base)
-{
-    return (base == 0) ? 0 : (a + base - 1) / base * base;
-}
+inline uint64_t FsgAlignUp(uint64_t a, uint64_t base) { return (base == 0) ? 0 : (a + base - 1) / base * base; }
 
 /**
- * FusedSoftmaxGradOg 切分主入口（平台无关）。
+ * FusedSoftmaxGrad 切分主入口（平台无关）。
  *
  * @param q/s 方阵假设解除后的两维（Q≠S 合法）
  * @param dLen gradOutput/values 末维
@@ -69,7 +72,8 @@ inline uint64_t FsgAlignUp(uint64_t a, uint64_t base)
  * @return false = 参数或 UB 预算不满足
  */
 inline bool ComputeFusedSoftmaxGradTilingCore(uint64_t batch, uint64_t channel, uint64_t q, uint64_t s, uint64_t dLen,
-    uint64_t dtypeKey, uint64_t ubSize, FusedSoftmaxGradCoreParams &params, FusedSoftmaxGradPlan &plan)
+                                              uint64_t dtypeKey, uint64_t ubSize, FusedSoftmaxGradCoreParams& params,
+                                              FusedSoftmaxGradPlan& plan)
 {
     if (q == 0 || s == 0 || dLen == 0 || batch == 0 || channel == 0 || ubSize == 0) {
         return false;
@@ -80,13 +84,19 @@ inline bool ComputeFusedSoftmaxGradTilingCore(uint64_t batch, uint64_t channel, 
     params.padS = FsgAlignUp(s, align);
     params.padD = FsgAlignUp(dLen, align);
 
-    // MIX 资格：bf16 且 S/D 均 16 对齐（openfold 生产形态）
-    params.useMix = (dtypeKey == FSG_KEY_BF16_VEC && dLen % FSG_HALF_ALIGN == 0 && s % FSG_HALF_ALIGN == 0) ? 1 : 0;
+    // 向量路径预算：V plane fp32 驻留 UB（S*padD*4）+ 行缓冲/Sum tmp 余量。
+    // bf16 对齐时也可以走 VEC；只在 VEC 放不下时才上 MIX（cube 输出 half 的量化
+    // 与部分方形 GEMM 在 910B2 上不稳定）。
+    const uint64_t vBytes = s * params.padD * 4;
+    // platform.GetCoreMemSize 在部分 CANN 上会回报偏小（64KB），把本可进 UB
+    // 的对齐形状误判成 MIX；910B 实际 AIV UB 为 192KB，取二者较大值决策。
+    const uint64_t vecBudget = ubSize > FSG_AIV_UB_910B ? ubSize : FSG_AIV_UB_910B;
+    const bool vecFits = (vBytes + FSG_UB_RESERVE_VEC <= vecBudget);
+    const bool mixEligible = (dtypeKey == FSG_KEY_BF16_VEC && dLen % FSG_HALF_ALIGN == 0 && s % FSG_HALF_ALIGN == 0);
+    params.useMix = (!vecFits && mixEligible) ? 1 : 0;
 
     if (params.useMix == 0) {
-        // 向量路径：V plane fp32 驻留 UB（S*padD*4）+ 行缓冲/Sum tmp 余量
-        const uint64_t vBytes = s * params.padD * 4;
-        if (vBytes + FSG_UB_RESERVE_VEC > ubSize) {
+        if (!vecFits) {
             return false;
         }
         plan.tilingKey = dtypeKey; // 0/1/2 均为向量 key

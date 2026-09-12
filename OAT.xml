@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--   Copyright (c) 2026 Huawei Technologies Co., Ltd.
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+-->
+
+<configuration>
+    <oatconfig>
+        <licensefile>LICENSE</licensefile>
+        <policylist>
+            <policy name="projectPolicy" desc="">
+                <policyitem type="license" name="Apache-2.0" path=".*" desc="oil-gas-ops-prospect is released under Apache License 2.0"/>
+                <policyitem type="copyright" name="Huawei Technologies Co., Ltd." path=".*" rule="may" group="defaultGroup" filefilter="copyrightPolicyFilter" desc=""/>
+            </policy>
+        </policylist>
+        <filefilterlist>
+            <filefilter name="defaultFilter" desc="Files not to check">
+                <filteritem type="filename" name="*.tsv" desc="Operator manifest, tab separated data file without comment syntax"/>
+                <filteritem type="filepath" name="output/.*" desc="Build artifacts, not tracked"/>
+                <filteritem type="filepath" name="ascendc/_work/.*" desc="msopgen scratch project, not tracked"/>
+            </filefilter>
+            <filefilter name="defaultPolicyFilter" desc="Filters for compatibility, license header policies">
+                <filteritem type="filename" name="*.yaml" desc="YAML config files"/>
+                <filteritem type="filename" name="*.yml" desc="YAML config files"/>
+                <filteritem type="filename" name="*.tsv" desc="Operator manifest, tab separated data file without comment syntax"/>
+                <filteritem type="filename" name="*.md" desc="Markdown documents"/>
+                <filteritem type="filename" name="requirements.txt" desc="Dependency declaration"/>
+                <filteritem type="filename" name=".gitignore" desc="Git ignore rules"/>
+                <filteritem type="filename" name=".clang-format" desc="Code style config"/>
+                <filteritem type="filename" name=".gitkeep" desc="Git directory placeholder, no license header required"/>
+            </filefilter>
+            <filefilter name="copyrightPolicyFilter" desc="Filters for copyright header policies">
+                <filteritem type="filename" name="*.yaml" desc="YAML config files"/>
+                <filteritem type="filename" name="*.yml" desc="YAML config files"/>
+                <filteritem type="filename" name="*.tsv" desc="Operator manifest, tab separated data file without comment syntax"/>
+                <filteritem type="filename" name="*.md" desc="Markdown documents"/>
+                <filteritem type="filename" name="requirements.txt" desc="Dependency declaration"/>
+                <filteritem type="filename" name=".gitignore" desc="Git ignore rules"/>
+                <filteritem type="filename" name=".clang-format" desc="Code style config"/>
+                <filteritem type="filename" name=".gitkeep" desc="Git directory placeholder, no copyright header required"/>
+            </filefilter>
+            <filefilter name="licenseFileNamePolicyFilter" desc="Filters for LICENSE file policies">
+            </filefilter>
+            <filefilter name="readmeFileNamePolicyFilter" desc="Filters for README file policies">
+            </filefilter>
+            <filefilter name="readmeOpenSourcefileNamePolicyFilter" desc="Filters for README.OpenSource file policies">
+            </filefilter>
+            <filefilter name="binaryFileTypePolicyFilter" desc="Filters for binary file policies">
+                <filteritem type="filename" name="*.png" desc="PNG image files for documentation"/>
+            </filefilter>
+        </filefilterlist>
+        <licensematcherlist>
+            <licensematcher name="Apache License 2.0" desc="If the scanning result is InvalidLicense, you can define matching rules here. Note that quotation marks must be escaped.">
+                <licensetext name="
+                    Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+                    you may not use this file except in compliance with the License.
+                    You may obtain a copy of the License at
+
+                        http://www.apache.org/licenses/LICENSE-2.0
+
+                    Unless required by applicable law or agreed to in writing, software
+                    distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+                    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+                    See the License for the specific language governing permissions and
+                    limitations under the License.
+                 " desc=""/>
+            </licensematcher>
+        </licensematcherlist>
+    </oatconfig>
+</configuration>

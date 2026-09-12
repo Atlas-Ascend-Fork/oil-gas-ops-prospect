@@ -1,15 +1,20 @@
 /**
  * Copyright (c) 2025 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
- * ComplexMulOg host：CBS op_v 复数逐点乘。
+ * ComplexMul host：CBS op_v 复数逐点乘。
  *   wr = ur*vr - ui*vi
  *   wi = ur*vi + ui*vr
  */
@@ -31,7 +36,7 @@ constexpr uint32_t kOutputCount = 2;
 
 namespace optiling {
 
-static ge::graphStatus ComplexMulTilingFunc(gert::TilingContext *context)
+static ge::graphStatus ComplexMulTilingFunc(gert::TilingContext* context)
 {
     return OgOpsCommon::RunElementwiseTiling<ComplexMulTilingData, ComplexMulHost::ComplexMulPlan>(
         context, kShapeInput, ComplexMulHost::ComputeComplexMulTiling);
@@ -41,12 +46,12 @@ static ge::graphStatus ComplexMulTilingFunc(gert::TilingContext *context)
 
 namespace ge {
 
-static ge::graphStatus ComplexMulInferShape(gert::InferShapeContext *context)
+static ge::graphStatus ComplexMulInferShape(gert::InferShapeContext* context)
 {
     return OgOpsCommon::InferSameShapeOutputs(context, kShapeInput, kOutputCount);
 }
 
-static ge::graphStatus ComplexMulInferDataType(gert::InferDataTypeContext *context)
+static ge::graphStatus ComplexMulInferDataType(gert::InferDataTypeContext* context)
 {
     return OgOpsCommon::InferFloatOutputs(context, kOutputCount);
 }
@@ -55,9 +60,9 @@ static ge::graphStatus ComplexMulInferDataType(gert::InferDataTypeContext *conte
 
 namespace ops {
 
-class ComplexMulOg : public OpDef {
+class ComplexMul : public OpDef {
 public:
-    explicit ComplexMulOg(const char *name) : OpDef(name)
+    explicit ComplexMul(const char* name) : OpDef(name)
     {
         DeclareRequiredFloatNdIo(*this, {"ur", "ui", "vr", "vi"}, {"wr", "wi"});
         this->SetInferShape(ge::ComplexMulInferShape).SetInferDataType(ge::ComplexMulInferDataType);
@@ -66,5 +71,5 @@ public:
     }
 };
 
-OP_ADD(ComplexMulOg);
+OP_ADD(ComplexMul);
 } // namespace ops

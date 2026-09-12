@@ -1,19 +1,24 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
- * FusedBiasSoftmaxOg 切分算法核心（不依赖 platform_ascendc / gert / CANN 头）。
+ * FusedBiasSoftmax 切分算法核心（不依赖 platform_ascendc / gert / CANN 头）。
  *
  * 抽出目的：tiling 入口依赖 gert::TilingContext，平台读取依赖 PlatformAscendC，
  * 两者在 CANN 二进制包下都无法在 UT 里构造；把与平台无关的切分算法隔离到本文件
- * 后，ophost UT（ascendc/tests/ophost/）直接驱动真实算法（无卡可跑）。
+ * 后，ophost UT（tests/ascendc/ophost/）直接驱动真实算法（无卡可跑）。
  *
  * UB 预算模型（每行字节数，padLineNum = width 对齐到 32B 的元素数）：
  *   x 载入 + y 写出 + xF32 中转(非 fp32) + 各 bias 载入 + 各 bias F32 中转(非 fp32)
@@ -59,13 +64,10 @@ struct FusedBiasSoftmaxPlan {
     uint64_t tilingKey = 0;
 };
 
-inline uint64_t FbsCeilDiv(uint64_t a, uint64_t b)
-{
-    return (b == 0) ? 0 : (a + b - 1) / b;
-}
+inline uint64_t FbsCeilDiv(uint64_t a, uint64_t b) { return (b == 0) ? 0 : (a + b - 1) / b; }
 
 /** width 对齐到 32B 的元素数与 padding 个数。 */
-inline void ComputePadding(uint64_t width, uint64_t dtypeSize, uint64_t &paddingNum, uint64_t &padLineNum)
+inline void ComputePadding(uint64_t width, uint64_t dtypeSize, uint64_t& paddingNum, uint64_t& padLineNum)
 {
     if (dtypeSize == 0) { // G.EXP.22 防御：调用方已校验，此处兜底
         paddingNum = 0;
@@ -82,8 +84,8 @@ inline void ComputePadding(uint64_t width, uint64_t dtypeSize, uint64_t &padding
  * 每行 UB 字节数（UB 预算模型，见文件头）。
  * bcastBias1 为真时附加广播 bias1 的 distinct 行缓存（≤2 行）与单行 fp32 转换暂存。
  */
-inline uint64_t ComputeMaxByteLine(uint64_t padLineNum, uint64_t dtypeSize, bool isFp32,
-    uint64_t hasB1, uint64_t hasB2, bool b1Full)
+inline uint64_t ComputeMaxByteLine(uint64_t padLineNum, uint64_t dtypeSize, bool isFp32, uint64_t hasB1, uint64_t hasB2,
+                                   bool b1Full)
 {
     uint64_t biasPerElem = 0;
     if (hasB2 != 0) {
@@ -103,10 +105,10 @@ inline uint64_t ComputeMaxByteLine(uint64_t padLineNum, uint64_t dtypeSize, bool
  * 行切分：totalLine 均分到 aivNum 核，每核按 rowsPerIter 分拍，尾拍取余。
  * 大核 = totalLine % aivNum 个，各多处理 1 行。
  */
-inline void ComputeRowSplit(uint64_t totalLine, uint64_t aivNum, uint64_t rowsPerIter,
-    uint64_t &headCoreNum, uint64_t &lineHeadCore, uint64_t &iterHeadCore, uint64_t &lineHeadIter,
-    uint64_t &lineLastHeadIter, uint64_t &lineTailCore, uint64_t &iterTailCore, uint64_t &lineTailIter,
-    uint64_t &lineLastTailIter)
+inline void ComputeRowSplit(uint64_t totalLine, uint64_t aivNum, uint64_t rowsPerIter, uint64_t& headCoreNum,
+                            uint64_t& lineHeadCore, uint64_t& iterHeadCore, uint64_t& lineHeadIter,
+                            uint64_t& lineLastHeadIter, uint64_t& lineTailCore, uint64_t& iterTailCore,
+                            uint64_t& lineTailIter, uint64_t& lineLastTailIter)
 {
     if (aivNum == 0 || rowsPerIter == 0) { // G.EXP.22 防御：调用方已校验，此处兜底
         headCoreNum = 0;
@@ -134,7 +136,7 @@ inline void ComputeRowSplit(uint64_t totalLine, uint64_t aivNum, uint64_t rowsPe
 }
 
 /**
- * FusedBiasSoftmaxOg 切分主入口（平台无关）。
+ * FusedBiasSoftmax 切分主入口（平台无关）。
  *
  * @param batch/channel/height/width x 的 4D 形状
  * @param dtypeSize      元素字节数（4/2）
@@ -148,8 +150,9 @@ inline void ComputeRowSplit(uint64_t totalLine, uint64_t aivNum, uint64_t rowsPe
  * @return false = 参数或 UB 预算不满足，host 侧返回 tiling 失败
  */
 inline bool ComputeFusedBiasSoftmaxTilingCore(uint64_t batch, uint64_t channel, uint64_t height, uint64_t width,
-    uint64_t dtypeSize, uint64_t dtypeKey, uint64_t hasB1, uint64_t hasB2, uint64_t b1Full,
-    uint64_t ubSize, uint64_t aivNum, FusedBiasSoftmaxCoreParams &params, FusedBiasSoftmaxPlan &plan)
+                                              uint64_t dtypeSize, uint64_t dtypeKey, uint64_t hasB1, uint64_t hasB2,
+                                              uint64_t b1Full, uint64_t ubSize, uint64_t aivNum,
+                                              FusedBiasSoftmaxCoreParams& params, FusedBiasSoftmaxPlan& plan)
 {
     const bool isFp32 = (dtypeKey == FBS_KEY_FP32);
     if (width == 0 || width > 4096 || height == 0 || dtypeSize == 0 || aivNum == 0) {
@@ -161,8 +164,7 @@ inline bool ComputeFusedBiasSoftmaxTilingCore(uint64_t batch, uint64_t channel, 
 
     ComputePadding(width, dtypeSize, params.paddingNum, params.padLineNum);
 
-    const uint64_t maxByteLine =
-        ComputeMaxByteLine(params.padLineNum, dtypeSize, isFp32, hasB1, hasB2, b1Full == 1);
+    const uint64_t maxByteLine = ComputeMaxByteLine(params.padLineNum, dtypeSize, isFp32, hasB1, hasB2, b1Full == 1);
     if (maxByteLine == 0 || ubSize <= FBS_SOFTMAX_BUF_SIZE) {
         return false;
     }
@@ -176,8 +178,8 @@ inline bool ComputeFusedBiasSoftmaxTilingCore(uint64_t batch, uint64_t channel, 
         return false;
     }
     ComputeRowSplit(totalLine, aivNum, availableLinePerIter, params.headCoreNum, params.lineHeadCore,
-        params.iterHeadCore, params.lineHeadIter, params.lineLastHeadIter, params.lineTailCore, params.iterTailCore,
-        params.lineTailIter, params.lineLastTailIter);
+                    params.iterHeadCore, params.lineHeadIter, params.lineLastHeadIter, params.lineTailCore,
+                    params.iterTailCore, params.lineTailIter, params.lineLastTailIter);
 
     params.coreNum = aivNum;
     plan.blockDim = aivNum;

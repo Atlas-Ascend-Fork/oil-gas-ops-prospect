@@ -1,20 +1,25 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
- * ComplexMulOg 切分算法核心（不依赖 platform_ascendc / gert）。
+ * ComplexMul 切分算法核心（不依赖 platform_ascendc / gert）。
  *
  * 抽出目的：tiling 入口 ComplexMulTilingFunc 需要 gert::TilingContext，而
  * ComputeComplexMulTiling 需要 platform_ascendc::PlatformAscendC，两者在
  * CANN 二进制包下都无法在 UT 里构造（无 gert faker）。把与平台无关的切分算法
- * 隔离到本文件后，ophost UT 可以直接覆盖（见 ascendc/tests/ophost/）。
+ * 隔离到本文件后，ophost UT 可以直接覆盖（见 tests/ascendc/ophost/）。
  *
  * 算法本身与 complex_mul_grad 共用，实现在 og_elementwise_tiling.h；本文件只
  * 声明本算子的 UB 份数。
@@ -40,8 +45,8 @@ constexpr int64_t UB_SLOT_FACTOR = 13;
 
 constexpr int64_t ALIGN_FLOATS = OgOpsCommon::ALIGN_FLOATS;
 constexpr int64_t UB_BUDGET_BYTES = OgOpsCommon::UB_BUDGET_BYTES;
-constexpr int64_t TILE_FLOATS_CAP =
-    (UB_BUDGET_BYTES / (UB_SLOT_FACTOR * static_cast<int64_t>(sizeof(float)))) / ALIGN_FLOATS * ALIGN_FLOATS;
+constexpr int64_t TILE_FLOATS_CAP = (UB_BUDGET_BYTES / (UB_SLOT_FACTOR * static_cast<int64_t>(sizeof(float)))) /
+                                    ALIGN_FLOATS * ALIGN_FLOATS;
 
 struct ComplexMulPlan {
     uint64_t tilingKey = COMPLEX_MUL_TILING_KEY;
@@ -54,7 +59,7 @@ struct ComplexMulPlan {
  * 便于 UT 直接构造。
  */
 inline bool ComputeComplexMulTilingCore(int64_t totalElems, uint32_t aivNum, uint64_t libApiWorkspace,
-                                        ComplexMulTilingData &tiling, ComplexMulPlan &plan)
+                                        ComplexMulTilingData& tiling, ComplexMulPlan& plan)
 {
     return OgOpsCommon::ComputeElementwiseTilingCore(totalElems, aivNum, libApiWorkspace, TILE_FLOATS_CAP,
                                                      COMPLEX_MUL_TILING_KEY, tiling, plan);

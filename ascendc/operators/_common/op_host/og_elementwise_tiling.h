@@ -1,11 +1,16 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /**
@@ -18,7 +23,7 @@
  *
  * 本文件由 scripts/merge_operators.py 从 operators/_common/op_host/ 平铺拷贝到
  * msopgen 工程的 op_host/ 下，与各算子的 *_tiling_core.h 同目录，故用无路径 include。
- * ophost UT 通过 tests/ophost/CMakeLists.txt 的 include 目录直接引用源码位置。
+ * ophost UT 通过 tests/ascendc/ophost/CMakeLists.txt 的 include 目录直接引用源码位置。
  */
 
 #ifndef OG_ELEMENTWISE_TILING_H
@@ -74,7 +79,7 @@ inline int64_t PickTileFloats(int64_t totalElems, int64_t tileFloatsCap)
  */
 template <typename TilingT, typename PlanT>
 inline bool ComputeElementwiseTilingCore(int64_t totalElems, uint32_t aivNum, uint64_t libApiWorkspace,
-                                         int64_t tileFloatsCap, uint64_t tilingKey, TilingT &tiling, PlanT &plan)
+                                         int64_t tileFloatsCap, uint64_t tilingKey, TilingT& tiling, PlanT& plan)
 {
     if (totalElems < 0) {
         return false;
