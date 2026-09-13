@@ -34,10 +34,10 @@ constexpr uint64_t kAivNum = 48;
 TEST(FusedBiasSoftmaxCore, Bf16DualBiasBroadcastTypical)
 {
     // [2,4,64,128] bf16 双 bias（bias1 广播）：openfold triangle attention 典型形态
-    // padLineNum = 128（128*2B=256B 已 32B 对齐）
-    // maxByteLine = 128*(2*2 + 4 + (2+4)*2) + 2*128*2 + 128*4 = 2560 + 1024 = 3584
-    // rowsPerIter = (196608-32768)/3584 = 45（向下取整）
-    // totalLine = 512 = 48*10 + 32 → 大核 32 个各 11 行，小核 16 个各 10 行
+    // padLineNum = 128。入队 x/y/b2 按 depth=2：queued=6, compute=8
+    // maxByteLine = 128*(6*2+8) + 2*2*128*2 + 128*4 = 2560 + 1024 + 512 = 4096
+    // rowsPerIter = (196608-32768)/4096 = 40
+    // totalLine = 512，最少核 = ceil(512/40)=13 → 5 个大核各 40 行，8 个小核各 39 行（1 拍）
     FusedBiasSoftmaxHost::FusedBiasSoftmaxCoreParams params;
     FusedBiasSoftmaxHost::FusedBiasSoftmaxPlan plan;
     ASSERT_TRUE(FusedBiasSoftmaxHost::ComputeFusedBiasSoftmaxTilingCore(
@@ -45,23 +45,23 @@ TEST(FusedBiasSoftmaxCore, Bf16DualBiasBroadcastTypical)
 
     EXPECT_EQ(params.paddingNum, 0u);
     EXPECT_EQ(params.padLineNum, 128u);
-    EXPECT_EQ(params.coreNum, 48u);
-    EXPECT_EQ(params.headCoreNum, 32u);
-    EXPECT_EQ(params.lineHeadCore, 11u);
+    EXPECT_EQ(params.coreNum, 13u);
+    EXPECT_EQ(params.headCoreNum, 5u);
+    EXPECT_EQ(params.lineHeadCore, 40u);
     EXPECT_EQ(params.iterHeadCore, 1u);
-    EXPECT_EQ(params.lineHeadIter, 45u);
-    EXPECT_EQ(params.lineLastHeadIter, 11u);
-    EXPECT_EQ(params.lineTailCore, 10u);
+    EXPECT_EQ(params.lineHeadIter, 40u);
+    EXPECT_EQ(params.lineLastHeadIter, 40u);
+    EXPECT_EQ(params.lineTailCore, 39u);
     EXPECT_EQ(params.iterTailCore, 1u);
-    EXPECT_EQ(params.lineLastTailIter, 10u);
-    EXPECT_EQ(plan.blockDim, 48u);
+    EXPECT_EQ(params.lineLastTailIter, 39u);
+    EXPECT_EQ(plan.blockDim, 13u);
     EXPECT_EQ(plan.tilingKey, FusedBiasSoftmaxHost::FBS_KEY_BF16);
 }
 
 TEST(FusedBiasSoftmaxCore, Fp32NoBias)
 {
-    // [2,4,64,64] fp32 无 bias：fp32 无 xF32 中转项，maxByteLine = 64*(2*4) = 512，
-    // rowsPerIter = (196608-32768)/512 = 320
+    // [2,4,64,64] fp32 无 bias：queued=8 × depth2，maxByteLine = 64*16 = 1024，
+    // rowsPerIter = (196608-32768)/1024 = 160
     FusedBiasSoftmaxHost::FusedBiasSoftmaxCoreParams params;
     FusedBiasSoftmaxHost::FusedBiasSoftmaxPlan plan;
     ASSERT_TRUE(FusedBiasSoftmaxHost::ComputeFusedBiasSoftmaxTilingCore(
@@ -69,9 +69,13 @@ TEST(FusedBiasSoftmaxCore, Fp32NoBias)
 
     EXPECT_EQ(params.padLineNum, 64u);
     EXPECT_EQ(params.paddingNum, 0u);
-    EXPECT_EQ(params.headCoreNum, 32u);
-    EXPECT_EQ(params.lineHeadIter, 320u);
-    EXPECT_EQ(params.lineLastHeadIter, 11u);
+    EXPECT_EQ(params.coreNum, 4u); // ceil(512/160)=4，不再开 48 核
+    EXPECT_EQ(params.headCoreNum, 0u);
+    EXPECT_EQ(params.lineTailCore, 128u);
+    EXPECT_EQ(params.lineHeadIter, 160u);
+    EXPECT_EQ(params.iterTailCore, 1u);
+    EXPECT_EQ(params.lineLastTailIter, 128u);
+    EXPECT_EQ(plan.blockDim, 4u);
     EXPECT_EQ(plan.tilingKey, FusedBiasSoftmaxHost::FBS_KEY_FP32);
 }
 
@@ -85,21 +89,23 @@ TEST(FusedBiasSoftmaxCore, Fp32NonAlignedWidthPadsTo32B)
 
     EXPECT_EQ(params.paddingNum, 7u);
     EXPECT_EQ(params.padLineNum, 48u);
+    EXPECT_EQ(params.coreNum, 1u); // 41 行 < rowsPerIter，单核 1 拍
+    EXPECT_EQ(plan.blockDim, 1u);
 }
 
 TEST(FusedBiasSoftmaxCore, FullBias1HasNoBcastOverhead)
 {
     // bias1 全尺寸 vs 广播：全尺寸不含 bcast 附加项，rowsPerIter 更大
-    // 全尺寸: maxByteLine = 128*(4+4+12) = 2560 → rows = 163840/2560 = 64
-    // 广播:   maxByteLine = 3584 → rows = 45
+    // 全尺寸: queued=8, compute=12 → 128*(16+12)=3584 → rows = 163840/3584 = 45
+    // 广播:   4096 → rows = 40
     FusedBiasSoftmaxHost::FusedBiasSoftmaxCoreParams fullParams, bcastParams;
     FusedBiasSoftmaxHost::FusedBiasSoftmaxPlan plan;
     ASSERT_TRUE(FusedBiasSoftmaxHost::ComputeFusedBiasSoftmaxTilingCore(
         2, 4, 64, 128, 2, FusedBiasSoftmaxHost::FBS_KEY_BF16, 1, 1, 1, kUbSize, kAivNum, fullParams, plan));
     ASSERT_TRUE(FusedBiasSoftmaxHost::ComputeFusedBiasSoftmaxTilingCore(
         2, 4, 64, 128, 2, FusedBiasSoftmaxHost::FBS_KEY_BF16, 1, 1, 0, kUbSize, kAivNum, bcastParams, plan));
-    EXPECT_EQ(fullParams.lineHeadIter, 64u);
-    EXPECT_EQ(bcastParams.lineHeadIter, 45u);
+    EXPECT_EQ(fullParams.lineHeadIter, 45u);
+    EXPECT_EQ(bcastParams.lineHeadIter, 40u);
     EXPECT_GT(fullParams.lineHeadIter, bcastParams.lineHeadIter);
 }
 
@@ -123,6 +129,28 @@ TEST(FusedBiasSoftmaxCore, RejectsInvalidInputs)
     // dtypeSize 为 0
     EXPECT_FALSE(FusedBiasSoftmaxHost::ComputeFusedBiasSoftmaxTilingCore(
         1, 1, 8, 128, 0, FusedBiasSoftmaxHost::FBS_KEY_BF16, 0, 0, 0, kUbSize, kAivNum, params, plan));
+}
+
+TEST(FusedBiasSoftmaxCore, Bf16LargeNoBiasUsesMultipleIters)
+{
+    // [8,8,256,256] bf16 无 bias：queued=4, compute=4 → 256*12=3072
+    // rowsPerIter = 163840/3072 = 53
+    // totalLine = 16384 = 48*341 + 16 → 大核 16 个各 342 行，7 拍
+    FusedBiasSoftmaxHost::FusedBiasSoftmaxCoreParams params;
+    FusedBiasSoftmaxHost::FusedBiasSoftmaxPlan plan;
+    ASSERT_TRUE(FusedBiasSoftmaxHost::ComputeFusedBiasSoftmaxTilingCore(
+        8, 8, 256, 256, 2, FusedBiasSoftmaxHost::FBS_KEY_BF16, 0, 0, 0, kUbSize, kAivNum, params, plan));
+
+    EXPECT_EQ(params.padLineNum, 256u);
+    EXPECT_EQ(params.coreNum, 48u);
+    EXPECT_EQ(params.headCoreNum, 16u);
+    EXPECT_EQ(params.lineHeadCore, 342u);
+    EXPECT_EQ(params.lineHeadIter, 53u);
+    EXPECT_EQ(params.iterHeadCore, 7u);
+    EXPECT_EQ(params.lineLastHeadIter, 24u);
+    EXPECT_EQ(params.lineTailCore, 341u);
+    EXPECT_EQ(params.iterTailCore, 7u);
+    EXPECT_EQ(params.lineLastTailIter, 23u);
 }
 
 TEST(FusedBiasSoftmaxCore, Fp16UsesFp16Key)

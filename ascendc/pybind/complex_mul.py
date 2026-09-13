@@ -76,10 +76,9 @@ def torch_complex_mul_grad(
 
 def _ascendc_forward(ur, ui, vr, vi):
     ext = _load_extension()
-    wr, wi = ext.complex_mul_forward(
+    return ext.complex_mul_forward(
         ur.contiguous(), ui.contiguous(), vr.contiguous(), vi.contiguous()
     )
-    return wr, wi
 
 
 def _ascendc_backward(gwr, gwi, ur, ui, vr, vi):

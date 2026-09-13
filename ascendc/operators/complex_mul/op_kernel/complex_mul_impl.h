@@ -50,8 +50,11 @@ public:
         uiGm_.SetGlobalBuffer((__gm__ float*)ui, numel);
         vrGm_.SetGlobalBuffer((__gm__ float*)vr, numel);
         viGm_.SetGlobalBuffer((__gm__ float*)vi, numel);
-        wrGm_.SetGlobalBuffer((__gm__ float*)wr, numel);
-        wiGm_.SetGlobalBuffer((__gm__ float*)wi, numel);
+        // CANN 9 TBE 常不绑定第二路输出。绑定侧把 wr/wi 放进同一块 2*numel
+        // 缓冲，kernel 只用第一路基址推导 wi，保证一次 launch 写齐两路。
+        (void)wi;
+        wrGm_.SetGlobalBuffer((__gm__ float*)wr, numel * 2);
+        wiGm_.SetGlobalBuffer((__gm__ float*)wr + numel, numel);
 
         InitTiles(numel, tiling.tileFloats, tiling.coreNum, IN_SLOTS, OUT_SLOTS, pipe);
     }

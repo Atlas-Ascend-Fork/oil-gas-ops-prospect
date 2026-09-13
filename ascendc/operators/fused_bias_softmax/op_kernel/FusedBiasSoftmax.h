@@ -26,6 +26,8 @@
 
 namespace AscendC {
 
+constexpr uint32_t FBS_QUE_DEPTH = 2;
+
 template <typename T1, typename T2>
 __aicore__ inline T1 FbsCeilDiv(T1 a, T2 b)
 {
@@ -50,8 +52,8 @@ public:
         gmY.SetGlobalBuffer((__gm__ T*)y + this->coreOffset);
 
         uint64_t bufSize = tilingData.padLineNum * tilingData.lineHeadIter;
-        pipe.InitBuffer(inQueueX, 1, bufSize * sizeof(T));
-        pipe.InitBuffer(outQueueY, 1, bufSize * sizeof(T));
+        pipe.InitBuffer(inQueueX, FBS_QUE_DEPTH, bufSize * sizeof(T));
+        pipe.InitBuffer(outQueueY, FBS_QUE_DEPTH, bufSize * sizeof(T));
 
         if constexpr (!std::is_same<T, float>::value) {
             pipe.InitBuffer(bufX, bufSize * sizeof(float));
@@ -66,7 +68,7 @@ public:
         this->tilingData = tilingData;
 
         if (this->hasB2) {
-            pipe.InitBuffer(inQueueB2, 1, bufSize * sizeof(T));
+            pipe.InitBuffer(inQueueB2, FBS_QUE_DEPTH, bufSize * sizeof(T));
             if constexpr (!std::is_same<T, float>::value) {
                 pipe.InitBuffer(bufB2F32, bufSize * sizeof(float));
             }
@@ -74,14 +76,14 @@ public:
         }
         if (this->hasB1) {
             if (this->b1Full) {
-                pipe.InitBuffer(inQueueB1, 1, bufSize * sizeof(T));
+                pipe.InitBuffer(inQueueB1, FBS_QUE_DEPTH, bufSize * sizeof(T));
                 if constexpr (!std::is_same<T, float>::value) {
                     pipe.InitBuffer(bufB1F32, bufSize * sizeof(float));
                 }
             } else {
                 // 广播形态: 每次迭代只需 ceil(lineHeadIter/qPerPlane)+1 行
                 this->b1RowsMax = FbsCeilDiv(tilingData.lineHeadIter, this->qPerPlane) + 1;
-                pipe.InitBuffer(inQueueB1, 1, this->b1RowsMax * tilingData.padLineNum * sizeof(T));
+                pipe.InitBuffer(inQueueB1, FBS_QUE_DEPTH, this->b1RowsMax * tilingData.padLineNum * sizeof(T));
                 if constexpr (!std::is_same<T, float>::value) {
                     pipe.InitBuffer(bufBRow, tilingData.padLineNum * sizeof(float));
                 }
@@ -103,20 +105,27 @@ public:
         }
 
         uint64_t loop = this->blockIdx >= tilingData.headCoreNum ? tilingData.iterTailCore : tilingData.iterHeadCore;
-        uint64_t linePerIter = this->linesPerIter;
+        if (loop == 0) {
+            return;
+        }
+        CopyIn(0, LinesAt(0, loop));
         for (uint64_t idx = 0u; idx < loop; ++idx) {
-            // tail iter
-            if (idx == loop - 1) {
-                linePerIter = this->linesLastIter;
+            uint64_t linePerIter = LinesAt(idx, loop);
+            if (idx + 1 < loop) {
+                CopyIn(idx + 1, LinesAt(idx + 1, loop));
             }
             this->elePerIter = tilingData.padLineNum * linePerIter;
-            CopyIn(idx, linePerIter);
             Compute(idx, linePerIter);
             CopyOut(idx, linePerIter);
         }
     }
 
 private:
+    __aicore__ inline uint64_t LinesAt(uint64_t idx, uint64_t loop)
+    {
+        return (idx + 1 == loop) ? this->linesLastIter : this->linesPerIter;
+    }
+
     __aicore__ inline void CopyIn(uint64_t idx, uint64_t linePerIter)
     {
         uint64_t curLine = this->startLineOffset + idx * this->linesPerIter;
@@ -148,8 +157,8 @@ private:
     }
 
     // 多行批量载入 bias 行, 每行落位 padLineNum 对齐(rightPadding 补齐), 与 x 布局一致
-    __aicore__ inline void CopyBiasRows(TQue<QuePosition::VECIN, 1>& queue, GlobalTensor<T>& gm, uint64_t firstRow,
-                                        uint64_t rows)
+    __aicore__ inline void CopyBiasRows(TQue<QuePosition::VECIN, FBS_QUE_DEPTH>& queue, GlobalTensor<T>& gm,
+                                        uint64_t firstRow, uint64_t rows)
     {
         LocalTensor<T> bTensor = queue.AllocTensor<T>();
         DataCopyExtParams params = {static_cast<uint16_t>(rows), static_cast<uint32_t>(this->width * sizeof(T)), 0, 0,
@@ -277,10 +286,10 @@ private:
 
 private:
     TPipe pipe;
-    TQue<QuePosition::VECIN, 1> inQueueX;
-    TQue<QuePosition::VECIN, 1> inQueueB1;
-    TQue<QuePosition::VECIN, 1> inQueueB2;
-    TQue<QuePosition::VECOUT, 1> outQueueY;
+    TQue<QuePosition::VECIN, FBS_QUE_DEPTH> inQueueX;
+    TQue<QuePosition::VECIN, FBS_QUE_DEPTH> inQueueB1;
+    TQue<QuePosition::VECIN, FBS_QUE_DEPTH> inQueueB2;
+    TQue<QuePosition::VECOUT, FBS_QUE_DEPTH> outQueueY;
 
     GlobalTensor<T> gmX;
     GlobalTensor<T> gmY;

@@ -65,7 +65,7 @@ inline bool ComputeFusedSoftmaxGradTiling(uint64_t batch, uint64_t channel, uint
     plan.blockDim = 24; // 统一 MIX_AIC_1_2：24 AIC + 48 AIV（向量 key 下 AIC 空转）
 
     if (params.useMix == 1) {
-        if (!ComputeMatmulTiling(platform, q, s, dLen, tilingData.matmulTilingData)) {
+        if (!ComputeMatmulTiling(platform, q, params.padS, params.padD, tilingData.matmulTilingData)) {
             return false;
         }
     }

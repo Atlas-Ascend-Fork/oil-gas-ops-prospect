@@ -23,3 +23,24 @@ if(COMMAND add_ops_compile_options)
         OPTIONS --cce-auto-sync=off
     )
 endif()
+
+# CANN 9 NnopbaseMatchArgs 按 shape 命中后复用旧 executor，原地写回会空跑。
+# npu_op_code_gen 已在本文件之前跑完，此处改掉这两个融合算子的 autogen。
+foreach(_og_name aclnn_fused_bias_softmax.cpp aclnn_fused_softmax_grad.cpp)
+    set(_og_file "${ASCEND_AUTOGEN_PATH}/${_og_name}")
+    if(EXISTS "${_og_file}")
+        file(READ "${_og_file}" _og_src)
+        if(NOT _og_src MATCHES "oil_gas_ops_prospect disable MatchArgs")
+            string(REGEX REPLACE
+                "    if \\(NnopbaseSetMatchArgsFlag != NULL\\) \\{\r?\n        NnopbaseSetMatchArgsFlag\\(\\*executor\\);\r?\n    \\}"
+                "    /* oil_gas_ops_prospect disable MatchArgs */"
+                _og_src "${_og_src}")
+            string(REGEX REPLACE
+                "    if \\(NnopbaseMatchArgs != NULL\\) \\{\r?\n        if \\(NnopbaseMatchArgs\\(\\*executor, workspaceSize\\)\\) \\{\r?\n            NnopbaseReportApiInfo\\(timeStamp, dfxId\\);\r?\n            return ACLNN_SUCCESS;\r?\n        \\}\r?\n    \\}"
+                "    /* oil_gas_ops_prospect disable MatchArgs hit */"
+                _og_src "${_og_src}")
+            file(WRITE "${_og_file}" "${_og_src}")
+            message(STATUS "[oil_gas] disabled MatchArgs in ${_og_name}")
+        endif()
+    endif()
+endforeach()

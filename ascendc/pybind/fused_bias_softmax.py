@@ -78,23 +78,20 @@ def torch_fused_softmax_grad(probs, grad_output, values):
 
 # ── AscendC 路径 ──────────────────────────────────────────────────────
 
-def _fresh(t):
-    """新分配连续缓冲，避免 aclnn 缓存写到旧 device 指针；并断开 NZ 视图。"""
-    if t is None:
-        return None
-    out = torch.empty_like(t)
-    out.copy_(t)
-    return out.contiguous()
-
-
 def _ascendc_fused_bias_softmax(x, bias1, bias2):
     ext = _load_extension()
-    return ext.fused_bias_softmax_forward(_fresh(x), _fresh(bias1), _fresh(bias2))
+    return ext.fused_bias_softmax_forward(
+        x.contiguous(),
+        None if bias1 is None else bias1.contiguous(),
+        None if bias2 is None else bias2.contiguous(),
+    )
 
 
 def _ascendc_fused_softmax_grad(probs, grad_output, values):
     ext = _load_extension()
-    return ext.fused_softmax_grad_backward(_fresh(probs), _fresh(grad_output), _fresh(values))
+    return ext.fused_softmax_grad_backward(
+        probs.contiguous(), grad_output.contiguous(), values.contiguous()
+    )
 
 
 def fused_bias_softmax(x: torch.Tensor, bias1: torch.Tensor | None = None,

@@ -55,10 +55,14 @@ public:
         uiGm_.SetGlobalBuffer((__gm__ float*)ui, numel);
         vrGm_.SetGlobalBuffer((__gm__ float*)vr, numel);
         viGm_.SetGlobalBuffer((__gm__ float*)vi, numel);
-        gurGm_.SetGlobalBuffer((__gm__ float*)gur, numel);
-        guiGm_.SetGlobalBuffer((__gm__ float*)gui, numel);
-        gvrGm_.SetGlobalBuffer((__gm__ float*)gvr, numel);
-        gviGm_.SetGlobalBuffer((__gm__ float*)gvi, numel);
+        // 与前向相同：TBE 会丢掉后几路输出指针，四路写进 gur 起的连续缓冲。
+        (void)gui;
+        (void)gvr;
+        (void)gvi;
+        gurGm_.SetGlobalBuffer((__gm__ float*)gur, numel * 4);
+        guiGm_.SetGlobalBuffer((__gm__ float*)gur + numel, numel);
+        gvrGm_.SetGlobalBuffer((__gm__ float*)gur + numel * 2, numel);
+        gviGm_.SetGlobalBuffer((__gm__ float*)gur + numel * 3, numel);
 
         InitTiles(numel, tiling.tileFloats, tiling.coreNum, IN_SLOTS, OUT_SLOTS, pipe);
     }

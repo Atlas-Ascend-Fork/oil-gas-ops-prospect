@@ -22,9 +22,9 @@
  * 对标 openfold attn_core_inplace_cuda.backward_（kernel 内对角内积 + JVP +
  * 原地覆写），替换 torch 分解序列 bmm + _softmax_backward_data + copy_。
  *
- * 架构：bf16 对齐形状走 MIX_AIC_1_2 两阶段（AIC 矩乘 g(half) 写 user workspace
- * → SyncAll → AIV JVP）；fp32/fp16/非对齐 bf16 走纯向量精度路径（dtype 分发，
- * tiling key 0-3）。fp32 走 cube 受 fixpipe C 16bit 结构上限，见 PR 测试报告。
+ * 架构：全部 bf16 走 MIX_AIC_1_2（未对齐时 AIV 先 pad 再 AIC 矩乘 g(half)
+ * → SyncAll → AIV JVP）；fp32/fp16 走纯向量（tiling key 0/1）。fp32 走 cube
+ * 受 fixpipe C 16bit 结构上限，见 PR 测试报告。
  */
 
 #include <cstdint>

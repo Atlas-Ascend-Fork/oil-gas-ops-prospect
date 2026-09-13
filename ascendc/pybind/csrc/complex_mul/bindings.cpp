@@ -40,9 +40,11 @@ aclnnStatus aclnnComplexMulGrad(void* workspace, uint64_t workspaceSize, aclOpEx
 
 namespace {
 
+using OgPybind::BindTensorAddr;
 using OgPybind::Destroy;
-using OgPybind::DestroyExecutor;
+using OgPybind::MakeExecutorRepeatable;
 using OgPybind::ShapeOf;
+using OgPybind::StableWorkspace;
 
 std::vector<int64_t> ContiguousStrides(const std::vector<int64_t>& shape)
 {
@@ -53,57 +55,22 @@ std::vector<int64_t> ContiguousStrides(const std::vector<int64_t>& shape)
     return strides;
 }
 
-aclTensor* CreateNdTensor(const std::vector<int64_t>& shape, void* deviceData)
+int64_t NumelOf(const std::vector<int64_t>& shape)
 {
-    auto strides = ContiguousStrides(shape);
     int64_t numel = 1;
     for (auto d : shape) {
         numel *= d;
     }
-    std::vector<int64_t> storageDims = {numel};
-    // 与 fused_bias_softmax 一致：1-D storage 描述符，避免执行器缓存
-    // 复用时多输出指针未重绑定（第二路 wi / 前两路 gur,gui 会 silently 错）。
-    return aclCreateTensor(shape.data(), shape.size(), ACL_FLOAT, strides.data(), 0, ACL_FORMAT_ND, storageDims.data(),
-                           1, deviceData);
+    return numel;
 }
 
-/** 只取第一路 wr=a*c-b*d。CANN 9 TBE 会丢掉同一 kernel 里的第二路 wi。 */
-at::Tensor LaunchComplexMulFirst(const at::Tensor& a, const at::Tensor& b, const at::Tensor& c, const at::Tensor& d)
+aclTensor* CreateNdTensor(const std::vector<int64_t>& shape, void* deviceData, int64_t storageNumel = -1)
 {
-    at::Tensor wr = at::empty_like(a);
-    at::Tensor wiDiscard = at::empty_like(a);
-    auto shape = ShapeOf(a);
-
-    aclTensor* aT = CreateNdTensor(shape, a.data_ptr());
-    aclTensor* bT = CreateNdTensor(shape, b.data_ptr());
-    aclTensor* cT = CreateNdTensor(shape, c.data_ptr());
-    aclTensor* dT = CreateNdTensor(shape, d.data_ptr());
-    aclTensor* wrT = CreateNdTensor(shape, wr.data_ptr());
-    aclTensor* wiT = CreateNdTensor(shape, wiDiscard.data_ptr());
-
-    aclrtStream stream = c10_npu::getCurrentNPUStream().stream(false);
-    uint64_t workspaceSize = 0;
-    aclOpExecutor* executor = nullptr;
-    auto ret = aclnnComplexMulGetWorkspaceSize(aT, bT, cT, dT, wrT, wiT, &workspaceSize, &executor);
-    TORCH_CHECK(ret == ACL_SUCCESS, "aclnnComplexMulGetWorkspaceSize failed, ret=", static_cast<int>(ret));
-
-    void* workspace = nullptr;
-    at::Tensor workspaceTensor;
-    if (workspaceSize > 0) {
-        workspaceTensor = at::empty({static_cast<int64_t>(workspaceSize)}, a.options().dtype(at::kByte));
-        workspace = workspaceTensor.data_ptr();
-    }
-    ret = aclnnComplexMul(workspace, workspaceSize, executor, stream);
-    DestroyExecutor(executor);
-    TORCH_CHECK(ret == ACL_SUCCESS, "aclnnComplexMul failed, ret=", static_cast<int>(ret));
-
-    Destroy(aT);
-    Destroy(bT);
-    Destroy(cT);
-    Destroy(dT);
-    Destroy(wrT);
-    Destroy(wiT);
-    return wr;
+    auto strides = ContiguousStrides(shape);
+    const int64_t numel = storageNumel > 0 ? storageNumel : NumelOf(shape);
+    std::vector<int64_t> storageDims = {numel};
+    return aclCreateTensor(shape.data(), shape.size(), ACL_FLOAT, strides.data(), 0, ACL_FORMAT_ND, storageDims.data(),
+                           1, deviceData);
 }
 
 } // namespace
@@ -117,12 +84,101 @@ std::vector<at::Tensor> complex_mul_forward(const at::Tensor& ur, const at::Tens
     TORCH_CHECK(ur.sizes() == ui.sizes() && ur.sizes() == vr.sizes() && ur.sizes() == vi.sizes(),
                 "complex_mul shape mismatch");
 
-    // CANN 9 TBE 会裁掉同一 kernel 的其中一路，两次 launch 又会命中错输入缓存。
-    // 前向两路都在 NPU 上按公式拼；反向仍走 ComplexMul 第一路（已对拍通过）。
-    at::Tensor wr = at::sub(at::mul(ur, vr), at::mul(ui, vi));
-    at::Tensor wi = at::add(at::mul(ur, vi), at::mul(ui, vr));
+    const auto shape = ShapeOf(ur);
+    const int64_t numel = ur.numel();
+    // 每次调用独立输出。TBE 只认第一路基址，wr/wi 必须落在同一块连续缓冲。
+    at::Tensor packed = at::empty({2, numel}, ur.options());
+    at::Tensor wr = packed.select(0, 0).view(ur.sizes());
+    at::Tensor wi = packed.select(0, 1).view(ur.sizes());
+
+    aclTensor* urT = CreateNdTensor(shape, ur.data_ptr());
+    aclTensor* uiT = CreateNdTensor(shape, ui.data_ptr());
+    aclTensor* vrT = CreateNdTensor(shape, vr.data_ptr());
+    aclTensor* viT = CreateNdTensor(shape, vi.data_ptr());
+    aclTensor* wrT = CreateNdTensor(shape, packed.data_ptr(), numel * 2);
+    aclTensor* wiT = CreateNdTensor(shape, packed.data_ptr());
+
+    aclrtStream stream = c10_npu::getCurrentNPUStream().stream(false);
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor = nullptr;
+    auto ret = aclnnComplexMulGetWorkspaceSize(urT, uiT, vrT, viT, wrT, wiT, &workspaceSize, &executor);
+    TORCH_CHECK(ret == ACL_SUCCESS, "aclnnComplexMulGetWorkspaceSize failed, ret=", static_cast<int>(ret));
+    MakeExecutorRepeatable(executor);
+    BindTensorAddr(executor, 0, urT, ur.data_ptr());
+    BindTensorAddr(executor, 1, uiT, ui.data_ptr());
+    BindTensorAddr(executor, 2, vrT, vr.data_ptr());
+    BindTensorAddr(executor, 3, viT, vi.data_ptr());
+    BindTensorAddr(executor, 4, wrT, packed.data_ptr());
+    BindTensorAddr(executor, 5, wiT, packed.data_ptr());
+
+    void* workspace = nullptr;
+    at::Tensor& workspaceTensor = StableWorkspace(false, workspaceSize, ur);
+    if (workspaceSize > 0) {
+        workspace = workspaceTensor.data_ptr();
+    }
+    ret = aclnnComplexMul(workspace, workspaceSize, executor, stream);
+    TORCH_CHECK(ret == ACL_SUCCESS, "aclnnComplexMul failed, ret=", static_cast<int>(ret));
+
+    Destroy(urT);
+    Destroy(uiT);
+    Destroy(vrT);
+    Destroy(viT);
+    Destroy(wrT);
+    Destroy(wiT);
     return {wr, wi};
 }
+
+namespace {
+
+void LaunchComplexMulGrad(const at::Tensor& gwr, const at::Tensor& gwi, const at::Tensor& ur, const at::Tensor& ui,
+                          const at::Tensor& vr, const at::Tensor& vi, at::Tensor& packed)
+{
+    const auto shape = ShapeOf(ur);
+    const int64_t numel = ur.numel();
+    aclTensor* gwrT = CreateNdTensor(shape, gwr.data_ptr());
+    aclTensor* gwiT = CreateNdTensor(shape, gwi.data_ptr());
+    aclTensor* urT = CreateNdTensor(shape, ur.data_ptr());
+    aclTensor* uiT = CreateNdTensor(shape, ui.data_ptr());
+    aclTensor* vrT = CreateNdTensor(shape, vr.data_ptr());
+    aclTensor* viT = CreateNdTensor(shape, vi.data_ptr());
+    aclTensor* gurT = CreateNdTensor(shape, packed.data_ptr(), numel * 4);
+    aclTensor* guiT = CreateNdTensor(shape, packed.data_ptr());
+    aclTensor* gvrT = CreateNdTensor(shape, packed.data_ptr());
+    aclTensor* gviT = CreateNdTensor(shape, packed.data_ptr());
+
+    aclrtStream stream = c10_npu::getCurrentNPUStream().stream(false);
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor = nullptr;
+    auto ret = aclnnComplexMulGradGetWorkspaceSize(gwrT, gwiT, urT, uiT, vrT, viT, gurT, guiT, gvrT, gviT,
+                                                   &workspaceSize, &executor);
+    TORCH_CHECK(ret == ACL_SUCCESS, "aclnnComplexMulGradGetWorkspaceSize failed, ret=", static_cast<int>(ret));
+    MakeExecutorRepeatable(executor);
+    BindTensorAddr(executor, 0, gwrT, gwr.data_ptr());
+    BindTensorAddr(executor, 1, gwiT, gwi.data_ptr());
+    BindTensorAddr(executor, 2, urT, ur.data_ptr());
+    BindTensorAddr(executor, 3, uiT, ui.data_ptr());
+    BindTensorAddr(executor, 4, vrT, vr.data_ptr());
+    BindTensorAddr(executor, 5, viT, vi.data_ptr());
+    BindTensorAddr(executor, 6, gurT, packed.data_ptr());
+    BindTensorAddr(executor, 7, guiT, packed.data_ptr());
+    BindTensorAddr(executor, 8, gvrT, packed.data_ptr());
+    BindTensorAddr(executor, 9, gviT, packed.data_ptr());
+
+    void* workspace = nullptr;
+    at::Tensor& workspaceTensor = StableWorkspace(true, workspaceSize, ur);
+    if (workspaceSize > 0) {
+        workspace = workspaceTensor.data_ptr();
+    }
+    ret = aclnnComplexMulGrad(workspace, workspaceSize, executor, stream);
+    TORCH_CHECK(ret == ACL_SUCCESS, "aclnnComplexMulGrad failed, ret=", static_cast<int>(ret));
+
+    aclTensor* tensors[] = {gwrT, gwiT, urT, uiT, vrT, viT, gurT, guiT, gvrT, gviT};
+    for (aclTensor* t : tensors) {
+        Destroy(t);
+    }
+}
+
+} // namespace
 
 std::vector<at::Tensor> complex_mul_backward(const at::Tensor& gwr, const at::Tensor& gwi, const at::Tensor& ur,
                                              const at::Tensor& ui, const at::Tensor& vr, const at::Tensor& vi)
@@ -132,11 +188,13 @@ std::vector<at::Tensor> complex_mul_backward(const at::Tensor& gwr, const at::Te
                 "complex_mul_grad inputs must be contiguous");
     TORCH_CHECK(gwr.scalar_type() == at::kFloat, "complex_mul_grad requires float32");
 
-    // 复用 ComplexMul 第一路 Sub：TBE 会丢掉 Grad kernel 的前几路写回。
-    at::Tensor gur = LaunchComplexMulFirst(gwr, gwi, vr, vi.neg());
-    at::Tensor gui = LaunchComplexMulFirst(gwi, gwr, vr, vi);
-    at::Tensor gvr = LaunchComplexMulFirst(gwr, gwi, ur, ui.neg());
-    at::Tensor gvi = LaunchComplexMulFirst(gwi, gwr, ur, ui);
+    const int64_t numel = ur.numel();
+    at::Tensor packed = at::empty({4, numel}, ur.options());
+    at::Tensor gur = packed.select(0, 0).view(ur.sizes());
+    at::Tensor gui = packed.select(0, 1).view(ur.sizes());
+    at::Tensor gvr = packed.select(0, 2).view(ur.sizes());
+    at::Tensor gvi = packed.select(0, 3).view(ur.sizes());
+    LaunchComplexMulGrad(gwr, gwi, ur, ui, vr, vi, packed);
     return {gur, gui, gvr, gvi};
 }
 

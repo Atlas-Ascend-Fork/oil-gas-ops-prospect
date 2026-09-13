@@ -31,26 +31,58 @@ namespace {
 
 constexpr uint64_t kUbSize = 196608; // 910B AIV UB
 
-TEST(FusedSoftmaxGradCore, Bf16AlignedFitsVecPrefersVec)
+TEST(FusedSoftmaxGradCore, Bf16AlignedGoesMix)
 {
-    // bf16 [8,8,256,256] D64：S/D 对齐，但 V plane 65KB+余量仍进 UB → 走 VEC（key=2）
+    // bf16 [8,8,256,256] D64：S/D 均 16 对齐 → MIX（key=3），即使 V plane 能进 UB
+    // rowsPerIter = (196608-65536)/(16*256) = 131072/4096 = 32
+    // gBytes = 8*8*256*256*2 = 8MB
     FusedSoftmaxGradHost::FusedSoftmaxGradCoreParams params;
     FusedSoftmaxGradHost::FusedSoftmaxGradPlan plan;
     ASSERT_TRUE(FusedSoftmaxGradHost::ComputeFusedSoftmaxGradTilingCore(
         8, 8, 256, 256, 64, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC, kUbSize, params, plan));
 
-    EXPECT_EQ(params.useMix, 0u);
+    EXPECT_EQ(params.useMix, 1u);
     EXPECT_EQ(params.padS, 256u);
     EXPECT_EQ(params.padD, 64u);
-    EXPECT_EQ(plan.tilingKey, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC);
-    EXPECT_EQ(plan.gBytes, 0u);
+    EXPECT_EQ(params.rowsPerIter, 32u);
+    EXPECT_EQ(plan.tilingKey, FusedSoftmaxGradHost::FSG_KEY_BF16_MIX);
+    EXPECT_EQ(plan.gBytes, 8388608u);
 }
 
-TEST(FusedSoftmaxGradCore, Bf16AlignedGoesMixWhenVecOverflows)
+TEST(FusedSoftmaxGradCore, Bf16AlignedGoesMixWhenVecWouldFit)
 {
-    // bf16 [1,1,256,256] D256：V plane 256KB 超 UB → MIX（key=3）
-    // rowsPerIter = (196608-65536)/(16*256) = 131072/4096 = 32
-    // gBytes = 1*1*256*256*2 = 128KB
+    // bf16 [2,4,64,64] D64：M=N=K，padD 再垫 16 → 80（D-pad 路径）
+    // rowsPerIter = 131072/(16*64) = 128
+    // g = 8*64*64*2；A/B pad = 8*(64*80+64*80)*2
+    FusedSoftmaxGradHost::FusedSoftmaxGradCoreParams params;
+    FusedSoftmaxGradHost::FusedSoftmaxGradPlan plan;
+    ASSERT_TRUE(FusedSoftmaxGradHost::ComputeFusedSoftmaxGradTilingCore(
+        2, 4, 64, 64, 64, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC, kUbSize, params, plan));
+
+    EXPECT_EQ(params.useMix, 1u);
+    EXPECT_EQ(params.padS, 64u);
+    EXPECT_EQ(params.padD, 80u);
+    EXPECT_EQ(params.rowsPerIter, 128u);
+    EXPECT_EQ(plan.tilingKey, FusedSoftmaxGradHost::FSG_KEY_BF16_MIX);
+    EXPECT_EQ(plan.gBytes, 65536u + 163840u);
+}
+
+TEST(FusedSoftmaxGradCore, Bf16AlignedMixWhenPlatformUnderreportsUb)
+{
+    // platform 回报 64KB 时仍按 192KB 预算走 MIX，避免 avail=0 被拒
+    FusedSoftmaxGradHost::FusedSoftmaxGradCoreParams params;
+    FusedSoftmaxGradHost::FusedSoftmaxGradPlan plan;
+    ASSERT_TRUE(FusedSoftmaxGradHost::ComputeFusedSoftmaxGradTilingCore(
+        8, 8, 256, 256, 64, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC, 65536, params, plan));
+
+    EXPECT_EQ(params.useMix, 1u);
+    EXPECT_EQ(params.rowsPerIter, 32u);
+    EXPECT_EQ(plan.tilingKey, FusedSoftmaxGradHost::FSG_KEY_BF16_MIX);
+}
+
+TEST(FusedSoftmaxGradCore, Bf16AlignedWideGoesMix)
+{
+    // bf16 [1,1,256,256] D256：M=N=K，padD=272
     FusedSoftmaxGradHost::FusedSoftmaxGradCoreParams params;
     FusedSoftmaxGradHost::FusedSoftmaxGradPlan plan;
     ASSERT_TRUE(FusedSoftmaxGradHost::ComputeFusedSoftmaxGradTilingCore(
@@ -58,25 +90,40 @@ TEST(FusedSoftmaxGradCore, Bf16AlignedGoesMixWhenVecOverflows)
 
     EXPECT_EQ(params.useMix, 1u);
     EXPECT_EQ(params.padS, 256u);
-    EXPECT_EQ(params.padD, 256u);
+    EXPECT_EQ(params.padD, 272u);
     EXPECT_EQ(params.rowsPerIter, 32u);
     EXPECT_EQ(plan.tilingKey, FusedSoftmaxGradHost::FSG_KEY_BF16_MIX);
-    EXPECT_EQ(plan.gBytes, 131072u);
+    EXPECT_EQ(plan.gBytes, 131072u + 278528u);
 }
 
-TEST(FusedSoftmaxGradCore, Bf16NonAlignedDGoesVector)
+TEST(FusedSoftmaxGradCore, Bf16NonAlignedDGoesMixWithPad)
 {
-    // bf16 D=20（非 16 对齐）→ 向量路径（key=2），padD = alignUp(20,16) = 32
+    // bf16 D=20：pad 后走 MIX。g = 4*128*128*2；A/B pad = 4*(128*32+128*32)*2
     FusedSoftmaxGradHost::FusedSoftmaxGradCoreParams params;
     FusedSoftmaxGradHost::FusedSoftmaxGradPlan plan;
     ASSERT_TRUE(FusedSoftmaxGradHost::ComputeFusedSoftmaxGradTilingCore(
         2, 2, 128, 128, 20, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC, kUbSize, params, plan));
 
-    EXPECT_EQ(params.useMix, 0u);
+    EXPECT_EQ(params.useMix, 1u);
     EXPECT_EQ(params.padS, 128u);
     EXPECT_EQ(params.padD, 32u);
-    EXPECT_EQ(plan.tilingKey, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC);
-    EXPECT_EQ(plan.gBytes, 0u);
+    EXPECT_EQ(plan.tilingKey, FusedSoftmaxGradHost::FSG_KEY_BF16_MIX);
+    EXPECT_EQ(plan.gBytes, 131072u + 65536u);
+}
+
+TEST(FusedSoftmaxGradCore, Bf16NonAlignedSGoesMixWithPad)
+{
+    // bf16 S=20 D=16：B 按 padS=32 行。g = 16*32*2；A/B pad = (16*16+32*16)*2
+    FusedSoftmaxGradHost::FusedSoftmaxGradCoreParams params;
+    FusedSoftmaxGradHost::FusedSoftmaxGradPlan plan;
+    ASSERT_TRUE(FusedSoftmaxGradHost::ComputeFusedSoftmaxGradTilingCore(
+        1, 1, 16, 20, 16, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC, kUbSize, params, plan));
+
+    EXPECT_EQ(params.useMix, 1u);
+    EXPECT_EQ(params.padS, 32u);
+    EXPECT_EQ(params.padD, 16u);
+    EXPECT_EQ(plan.tilingKey, FusedSoftmaxGradHost::FSG_KEY_BF16_MIX);
+    EXPECT_EQ(plan.gBytes, 1024u + 1536u);
 }
 
 TEST(FusedSoftmaxGradCore, Fp32AlwaysVector)
@@ -117,20 +164,22 @@ TEST(FusedSoftmaxGradCore, VecPathRejectsVPlaneBeyondUb)
 
 TEST(FusedSoftmaxGradCore, MixRowsPerIterShrinksWithPadS)
 {
-    // MIX 仅在 VEC 预算溢出时启用。用两个超 UB 的对齐形状验证 rowsPerIter ∝ 1/padS。
+    // MIX：rowsPerIter 与 padS 成反比（16B/行元素预算）
+    FusedSoftmaxGradHost::FusedSoftmaxGradCoreParams smallParams;
     FusedSoftmaxGradHost::FusedSoftmaxGradCoreParams wideParams;
-    FusedSoftmaxGradHost::FusedSoftmaxGradCoreParams tallParams;
     FusedSoftmaxGradHost::FusedSoftmaxGradPlan plan;
-    // S=128 D=256：V=128KB+余量仍进 UB，这里改用 S=256 D=256（V=256KB）
+    ASSERT_TRUE(FusedSoftmaxGradHost::ComputeFusedSoftmaxGradTilingCore(
+        1, 1, 16, 16, 16, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC, kUbSize, smallParams, plan));
+    EXPECT_EQ(smallParams.useMix, 1u);
+    EXPECT_EQ(smallParams.padS, 16u);
+    EXPECT_EQ(smallParams.padD, 32u);         // M=N=K 再垫 K
+    EXPECT_EQ(smallParams.rowsPerIter, 512u); // 131072/(16*16)
+    EXPECT_EQ(plan.gBytes, 512u + 2048u);
+
     ASSERT_TRUE(FusedSoftmaxGradHost::ComputeFusedSoftmaxGradTilingCore(
         1, 1, 64, 256, 256, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC, kUbSize, wideParams, plan));
     EXPECT_EQ(wideParams.useMix, 1u);
     EXPECT_EQ(wideParams.rowsPerIter, 32u); // 131072/(16*256)
-    // S=128 D=512：V=256KB → MIX，padS=128 → rowsPerIter = 131072/(16*128) = 64
-    ASSERT_TRUE(FusedSoftmaxGradHost::ComputeFusedSoftmaxGradTilingCore(
-        1, 1, 64, 128, 512, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC, kUbSize, tallParams, plan));
-    EXPECT_EQ(tallParams.useMix, 1u);
-    EXPECT_EQ(tallParams.rowsPerIter, 64u);
 }
 
 TEST(FusedSoftmaxGradCore, RejectsInvalidInputs)
@@ -150,15 +199,15 @@ TEST(FusedSoftmaxGradCore, RejectsInvalidInputs)
 
 TEST(FusedSoftmaxGradCore, QNotEqualSAllowed)
 {
-    // Q≠S 合法（openfold MSA 形态 [2,4,64,128]）：V plane 能进 UB，走 VEC
+    // Q≠S 合法（openfold MSA 形态 [2,4,64,128]）：S/D 对齐 → MIX
     FusedSoftmaxGradHost::FusedSoftmaxGradCoreParams params;
     FusedSoftmaxGradHost::FusedSoftmaxGradPlan plan;
     ASSERT_TRUE(FusedSoftmaxGradHost::ComputeFusedSoftmaxGradTilingCore(
         2, 4, 64, 128, 32, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC, kUbSize, params, plan));
-    EXPECT_EQ(params.useMix, 0u);
+    EXPECT_EQ(params.useMix, 1u);
     EXPECT_EQ(params.padS, 128u);
-    EXPECT_EQ(plan.tilingKey, FusedSoftmaxGradHost::FSG_KEY_BF16_VEC);
-    EXPECT_EQ(plan.gBytes, 0u);
+    EXPECT_EQ(plan.tilingKey, FusedSoftmaxGradHost::FSG_KEY_BF16_MIX);
+    EXPECT_EQ(plan.gBytes, 2u * 4 * 64 * 128 * 2);
 }
 
 } // namespace

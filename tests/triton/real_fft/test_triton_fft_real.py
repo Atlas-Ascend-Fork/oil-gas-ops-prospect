@@ -102,7 +102,7 @@ def test_real_fft_cpu_fallback_matches_torch_fft(shape, dim):
     assert torch.allclose(y, ref_y, rtol=MIN_FFT_TOL, atol=MIN_FFT_TOL)
 
 
-@pytest.mark.parametrize("n", [7, 8, 16, 41])
+@pytest.mark.parametrize("n", [7, 8, 16, 41, 192, 320])
 def test_internal_fourier_basis_matches_torch_fft(n):
     torch.manual_seed(n)
     x = torch.randn((3, n), dtype=torch.float32)
@@ -117,6 +117,9 @@ def test_internal_fourier_basis_matches_torch_fft(n):
     y = xr @ irfft_cos.T - xi @ irfft_sin.T
     ref_y = torch.fft.irfft(ref, n=n, dim=-1, norm="ortho")
     assert torch.allclose(y, ref_y, rtol=MIN_FFT_TOL, atol=MIN_FFT_TOL)
+    # n≥192 is where unfolded float32 2πkt/n sets a ~3e-5 floor; folding must beat that.
+    if n >= 192:
+        assert max((xr - ref.real).abs().max().item(), (xi - ref.imag).abs().max().item()) < 3e-6
 
 
 def test_model_fused_fft_config_switch_matches_reference_path():

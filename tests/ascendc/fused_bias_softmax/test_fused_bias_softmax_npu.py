@@ -170,6 +170,46 @@ def run_backward_cases(ext, fails):
     return fails
 
 
+def run_alias_isolation(ext, fails):
+    """同 shape 不同缓冲：后一次不得写到前一块，也不得复用前一块的数值。"""
+    print("== alias isolation ==")
+    cases = [
+        ((2, 4, 64, 64), torch.float32, False, 1e-5, 0.0),
+        ((2, 4, 64, 128), torch.bfloat16, True, 2e-2, 4e-3),
+    ]
+    for shape, dtype, has_b, atol, rtol in cases:
+        a = torch.randn(*shape, dtype=dtype, device="npu")
+        b = torch.randn(*shape, dtype=dtype, device="npu")
+        a1 = torch.randn(*shape[:-2], 1, shape[-1], dtype=dtype, device="npu") if has_b else None
+        a2 = torch.randn(*shape, dtype=dtype, device="npu") if has_b else None
+        b1 = torch.randn(*shape[:-2], 1, shape[-1], dtype=dtype, device="npu") if has_b else None
+        b2 = torch.randn(*shape, dtype=dtype, device="npu") if has_b else None
+        ref_a = torch_forward(a, a1, a2)
+        ref_b = torch_forward(b, b1, b2)
+        snap_a = a.clone()
+        out_a = ext.fused_bias_softmax_forward(a, a1, a2)
+        torch.npu.synchronize()
+        got_a = out_a.clone()
+        out_b = ext.fused_bias_softmax_forward(b, b1, b2)
+        torch.npu.synchronize()
+        clobber = max_diff(got_a, a)
+        untouched_input = max_diff(snap_a, a)  # a 是原地，应已变成 softmax(a)
+        over_a = over_tol(ref_a, got_a, atol, rtol)
+        over_b = over_tol(ref_b, out_b, atol, rtol)
+        # 第二跳之后第一块仍是自己的结果，不是第二块、也不是原始输入
+        stay_a = over_tol(ref_a, a, atol, rtol)
+        leak_b_into_a = max_diff(out_b, a)
+        ok = over_a == 0 and over_b == 0 and stay_a == 0 and clobber == 0 and leak_b_into_a > atol
+        fails += not ok
+        tag = f"{list(shape)} {str(dtype).replace('torch.', '')}"
+        print(f"{tag}: over_a={over_a} over_b={over_b} stay_a={stay_a} "
+              f"ptr_a={a.data_ptr()} ptr_b={b.data_ptr()} {'PASS' if ok else 'FAIL'}")
+        if not ok:
+            print(f"  clobber={clobber:.3e} leak_b_into_a={leak_b_into_a:.3e} "
+                  f"untouched_input={untouched_input:.3e}")
+    return fails
+
+
 def run_e2e_cases(ext, fails):
     """openfold attention_core 使用形态链路（前向融合 + 反向融合手动反传）。"""
     print("== e2e ==")
@@ -235,6 +275,7 @@ def main(argv=None):
 
     fails = 0
     fails = run_forward_cases(ext, fails)
+    fails = run_alias_isolation(ext, fails)
     fails = run_backward_cases(ext, fails)
     fails = run_e2e_cases(ext, fails)
     run_perf_bench(ext)

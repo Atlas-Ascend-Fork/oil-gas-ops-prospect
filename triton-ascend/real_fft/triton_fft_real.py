@@ -29,30 +29,48 @@ except ImportError:  # pragma: no cover - CPU-only environments can still import
 
 _BasisKey = Tuple[int, torch.device, str]
 _basis_cache: Dict[_BasisKey, Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+# (freq_len, n) transposes of the four make_basis matrices; last-axis irfft / rfft-bwd.
+_basis_tn_cache: Dict[_BasisKey, Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+
+
+_AICORE_NUM: int | None = None
 
 
 def _get_aicore_num(default: int = 20) -> int:
+    global _AICORE_NUM
+    if _AICORE_NUM is not None:
+        return _AICORE_NUM
     try:
         import torch_npu  # type: ignore[import-not-found]
         import triton.runtime.driver as driver
     except ImportError:
+        _AICORE_NUM = default
         return default
     if not (hasattr(torch, "npu") and torch.npu.is_available()):
         return default
     try:
         device = torch_npu.npu.current_device()
         properties = driver.active.utils.get_device_properties(device)
-        return int(properties.get("num_aicore", default))
+        _AICORE_NUM = int(properties.get("num_aicore", default))
     except Exception:
         return default
+    return _AICORE_NUM
+
+
+def _kernel_grid(num_blocks: int) -> tuple[int]:
+    """Launch one program per logical block, capped by the physical AICore count."""
+    return (max(1, min(_get_aicore_num(), int(num_blocks))),)
 
 
 def _is_npu_tensor(x: torch.Tensor) -> bool:
     return x.device.type == "npu"
 
 
+_HAS_TRITON = triton is not None and tl is not None
+
+
 def _has_triton() -> bool:
-    return triton is not None and tl is not None
+    return _HAS_TRITON
 
 
 def _round_up(x: int, mult: int = 16) -> int:
@@ -70,12 +88,19 @@ def _round_up(x: int, mult: int = 16) -> int:
 _DEFAULT_FFT_BLOCK_M = 512
 
 
+_CACHED_DEFAULT_BLOCK_M: int | None = None
+
+
 def _default_block_m() -> int:
+    global _CACHED_DEFAULT_BLOCK_M
+    if _CACHED_DEFAULT_BLOCK_M is not None:
+        return _CACHED_DEFAULT_BLOCK_M
     try:
         v = int(os.environ.get("OIL_GAS_OPS_FFT_BLOCK_M", ""))
-        return v if v > 0 else _DEFAULT_FFT_BLOCK_M
+        _CACHED_DEFAULT_BLOCK_M = v if v > 0 else _DEFAULT_FFT_BLOCK_M
     except (TypeError, ValueError):
-        return _DEFAULT_FFT_BLOCK_M
+        _CACHED_DEFAULT_BLOCK_M = _DEFAULT_FFT_BLOCK_M
+    return _CACHED_DEFAULT_BLOCK_M
 
 
 # Ascend 910B L0C (cube accumulator) capacity. The kernels keep their fp32
@@ -107,19 +132,22 @@ def _cap_block_m_for_l0c(block_m: int, tile_other: int, num_acc: int) -> int:
 
 
 def _cap_block_m_for_cbuf(block_m: int, tile_k: int, tile_n: int, num_operands: int = 6) -> int:
-    """Shrink ``block_m`` so ``tl.dot`` L1/cbuf operands fit in 910B L1.
+    """Shrink ``block_m`` so ping-pong ``(M,K)`` + ``(K,N)`` tiles fit in 65% L1.
 
-    ``num_operands`` counts simultaneously live tiles after multi-buffering
-    plus compiler temporaries (default 6: two (M,K) + two (K,N) + extras).
-    BiShengIR ``--enable-auto-multi-buffer`` on N=256 needed ~1.35× the
-    4-operand estimate (4980736 bits vs 4194304 available), so we also keep
-    a 65% L1 safety factor.
+    ``(K,N)`` does not grow with M. The old ``num_operands * M * max(K,N)``
+    treated B as scaling with M and forced last-axis n=128 ``BLOCK_M`` to 96.
+    ``num_operands`` is unused; kept so existing call sites stay valid.
+    Overflow still falls back through ``_launch_with_block_m_backoff``.
     """
-    if tile_k <= 0 or tile_n <= 0 or num_operands <= 0:
+    del num_operands
+    tk, tn = int(tile_k), int(tile_n)
+    if tk <= 0 or tn <= 0:
         return block_m
-    tile = max(int(tile_k), int(tile_n))
     budget = int(_ASCEND_L1_CBUF_BYTES * 0.65)
-    max_m = budget // (num_operands * tile * _FP32_BYTES)
+    rest = budget - 2 * tk * tn * _FP32_BYTES
+    if rest <= 0:
+        return 16
+    max_m = rest // (2 * tk * _FP32_BYTES)
     max_m -= max_m % 16
     max_m = max(16, max_m)
     return max(16, min(int(block_m), max_m))
@@ -148,12 +176,26 @@ def _cap_block_kn_for_cbuf(tile_k: int, tile_n: int, max_kn: int = _ASCEND_L1_MA
     return tk, tn
 
 
+_TILE_CACHE: Dict[tuple, tuple] = {}
+
+
 def _cap_fft_tiles(block_m: int, tile_k: int, tile_n: int, num_acc: int) -> tuple[int, int, int]:
     """Cap K/N first (L1), then M (L0C + remaining L1)."""
+    key = (int(block_m), int(tile_k), int(tile_n), int(num_acc))
+    hit = _TILE_CACHE.get(key)
+    if hit is not None:
+        return hit
     tile_k, tile_n = _cap_block_kn_for_cbuf(tile_k, tile_n)
     block_m = _cap_block_m_for_l0c(block_m, tile_n, num_acc=num_acc)
     block_m = _cap_block_m_for_cbuf(block_m, tile_k, tile_n)
-    return block_m, tile_k, tile_n
+    out = (block_m, tile_k, tile_n)
+    _TILE_CACHE[key] = out
+    return out
+
+
+def _extent_tile(extent: int, block_m: int) -> int:
+    """Do not pad the row tile past the real extent (small last-axis rfft)."""
+    return min(int(block_m), _round_up(extent))
 
 
 # Substrings identifying BiShengIR on-chip buffer overflows that scale with the
@@ -239,6 +281,17 @@ def _launch_with_block_m_backoff(launch, block_m: int, min_block_m: int = 16, ca
             bm = max(min_block_m, (bm // 2) - ((bm // 2) % 16))
 
 
+def _fold_phase(numer: torch.Tensor, period: int, unit: float) -> torch.Tensor:
+    """Phase ``unit * numer``, folding the integer ``numer`` into one ``period`` first.
+
+    Same reduction as the downstream Fourier matrices (``src.common.fourier._fold_phase``).
+    Unreduced ``2*pi/n * k * t`` in float32 already has ~2e-4 rad error at n~320, which
+    ``cos``/``sin`` pass through as an amplitude error and set the transform floor
+    around 3e-5 relative. Folding then evaluating in float64 drops that to ~3e-7.
+    """
+    return unit * (numer % period).to(torch.float64)
+
+
 def make_basis(n: int, device: torch.device, norm: str):
     if norm != "ortho":
         raise ValueError(f"only norm='ortho' is supported, got {norm!r}")
@@ -249,24 +302,45 @@ def make_basis(n: int, device: torch.device, norm: str):
         return cached
 
     freq_len = n // 2 + 1
-    compute_dtype = torch.float32
-    t = torch.arange(n, dtype=compute_dtype)
-    k = torch.arange(freq_len, dtype=compute_dtype)
-    phase = (2.0 * math.pi / float(n)) * k[:, None] * t[None, :]
-    scale = n ** -0.5
+    t = torch.arange(n)
+    k = torch.arange(freq_len)
+    # (freq, time) integer products; e^{2πi k t / n} is periodic in k*t with period n.
+    phase = _fold_phase(k[:, None] * t[None, :], n, 2.0 * math.pi / float(n))
+    scale = float(n) ** -0.5
+    cos_kt = torch.cos(phase)
+    sin_kt = torch.sin(phase)
 
     # rfft computes X @ basis where basis has shape (n, freq_len).
-    rfft_cos = (torch.cos(phase).transpose(0, 1) * scale).contiguous().to(device=device)
-    rfft_sin = (-torch.sin(phase).transpose(0, 1) * scale).contiguous().to(device=device)
+    rfft_cos = (cos_kt.transpose(0, 1) * scale).to(dtype=torch.float32, device=device).contiguous()
+    rfft_sin = ((-sin_kt).transpose(0, 1) * scale).to(dtype=torch.float32, device=device).contiguous()
 
     # irfft reconstructs the omitted conjugate half exactly like torch.fft.irfft.
-    weight = torch.ones(freq_len, dtype=compute_dtype)
+    # DC / Nyquist imag weights do not matter: sin is 0 there for integer t.
+    weight = torch.ones(freq_len, dtype=torch.float64)
     weight[1:(n + 1) // 2] = 2.0
-    irfft_cos = (torch.cos(phase).transpose(0, 1) * weight[None, :] * scale).contiguous().to(device=device)
-    irfft_sin = (torch.sin(phase).transpose(0, 1) * weight[None, :] * scale).contiguous().to(device=device)
+    w_phase = weight[:, None]
+    irfft_cos = ((cos_kt * w_phase).transpose(0, 1) * scale).to(dtype=torch.float32, device=device).contiguous()
+    irfft_sin = ((sin_kt * w_phase).transpose(0, 1) * scale).to(dtype=torch.float32, device=device).contiguous()
 
-    cached = (rfft_cos.contiguous(), rfft_sin.contiguous(), irfft_cos.contiguous(), irfft_sin.contiguous())
+    cached = (rfft_cos, rfft_sin, irfft_cos, irfft_sin)
     _basis_cache[key] = cached
+    return cached
+
+
+def _make_basis_tn(n: int, device: torch.device, norm: str):
+    """Cached ``(freq_len, n)`` transposes. Public ``make_basis`` stays ``(n, freq_len)``."""
+    key = (n, device, norm)
+    cached = _basis_tn_cache.get(key)
+    if cached is not None:
+        return cached
+    rfft_cos, rfft_sin, irfft_cos, irfft_sin = make_basis(n, device, norm)
+    cached = (
+        rfft_cos.transpose(0, 1).contiguous(),
+        rfft_sin.transpose(0, 1).contiguous(),
+        irfft_cos.transpose(0, 1).contiguous(),
+        irfft_sin.transpose(0, 1).contiguous(),
+    )
+    _basis_tn_cache[key] = cached
     return cached
 
 
@@ -701,11 +775,13 @@ def _real_rfft_npu_forward(
         # 轴上 kernel 一次 tl.dot 覆盖整段 K/F，不能缩小 tile_k/tile_f。
         block_b = _cap_block_m_for_l0c(block_b, block_f, num_acc=2)
         block_b = _cap_block_m_for_cbuf(block_b, block_k, block_f)
+        block_b = _extent_tile(n_tail, block_b)
 
         def _launch(bb):
-            _rfft_axis_matmul_kernel[(_get_aicore_num(),)](
+            num_blocks = n_lead * triton.cdiv(n_tail, bb)
+            _rfft_axis_matmul_kernel[_kernel_grid(num_blocks)](
                 x_3d, rfft_cos, rfft_sin, out_r, out_i,
-                n_lead, n, freq_len, n_tail, n_lead * triton.cdiv(n_tail, bb),
+                n_lead, n, freq_len, n_tail, num_blocks,
                 tile_b=bb, tile_f=block_f, tile_k=block_k,
             )
 
@@ -715,7 +791,7 @@ def _real_rfft_npu_forward(
         out_shape = (*x.shape[:dim], freq_len, *x.shape[dim + 1:])
         return out_r.reshape(out_shape), out_i.reshape(out_shape)
 
-    x_last = x.movedim(dim, -1).contiguous()
+    x_last = x if x.is_contiguous() else x.contiguous()
     rows = x_last.numel() // n
     x_2d = x_last.reshape(rows, n)
 
@@ -729,9 +805,11 @@ def _real_rfft_npu_forward(
     block_k = block_k or _round_up(n)
     block_m = block_m or _default_block_m()
     block_m, block_k, block_n = _cap_fft_tiles(block_m, block_k, block_n, num_acc=2)
+    block_m = _extent_tile(rows, block_m)
 
     def _launch(bm):
-        _rfft_matmul_kernel[(_get_aicore_num(),)](
+        num_blocks = triton.cdiv(rows, bm) * triton.cdiv(freq_len, block_n)
+        _rfft_matmul_kernel[_kernel_grid(num_blocks)](
             x_2d,
             rfft_cos,
             rfft_sin,
@@ -740,7 +818,7 @@ def _real_rfft_npu_forward(
             rows,
             n,
             freq_len,
-            triton.cdiv(rows, bm) * triton.cdiv(freq_len, block_n),
+            num_blocks,
             tile_m=bm,
             tile_n=block_n,
             tile_k=block_k,
@@ -751,10 +829,7 @@ def _real_rfft_npu_forward(
     )
 
     out_shape = (*x_last.shape[:-1], freq_len)
-    return (
-        out_r.reshape(out_shape).movedim(-1, dim).contiguous(),
-        out_i.reshape(out_shape).movedim(-1, dim).contiguous(),
-    )
+    return out_r.reshape(out_shape), out_i.reshape(out_shape)
 
 
 def _real_rfft_npu_backward(
@@ -782,11 +857,13 @@ def _real_rfft_npu_backward(
         block_f = _round_up(freq_len)
         block_b = _cap_block_m_for_l0c(block_b, block_k, num_acc=1)
         block_b = _cap_block_m_for_cbuf(block_b, block_f, block_k)
+        block_b = _extent_tile(n_tail, block_b)
 
         def _launch(bb):
-            _rfft_axis_backward_kernel[(_get_aicore_num(),)](
+            num_blocks = n_lead * triton.cdiv(n_tail, bb)
+            _rfft_axis_backward_kernel[_kernel_grid(num_blocks)](
                 gr_3d, gi_3d, rfft_cos, rfft_sin, grad_x,
-                n_lead, n, freq_len, n_tail, n_lead * triton.cdiv(n_tail, bb),
+                n_lead, n, freq_len, n_tail, num_blocks,
                 tile_b=bb, tile_k=block_k, tile_f=block_f,
             )
 
@@ -796,24 +873,24 @@ def _real_rfft_npu_backward(
         out_shape = (*grad_r.shape[:dim], n, *grad_r.shape[dim + 1:])
         return grad_x.reshape(out_shape)
 
-    grad_r_last = grad_r.movedim(dim, -1).contiguous()
-    grad_i_last = grad_i.movedim(dim, -1).contiguous()
+    grad_r_last = grad_r if grad_r.is_contiguous() else grad_r.contiguous()
+    grad_i_last = grad_i if grad_i.is_contiguous() else grad_i.contiguous()
     rows = grad_r_last.numel() // freq_len
     grad_r_2d = grad_r_last.reshape(rows, freq_len)
     grad_i_2d = grad_i_last.reshape(rows, freq_len)
 
     grad_x = torch.empty((rows, n), device=grad_r.device, dtype=torch.float32)
-    rfft_cos, rfft_sin, _, _ = make_basis(n, grad_r.device, norm)
+    rfft_cos_t, rfft_sin_t, _, _ = _make_basis_tn(n, grad_r.device, norm)
     # (rows x freq_len) @ (freq_len x n): cover N=n and K=freq_len in one dot/tile.
     block_n = block_n or _round_up(n)
     block_k = block_k or _round_up(freq_len)
     block_m = block_m or _default_block_m()
     block_m, block_k, block_n = _cap_fft_tiles(block_m, block_k, block_n, num_acc=1)
-    rfft_cos_t = rfft_cos.transpose(0, 1).contiguous()
-    rfft_sin_t = rfft_sin.transpose(0, 1).contiguous()
+    block_m = _extent_tile(rows, block_m)
 
     def _launch(bm):
-        _rfft_backward_matmul_kernel[(_get_aicore_num(),)](
+        num_blocks = triton.cdiv(rows, bm) * triton.cdiv(n, block_n)
+        _rfft_backward_matmul_kernel[_kernel_grid(num_blocks)](
             grad_r_2d,
             grad_i_2d,
             rfft_cos_t,
@@ -822,7 +899,7 @@ def _real_rfft_npu_backward(
             rows,
             n,
             freq_len,
-            triton.cdiv(rows, bm) * triton.cdiv(n, block_n),
+            num_blocks,
             tile_m=bm,
             tile_n=block_n,
             tile_k=block_k,
@@ -833,7 +910,7 @@ def _real_rfft_npu_backward(
     )
 
     out_shape = (*grad_r_last.shape[:-1], n)
-    return grad_x.reshape(out_shape).movedim(-1, dim).contiguous()
+    return grad_x.reshape(out_shape)
 
 
 def _real_irfft_npu_forward(
@@ -863,11 +940,13 @@ def _real_irfft_npu_forward(
         block_f = block_k or _round_up(freq_len)
         block_b = _cap_block_m_for_l0c(block_b, block_t, num_acc=1)
         block_b = _cap_block_m_for_cbuf(block_b, block_f, block_t)
+        block_b = _extent_tile(n_tail, block_b)
 
         def _launch(bb):
-            _irfft_axis_matmul_kernel[(_get_aicore_num(),)](
+            num_blocks = n_lead * triton.cdiv(n_tail, bb)
+            _irfft_axis_matmul_kernel[_kernel_grid(num_blocks)](
                 xr_3d, xi_3d, irfft_cos, irfft_sin, out,
-                n_lead, n, freq_len, n_tail, n_lead * triton.cdiv(n_tail, bb),
+                n_lead, n, freq_len, n_tail, num_blocks,
                 tile_b=bb, tile_t=block_t, tile_f=block_f,
             )
 
@@ -877,24 +956,24 @@ def _real_irfft_npu_forward(
         out_shape = (*xr.shape[:dim], n, *xr.shape[dim + 1:])
         return out.reshape(out_shape)
 
-    xr_last = xr.movedim(dim, -1).contiguous()
-    xi_last = xi.movedim(dim, -1).contiguous()
+    xr_last = xr if xr.is_contiguous() else xr.contiguous()
+    xi_last = xi if xi.is_contiguous() else xi.contiguous()
     rows = xr_last.numel() // freq_len
     xr_2d = xr_last.reshape(rows, freq_len)
     xi_2d = xi_last.reshape(rows, freq_len)
 
     out = torch.empty((rows, n), device=xr.device, dtype=xr.dtype)
-    _, _, irfft_cos, irfft_sin = make_basis(n, xr.device, norm)
+    _, _, irfft_cos_t, irfft_sin_t = _make_basis_tn(n, xr.device, norm)
     # (rows x freq_len) @ (freq_len x n): cover N=n and K=freq_len in one dot/tile.
     block_n = block_n or _round_up(n)
     block_k = block_k or _round_up(freq_len)
     block_m = block_m or _default_block_m()
     block_m, block_k, block_n = _cap_fft_tiles(block_m, block_k, block_n, num_acc=1)
-    irfft_cos_t = irfft_cos.transpose(0, 1).contiguous()
-    irfft_sin_t = irfft_sin.transpose(0, 1).contiguous()
+    block_m = _extent_tile(rows, block_m)
 
     def _launch(bm):
-        _irfft_matmul_kernel[(_get_aicore_num(),)](
+        num_blocks = triton.cdiv(rows, bm) * triton.cdiv(n, block_n)
+        _irfft_matmul_kernel[_kernel_grid(num_blocks)](
             xr_2d,
             xi_2d,
             irfft_cos_t,
@@ -903,7 +982,7 @@ def _real_irfft_npu_forward(
             rows,
             n,
             freq_len,
-            triton.cdiv(rows, bm) * triton.cdiv(n, block_n),
+            num_blocks,
             tile_m=bm,
             tile_n=block_n,
             tile_k=block_k,
@@ -914,7 +993,7 @@ def _real_irfft_npu_forward(
     )
 
     out_shape = (*xr_last.shape[:-1], n)
-    return out.reshape(out_shape).movedim(-1, dim).contiguous()
+    return out.reshape(out_shape)
 
 
 def _real_irfft_npu_backward(
@@ -941,11 +1020,13 @@ def _real_irfft_npu_backward(
         block_t = block_k or _round_up(n)
         block_b = _cap_block_m_for_l0c(block_b, block_f, num_acc=2)
         block_b = _cap_block_m_for_cbuf(block_b, block_t, block_f)
+        block_b = _extent_tile(n_tail, block_b)
 
         def _launch(bb):
-            _irfft_axis_backward_kernel[(_get_aicore_num(),)](
+            num_blocks = n_lead * triton.cdiv(n_tail, bb)
+            _irfft_axis_backward_kernel[_kernel_grid(num_blocks)](
                 gy_3d, irfft_cos, irfft_sin, grad_r, grad_i,
-                n_lead, n, freq_len, n_tail, n_lead * triton.cdiv(n_tail, bb),
+                n_lead, n, freq_len, n_tail, num_blocks,
                 tile_b=bb, tile_f=block_f, tile_t=block_t,
             )
 
@@ -955,7 +1036,7 @@ def _real_irfft_npu_backward(
         out_shape = (*grad_y.shape[:dim], freq_len, *grad_y.shape[dim + 1:])
         return grad_r.reshape(out_shape), grad_i.reshape(out_shape)
 
-    grad_y_last = grad_y.movedim(dim, -1).contiguous()
+    grad_y_last = grad_y if grad_y.is_contiguous() else grad_y.contiguous()
     rows = grad_y_last.numel() // n
     grad_y_2d = grad_y_last.reshape(rows, n)
 
@@ -967,9 +1048,11 @@ def _real_irfft_npu_backward(
     block_k = block_k or _round_up(n)
     block_m = block_m or _default_block_m()
     block_m, block_k, block_n = _cap_fft_tiles(block_m, block_k, block_n, num_acc=2)
+    block_m = _extent_tile(rows, block_m)
 
     def _launch(bm):
-        _irfft_backward_matmul_kernel[(_get_aicore_num(),)](
+        num_blocks = triton.cdiv(rows, bm) * triton.cdiv(freq_len, block_n)
+        _irfft_backward_matmul_kernel[_kernel_grid(num_blocks)](
             grad_y_2d,
             irfft_cos,
             irfft_sin,
@@ -978,7 +1061,7 @@ def _real_irfft_npu_backward(
             rows,
             n,
             freq_len,
-            triton.cdiv(rows, bm) * triton.cdiv(freq_len, block_n),
+            num_blocks,
             tile_m=bm,
             tile_n=block_n,
             tile_k=block_k,
@@ -989,10 +1072,7 @@ def _real_irfft_npu_backward(
     )
 
     out_shape = (*grad_y_last.shape[:-1], freq_len)
-    return (
-        grad_r.reshape(out_shape).movedim(-1, dim).contiguous(),
-        grad_i.reshape(out_shape).movedim(-1, dim).contiguous(),
-    )
+    return grad_r.reshape(out_shape), grad_i.reshape(out_shape)
 
 
 if _has_triton():
@@ -1071,6 +1151,8 @@ def real_rfft(
         raise ValueError(f"only norm='ortho' is supported, got {norm!r}")
     if not (_is_npu_tensor(x) and _has_triton()):
         return _torch_rfft_real(x, dim=dim, norm=norm)
+    if not x.requires_grad:
+        return _real_rfft_npu_forward(x, dim, norm, block_n, block_m, block_k)
     return _RealRFFTFunction.apply(x, dim, norm, block_n, block_m, block_k)
 
 
@@ -1091,4 +1173,6 @@ def real_irfft(
         raise ValueError(f"xr and xi must have the same shape, got {xr.shape} and {xi.shape}")
     if not (_is_npu_tensor(xr) and _has_triton()):
         return _torch_irfft_real(xr, xi, n=n, dim=dim, norm=norm)
+    if not (xr.requires_grad or xi.requires_grad):
+        return _real_irfft_npu_forward(xr, xi, n, dim, norm, block_k, block_m, block_n)
     return _RealIRFFTFunction.apply(xr, xi, n, dim, norm, block_k, block_m, block_n)

@@ -36,6 +36,7 @@ constexpr uint64_t FBS_ALIGNED_BYTES = 32;
 constexpr uint64_t FBS_FP32_SIZE = 4;
 constexpr uint64_t FBS_SOFTMAX_BUF_SIZE = 32 * 1024;
 constexpr uint64_t FBS_XY_PARAMS = 2;
+constexpr uint64_t FBS_QUE_DEPTH = 2; // CopyIn/Compute/CopyOut 预取，入队张量按 2 份计价
 
 // tiling key：dtype 维度（与 kernel 侧 TILING_KEY_IS 一致）
 constexpr uint64_t FBS_KEY_FP32 = 0;
@@ -82,21 +83,32 @@ inline void ComputePadding(uint64_t width, uint64_t dtypeSize, uint64_t& padding
 
 /**
  * 每行 UB 字节数（UB 预算模型，见文件头）。
- * bcastBias1 为真时附加广播 bias1 的 distinct 行缓存（≤2 行）与单行 fp32 转换暂存。
+ * 入队张量（x/y/全尺寸 bias）按 FBS_QUE_DEPTH 计价；SoftMax 32K 与 fp32 中转仍 1 份。
+ * bcastBias1 为真时附加广播 bias1 的 distinct 行缓存（≤2 行 × depth）与单行 fp32 转换暂存。
  */
 inline uint64_t ComputeMaxByteLine(uint64_t padLineNum, uint64_t dtypeSize, bool isFp32, uint64_t hasB1, uint64_t hasB2,
                                    bool b1Full)
 {
-    uint64_t biasPerElem = 0;
+    uint64_t queuedPerElem = FBS_XY_PARAMS * dtypeSize;
+    uint64_t computePerElem = isFp32 ? 0 : FBS_FP32_SIZE;
     if (hasB2 != 0) {
-        biasPerElem += dtypeSize + (isFp32 ? 0 : FBS_FP32_SIZE);
+        queuedPerElem += dtypeSize;
+        if (!isFp32) {
+            computePerElem += FBS_FP32_SIZE;
+        }
     }
-    if (hasB1 != 0) {
-        biasPerElem += dtypeSize + (isFp32 ? 0 : FBS_FP32_SIZE);
+    if (hasB1 != 0 && b1Full) {
+        queuedPerElem += dtypeSize;
+        if (!isFp32) {
+            computePerElem += FBS_FP32_SIZE;
+        }
     }
-    uint64_t maxByteLine = padLineNum * (FBS_XY_PARAMS * dtypeSize + (isFp32 ? 0 : FBS_FP32_SIZE) + biasPerElem);
+    uint64_t maxByteLine = padLineNum * (queuedPerElem * FBS_QUE_DEPTH + computePerElem);
     if (hasB1 != 0 && !b1Full) {
-        maxByteLine += (2 * padLineNum * dtypeSize) + (isFp32 ? 0 : padLineNum * FBS_FP32_SIZE);
+        maxByteLine += FBS_QUE_DEPTH * (2 * padLineNum * dtypeSize);
+        if (!isFp32) {
+            maxByteLine += padLineNum * FBS_FP32_SIZE;
+        }
     }
     return maxByteLine;
 }
@@ -177,12 +189,24 @@ inline bool ComputeFusedBiasSoftmaxTilingCore(uint64_t batch, uint64_t channel, 
     if (totalLine == 0) {
         return false;
     }
-    ComputeRowSplit(totalLine, aivNum, availableLinePerIter, params.headCoreNum, params.lineHeadCore,
+    // 小 payload 用满 48 AIV 会让 SoftMax 变成 launch 主导（对原生 softmax 掉到 <1x）。
+    // 核数取「每核一行 tile、尽量 1 拍」所需的最少核：ceil(totalLine / rowsPerIter)。
+    uint64_t usedAiv = FbsCeilDiv(totalLine, availableLinePerIter);
+    if (usedAiv == 0) {
+        usedAiv = 1;
+    }
+    if (usedAiv > aivNum) {
+        usedAiv = aivNum;
+    }
+    if (usedAiv > totalLine) {
+        usedAiv = totalLine;
+    }
+    ComputeRowSplit(totalLine, usedAiv, availableLinePerIter, params.headCoreNum, params.lineHeadCore,
                     params.iterHeadCore, params.lineHeadIter, params.lineLastHeadIter, params.lineTailCore,
                     params.iterTailCore, params.lineTailIter, params.lineLastTailIter);
 
-    params.coreNum = aivNum;
-    plan.blockDim = aivNum;
+    params.coreNum = usedAiv;
+    plan.blockDim = usedAiv;
     plan.tilingKey = dtypeKey;
     return true;
 }

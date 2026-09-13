@@ -15,7 +15,7 @@
 
 /**
  * FusedSoftmaxGrad kernel 入口（fused_softmax_grad）：tiling key 分发
- * MIX（bf16 对齐）/ VEC（fp32/fp16/非对齐 bf16）。
+ * MIX（全部 bf16，未对齐先 pad 再 Cube）/ VEC（fp32/fp16）。
  *
  * 直接实例化 matmul::MatmulImpl（vllm-ascend 同款），不经 Matmul 别名选择逻辑，
  * 规避 SPLIT_CORE_CUBE 分支下 MatmulServiceAux CFG_NORM IterateAll 空体陷阱。
@@ -44,12 +44,12 @@ extern "C" __global__ __aicore__ void fused_softmax_grad(GM_ADDR probs, GM_ADDR 
         op.Init(probs, gradOutput, values, out, tilingData, &tPipe);
         op.Process();
     } else if (TILING_KEY_IS(2)) {
-        // bf16 向量（含对齐形状：精度优先，能进 UB 就走 VEC）
+        // 保留 key=2（旧 VEC）；当前 bf16 一律走 key=3
         AscendC::FusedSoftmaxGradVec<bfloat16_t> op;
         op.Init(probs, gradOutput, values, out, tilingData, &tPipe);
         op.Process();
     } else if (TILING_KEY_IS(3)) {
-        // bf16 对齐: MIX_AIC_1_2 两阶段
+        // bf16 MIX_AIC_1_2：未对齐时 AIV pad 后再 Cube
         // (CubeFormat/CFG_NORM 为全局作用域; MatmulType/MatmulImpl 在 AscendC, matmul 为其别名)
         using AType = matmul::MatmulType<AscendC::TPosition::GM, CubeFormat::ND, bfloat16_t, false>;
         using BType = matmul::MatmulType<AscendC::TPosition::GM, CubeFormat::ND, bfloat16_t, true>;

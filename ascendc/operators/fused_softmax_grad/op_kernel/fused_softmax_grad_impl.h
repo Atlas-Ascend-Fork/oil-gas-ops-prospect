@@ -16,11 +16,11 @@
 /**
  * FusedSoftmaxGrad kernel 实现（两条路径，同一算子 tiling key 分发）：
  *
- * - FusedSoftmaxGradMix：bf16 对齐形状。MIX_AIC_1_2 两阶段（vllm-ascend
- *   grouped_matmul_swiglu_quant 生产结构同构）：24 AIC 高阶 MatmulImpl 逐 plane
- *   算 g(half) 写 user workspace -> SyncAll -> 48 AIV 读回做 JVP 原地写回。
- * - FusedSoftmaxGradVec：fp32/fp16/非对齐 bf16。48 AIV 纯向量：per plane V 驻留
- *   UB，逐 (q,s) 点积得 g 行，同核 JVP 写回（精度路径，无性能门禁）。
+ * - FusedSoftmaxGradMix：全部 bf16。MIX_AIC_1_2 两阶段：未对齐时 AIV 先把
+ *   go/V pad 到 padS/padD，再 24 AIC 高阶 MatmulImpl 逐 plane 算 g(half) 写
+ *   user workspace -> SyncAll -> 48 AIV 读回做 JVP 原地写回。
+ * - FusedSoftmaxGradVec：fp32/fp16。48 AIV 纯向量：per plane V 驻留 UB，逐
+ *   (q,s) 点积得 g 行，同核 JVP 写回。
  *
  * 约束（实证）：队列 depth=1；行和用 Sum 高阶 api（禁 Level-2 ReduceSum 标量
  * 管道）；裸 TBuf 路径必须显式 MTE2_V / V_MTE3 / MTE3_V 管道事件；g 缓冲一律
@@ -35,11 +35,8 @@
  *        probs <- probs ⊙ (g − rowsum(probs⊙g)), fp32 domain, in-place.
  *
  * 两条路径 (同一算子, tiling key 分发):
- * - FusedSoftmaxGradMix: bf16 对齐形状。MIX_AIC_1_2 两阶段 (vllm-ascend
- *   grouped_matmul_swiglu_quant 生产结构): 24 AIC 高阶 Matmul 逐 plane 算 g(half) 写
- *   user workspace -> SyncAll -> 48 AIV 读回做 JVP 原地写回。
- * - FusedSoftmaxGradVec: fp32/fp16/非对齐 bf16。48 AIV 纯向量: per plane V 驻留 UB,
- *   逐 (q,s) 点积得 g 行, 同核 JVP 写回 (精度路径, 无性能门禁)。
+ * - FusedSoftmaxGradMix: 全部 bf16。未对齐先 pad 再 Cube，再 AIV JVP 原地写回。
+ * - FusedSoftmaxGradVec: fp32/fp16。48 AIV 纯向量点积 + 同核 JVP。
  *
  * 约束 (交接文档实证): 队列 depth=1; 关闭 --cce-auto-sync; 行和用 Sum 高阶 api
  * (禁 Level-2 ReduceSum 标量管道); g 缓冲一律 GetUserWorkspace。
@@ -310,7 +307,7 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// MIX 路径: bf16 对齐形状 (vllm-ascend grouped_matmul_swiglu_quant 生产结构)
+// MIX 路径: 全部 bf16（未对齐 AIV pad 后再 Cube）
 // ---------------------------------------------------------------------------
 template <typename T, typename MM_TYPE>
 class FusedSoftmaxGradMix {
@@ -328,57 +325,137 @@ public:
         this->sLen = tilingData.width;
         this->dLen = tilingData.dLen;
         this->padS = tilingData.padS;
+        this->padD = tilingData.padD;
         this->rowsPerIter = tilingData.rowsPerIter;
-
-        gmP.SetGlobalBuffer((__gm__ T*)probs);
-        gmGo.SetGlobalBuffer((__gm__ bfloat16_t*)gradOutput);
-        gmV.SetGlobalBuffer((__gm__ bfloat16_t*)values);
-        gmWs.SetGlobalBuffer((__gm__ half*)gWs, planes * qLen * sLen);
-        gmOut.SetGlobalBuffer((__gm__ T*)out);
-
+        this->needPad = (this->dLen != this->padD || this->sLen != this->padS) ? 1 : 0;
+        InitGm(probs, gradOutput, values, out, gWs);
         if ASCEND_IS_AIC {
-            // 每 plane 形状相同: Org/Single 只调一次; SetTensorA/B + IterateAll 每 plane 必须重调
-            mm.SetOrgShape(qLen, sLen, dLen);
-            mm.SetSingleShape(qLen, sLen, dLen);
+            // Cube 用对齐后的 padS/padD；未对齐时 A/B 来自 pad workspace
+            mm.SetOrgShape(qLen, padS, padD);
+            mm.SetSingleShape(qLen, padS, padD);
         }
-
         if ASCEND_IS_AIV {
-            uint64_t totalRows = planes * qLen;
-            uint64_t base = totalRows / aivNum;
-            uint64_t rem = totalRows % aivNum;
-            this->myRows = base + (blockIdx < rem ? 1u : 0u);
-            this->myStart = blockIdx * base + FsgMin(blockIdx, rem);
-
-            uint64_t bufElems = rowsPerIter * padS;
-            pipe->InitBuffer(inQueueP, 1, bufElems * sizeof(T));
-            pipe->InitBuffer(inQueueG, 1, bufElems * sizeof(half));
-            pipe->InitBuffer(outQueue, 1, bufElems * sizeof(T));
-            pipe->InitBuffer(bufP32, bufElems * sizeof(float));
-            pipe->InitBuffer(bufG32, bufElems * sizeof(float));
-            pipe->InitBuffer(bufT, bufElems * sizeof(float));
-            pipe->InitBuffer(bufRs, FsgCeilDiv(rowsPerIter, 8) * 8 * sizeof(float));
-            pipe->InitBuffer(bufSumTmp, FSG_SUM_TMP_BYTES);
+            InitAivPipe(pipe);
         }
     }
 
     __aicore__ inline void Process()
     {
+        if (needPad == 1) {
+            if ASCEND_IS_AIV {
+                PadPlanes();
+            }
+            SyncAll<false>();
+        }
         if ASCEND_IS_AIC {
-            // 阶段一: 逐 plane 矩乘 g = go @ V^T (plane 间跨发射步进)
             for (uint64_t p = blockIdx; p < planes; p += aicNum) {
-                mm.SetTensorA(gmGo[p * qLen * dLen], false);
-                mm.SetTensorB(gmV[p * sLen * dLen], true);
-                mm.template IterateAll<true>(gmWs[p * qLen * sLen], 0);
+                if (needPad == 1) {
+                    mm.SetTensorA(gmAPad[p * qLen * padD], false);
+                    mm.SetTensorB(gmBPad[p * padS * padD], true);
+                } else {
+                    mm.SetTensorA(gmGo[p * qLen * dLen], false);
+                    mm.SetTensorB(gmV[p * sLen * dLen], true);
+                }
+                mm.template IterateAll<true>(gmWs[p * qLen * padS], 0);
             }
             SyncAll<false>();
         } else {
-            // 阶段二: 屏障后 AIV 读回 g 做 JVP, 原地写回 probs
             SyncAll<false>();
             ProcessJvp();
         }
     }
 
 private:
+    __aicore__ inline void InitGm(GM_ADDR probs, GM_ADDR gradOutput, GM_ADDR values, GM_ADDR out, GM_ADDR gWs)
+    {
+        gmP.SetGlobalBuffer((__gm__ T*)probs);
+        gmGo.SetGlobalBuffer((__gm__ bfloat16_t*)gradOutput);
+        gmV.SetGlobalBuffer((__gm__ bfloat16_t*)values);
+        const uint64_t gElems = planes * qLen * padS;
+        gmWs.SetGlobalBuffer((__gm__ half*)gWs, gElems);
+        gmOut.SetGlobalBuffer((__gm__ T*)out);
+        if (this->needPad == 1) {
+            const uint64_t aElems = planes * qLen * padD;
+            const uint64_t bElems = planes * padS * padD;
+            gmAPad.SetGlobalBuffer((__gm__ bfloat16_t*)(gWs + gElems * 2), aElems);
+            gmBPad.SetGlobalBuffer((__gm__ bfloat16_t*)(gWs + (gElems + aElems) * 2), bElems);
+        }
+    }
+
+    __aicore__ inline void InitAivPipe(TPipe* pipe)
+    {
+        uint64_t totalRows = planes * qLen;
+        uint64_t base = totalRows / aivNum;
+        uint64_t rem = totalRows % aivNum;
+        this->myRows = base + (blockIdx < rem ? 1u : 0u);
+        this->myStart = blockIdx * base + FsgMin(blockIdx, rem);
+
+        if (this->needPad == 1) {
+            uint64_t pr = 8192 / (padD * sizeof(T));
+            if (pr == 0) {
+                pr = 1;
+            }
+            if (pr > 32) {
+                pr = 32;
+            }
+            this->padRows = pr;
+            pipe->InitBuffer(bufPad, padRows * padD * sizeof(T));
+        }
+
+        uint64_t bufElems = rowsPerIter * padS;
+        pipe->InitBuffer(inQueueP, 1, bufElems * sizeof(T));
+        pipe->InitBuffer(inQueueG, 1, bufElems * sizeof(half));
+        pipe->InitBuffer(outQueue, 1, bufElems * sizeof(T));
+        pipe->InitBuffer(bufP32, bufElems * sizeof(float));
+        pipe->InitBuffer(bufG32, bufElems * sizeof(float));
+        pipe->InitBuffer(bufT, bufElems * sizeof(float));
+        pipe->InitBuffer(bufRs, FsgCeilDiv(rowsPerIter, 8) * 8 * sizeof(float));
+        pipe->InitBuffer(bufSumTmp, FSG_SUM_TMP_BYTES);
+    }
+
+    __aicore__ inline void PadCopy(GlobalTensor<bfloat16_t> dst, GlobalTensor<bfloat16_t> src, uint64_t rows,
+                                   uint64_t cols)
+    {
+        LocalTensor<T> ub = bufPad.Get<T>();
+        for (uint64_t r = 0; r < rows; r += padRows) {
+            uint64_t n = FsgMin(padRows, rows - r);
+            FsgCopyRowsIn(ub, src[r * cols], n, cols, padD);
+            SetFlag<HardEvent::MTE2_MTE3>(EVENT_ID5);
+            WaitFlag<HardEvent::MTE2_MTE3>(EVENT_ID5);
+            DataCopyPad(dst[r * padD], ub,
+                        DataCopyExtParams{static_cast<uint16_t>(n), static_cast<uint32_t>(padD * sizeof(T)), 0, 0, 0});
+            SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID5);
+            WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID5);
+        }
+    }
+
+    __aicore__ inline void ZeroPadRows(GlobalTensor<bfloat16_t> dst, uint64_t rows)
+    {
+        LocalTensor<T> ub = bufPad.Get<T>();
+        Duplicate(ub, static_cast<T>(0), padRows * padD);
+        PipeBarrier<PIPE_V>();
+        SetFlag<HardEvent::V_MTE3>(EVENT_ID5);
+        WaitFlag<HardEvent::V_MTE3>(EVENT_ID5);
+        for (uint64_t r = 0; r < rows; r += padRows) {
+            uint64_t n = FsgMin(padRows, rows - r);
+            DataCopyPad(dst[r * padD], ub,
+                        DataCopyExtParams{static_cast<uint16_t>(n), static_cast<uint32_t>(padD * sizeof(T)), 0, 0, 0});
+            SetFlag<HardEvent::MTE3_V>(EVENT_ID5);
+            WaitFlag<HardEvent::MTE3_V>(EVENT_ID5);
+        }
+    }
+
+    __aicore__ inline void PadPlanes()
+    {
+        for (uint64_t p = blockIdx; p < planes; p += aivNum) {
+            PadCopy(gmAPad[p * qLen * padD], gmGo[p * qLen * dLen], qLen, dLen);
+            PadCopy(gmBPad[p * padS * padD], gmV[p * sLen * dLen], sLen, dLen);
+            if (sLen < padS) {
+                ZeroPadRows(gmBPad[p * padS * padD + sLen * padD], padS - sLen);
+            }
+        }
+    }
+
     // 标量域读取 rs 并逐行 Adds 回写（V_S/S_V 事件同步）
     __aicore__ inline void ApplyRowBias(LocalTensor<float>& rs, LocalTensor<float>& g32, uint64_t rows, uint64_t padS,
                                         uint64_t sLen)
@@ -416,7 +493,7 @@ private:
             FsgCopyRowsIn(p16, gmP[row0 * sLen], rows, sLen, padS);
             inQueueP.EnQue(p16);
             LocalTensor<half> g16 = inQueueG.AllocTensor<half>();
-            FsgCopyRowsIn(g16, gmWs[row0 * sLen], rows, sLen, padS);
+            FsgCopyRowsIn(g16, gmWs[row0 * padS], rows, sLen, padS);
             inQueueG.EnQue(g16);
 
             p16 = inQueueP.DeQue<T>();
@@ -469,6 +546,9 @@ private:
     GlobalTensor<bfloat16_t> gmV;
     GlobalTensor<half> gmWs;
     GlobalTensor<T> gmOut;
+    GlobalTensor<bfloat16_t> gmAPad;
+    GlobalTensor<bfloat16_t> gmBPad;
+    TBuf<TPosition::VECCALC> bufPad;
 
     uint64_t blockIdx;
     uint64_t aicNum;
@@ -478,6 +558,9 @@ private:
     uint64_t sLen;
     uint64_t dLen;
     uint64_t padS;
+    uint64_t padD;
+    uint64_t needPad;
+    uint64_t padRows;
     uint64_t rowsPerIter;
     uint64_t myRows;
     uint64_t myStart;
