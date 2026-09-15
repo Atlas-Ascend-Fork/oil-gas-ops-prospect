@@ -1,8 +1,9 @@
 # -----------------------------------------------------------------------------------------------------------
 # oil-gas-ops-prospect Python 依赖
 #
-# torch-npu 与 Triton-Ascend 需与本地 CANN 版本严格配套，通常随 CANN 配套发布渠道安装，
-# 不建议由本文件直接从 PyPI 拉取任意版本。已验证的 CANN 版本见 README.md「版本配套」。
+# torch-npu 需与本地 CANN 版本严格配套。Triton-Ascend 不要写成社区 triton：
+# 请按 docs/zh/context/quick_install.md 安装 triton-ascend==3.2.1。
+# 已验证的 CANN 版本见 README.md「版本配套」。
 # -----------------------------------------------------------------------------------------------------------
 
 # 构建依赖
@@ -12,7 +13,7 @@ wheel
 # 运行时依赖
 torch
 torch-npu               # 昇腾 PyTorch 适配插件，需与 CANN 配套
-triton                  # Triton-Ascend，提供 triton.backends.ascend 后端，需与 CANN 配套
+# triton-ascend==3.2.1 见 docs/zh/context/quick_install.md，勿从 PyPI 安装社区 triton
 
 # 测试依赖
 pytest

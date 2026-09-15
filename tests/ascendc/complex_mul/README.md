@@ -41,12 +41,10 @@ tests/ascendc/complex_mul/
 1. 已构建出 OPP 包，产物在仓库根目录 `output/<SOC>/oil_gas_ops_prospect_opp_*.run`：
 
    ```bash
-   cd /root/projects/oil-gas-ops-prospect/ascendc
-   bash build.sh --pkg -v Ascend910B1
+   bash build.sh --pkg
    ```
 
 2. **测试需在带 NPU 的机器上运行**，且环境内有 `torch` 与 `torch_npu`。
-   扩展编译可在无卡容器内完成，跑测试需真实 910B。
 
 ## 运行
 
@@ -83,20 +81,3 @@ PASS
 `torch.autograd.Function` 封装的前反向接线。
 
 退出码：`0` 精度达标；`1` 超阈值 / 无 NPU / 扩展缺失。
-
-## 无卡环境下能做什么
-
-跑不了本测试，但可以验证编译期正确性：
-
-```bash
-cd ascendc && bash build.sh --pkg          # 算子编译 + 打包
-bash build.sh -u                           # 仓库根目录：全部无卡用例
-```
-
-以及确认 aclnn 接口已导出：
-
-```bash
-nm -D --defined-only \
-  /usr/local/Ascend/cann-9.0.0/opp/vendors/customize/op_api/lib/libcust_opapi.so \
-  | grep -i complexmul
-```

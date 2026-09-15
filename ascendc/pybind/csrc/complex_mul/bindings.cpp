@@ -40,7 +40,8 @@ aclnnStatus aclnnComplexMulGrad(void* workspace, uint64_t workspaceSize, aclOpEx
 
 namespace {
 
-using OgPybind::BindTensorAddr;
+using OgPybind::BindInputAddr;
+using OgPybind::BindOutputAddr;
 using OgPybind::Destroy;
 using OgPybind::MakeExecutorRepeatable;
 using OgPybind::ShapeOf;
@@ -86,8 +87,9 @@ std::vector<at::Tensor> complex_mul_forward(const at::Tensor& ur, const at::Tens
 
     const auto shape = ShapeOf(ur);
     const int64_t numel = ur.numel();
-    // 每次调用独立输出。TBE 只认第一路基址，wr/wi 必须落在同一块连续缓冲。
-    at::Tensor packed = at::empty({2, numel}, ur.options());
+    // TBE 只认第一路基址，wr/wi 必须落在同一块连续缓冲。
+    // 不要继承输入的 requires_grad，否则 autograd.Function 无法给输出挂自己的 grad_fn。
+    at::Tensor packed = at::empty({2, numel}, ur.options().requires_grad(false));
     at::Tensor wr = packed.select(0, 0).view(ur.sizes());
     at::Tensor wi = packed.select(0, 1).view(ur.sizes());
 
@@ -104,12 +106,12 @@ std::vector<at::Tensor> complex_mul_forward(const at::Tensor& ur, const at::Tens
     auto ret = aclnnComplexMulGetWorkspaceSize(urT, uiT, vrT, viT, wrT, wiT, &workspaceSize, &executor);
     TORCH_CHECK(ret == ACL_SUCCESS, "aclnnComplexMulGetWorkspaceSize failed, ret=", static_cast<int>(ret));
     MakeExecutorRepeatable(executor);
-    BindTensorAddr(executor, 0, urT, ur.data_ptr());
-    BindTensorAddr(executor, 1, uiT, ui.data_ptr());
-    BindTensorAddr(executor, 2, vrT, vr.data_ptr());
-    BindTensorAddr(executor, 3, viT, vi.data_ptr());
-    BindTensorAddr(executor, 4, wrT, packed.data_ptr());
-    BindTensorAddr(executor, 5, wiT, packed.data_ptr());
+    BindInputAddr(executor, 0, urT, ur.data_ptr());
+    BindInputAddr(executor, 1, uiT, ui.data_ptr());
+    BindInputAddr(executor, 2, vrT, vr.data_ptr());
+    BindInputAddr(executor, 3, viT, vi.data_ptr());
+    BindOutputAddr(executor, 0, wrT, packed.data_ptr());
+    BindOutputAddr(executor, 1, wiT, packed.data_ptr());
 
     void* workspace = nullptr;
     at::Tensor& workspaceTensor = StableWorkspace(false, workspaceSize, ur);
@@ -153,16 +155,16 @@ void LaunchComplexMulGrad(const at::Tensor& gwr, const at::Tensor& gwi, const at
                                                    &workspaceSize, &executor);
     TORCH_CHECK(ret == ACL_SUCCESS, "aclnnComplexMulGradGetWorkspaceSize failed, ret=", static_cast<int>(ret));
     MakeExecutorRepeatable(executor);
-    BindTensorAddr(executor, 0, gwrT, gwr.data_ptr());
-    BindTensorAddr(executor, 1, gwiT, gwi.data_ptr());
-    BindTensorAddr(executor, 2, urT, ur.data_ptr());
-    BindTensorAddr(executor, 3, uiT, ui.data_ptr());
-    BindTensorAddr(executor, 4, vrT, vr.data_ptr());
-    BindTensorAddr(executor, 5, viT, vi.data_ptr());
-    BindTensorAddr(executor, 6, gurT, packed.data_ptr());
-    BindTensorAddr(executor, 7, guiT, packed.data_ptr());
-    BindTensorAddr(executor, 8, gvrT, packed.data_ptr());
-    BindTensorAddr(executor, 9, gviT, packed.data_ptr());
+    BindInputAddr(executor, 0, gwrT, gwr.data_ptr());
+    BindInputAddr(executor, 1, gwiT, gwi.data_ptr());
+    BindInputAddr(executor, 2, urT, ur.data_ptr());
+    BindInputAddr(executor, 3, uiT, ui.data_ptr());
+    BindInputAddr(executor, 4, vrT, vr.data_ptr());
+    BindInputAddr(executor, 5, viT, vi.data_ptr());
+    BindOutputAddr(executor, 0, gurT, packed.data_ptr());
+    BindOutputAddr(executor, 1, guiT, packed.data_ptr());
+    BindOutputAddr(executor, 2, gvrT, packed.data_ptr());
+    BindOutputAddr(executor, 3, gviT, packed.data_ptr());
 
     void* workspace = nullptr;
     at::Tensor& workspaceTensor = StableWorkspace(true, workspaceSize, ur);
@@ -189,7 +191,7 @@ std::vector<at::Tensor> complex_mul_backward(const at::Tensor& gwr, const at::Te
     TORCH_CHECK(gwr.scalar_type() == at::kFloat, "complex_mul_grad requires float32");
 
     const int64_t numel = ur.numel();
-    at::Tensor packed = at::empty({4, numel}, ur.options());
+    at::Tensor packed = at::empty({4, numel}, ur.options().requires_grad(false));
     at::Tensor gur = packed.select(0, 0).view(ur.sizes());
     at::Tensor gui = packed.select(0, 1).view(ur.sizes());
     at::Tensor gvr = packed.select(0, 2).view(ur.sizes());

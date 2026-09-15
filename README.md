@@ -2,7 +2,7 @@
 
 ## 🚀 概述
 
-oil-gas-ops-prospect 是面向**油气勘探**（oil & gas exploration）领域的昇腾自定义算子库。仓名即 **oil-gas-ops**（油气算子）+ **prospect**（勘探目标/圈闭），面向地震成像、全波形反演等勘探计算负载，不绑定任何单一上层模型工程。
+oil-gas-ops-prospect 是面向**油气勘探**（oil & gas exploration）领域的昇腾自定义算子库。仓名即 **oil-gas-ops**（油气算子）+ **prospect**（勘探目标），面向地震成像、全波形反演等勘探计算场景。
 
 本仓按**交付物形态**分为两类算子后端；Python 对外接口按算子名暴露，不区分实现后端：
 
@@ -15,11 +15,11 @@ oil-gas-ops-prospect 是面向**油气勘探**（oil & gas exploration）领域�
 
 当前仓库已验证通过的 CANN 版本如下：
 
-| CANN 版本 | 发布时间 | 分支 |
-|-----------|----------|------|
-| [CANN 9.0.0](https://www.hiascend.com/developer/download/community/result?module=cann&cann=9.0.0) | 2026/04/30 | master |
+| CANN 版本 | 发布时间 |
+|-----------|----------|
+| [9.0.0 官方版本](https://www.hiascend.com/developer/download/community/result?module=cann&cann=9.0.0) | 2026/04/30 |
 
-本仓库需要安装 **Toolkit 包**和对应 SoC 的 **Ops 包**，当前面向 **Ascend 910B**（`Ascend910B1`）。完整的安装步骤、SoC 支持矩阵与环境变量配置见[环境部署](docs/zh/context/quick_install.md)。
+本仓库需要安装 **Toolkit 包**、对应 SoC 的 **Ops 包**，以及与 CANN 配套的 **Triton-Ascend**（已验证 `triton-ascend==3.2.1`）。当前面向 **Ascend 910B**（`Ascend910B1`）。完整的安装步骤、SoC 支持矩阵与环境变量配置见[环境部署](docs/zh/context/quick_install.md)。
 
 ## ⬇️ 源码下载
 
@@ -32,11 +32,31 @@ cd oil-gas-ops-prospect
 
 ### 编译与安装
 
-在仓库根目录一键完成 OPP 编译 → 安装 → whl 构建 → whl 安装 → 冒烟测试：
+仓库根目录提供三种构建入口。
+
+**单独编译 OPP `.run` 包**
+
+```bash
+bash build.sh --pkg
+```
+
+只编译 AscendC OPP `.run`，写入 `output/<SOC>/`，不编 Python whl，也不安装。
+
+**只编译不安装**
 
 ```bash
 bash build.sh
 ```
+
+同时编译 OPP `.run` 与 Python whl，产物写入 `output/`，不安装到 CANN / Python，也不跑冒烟测试。
+
+**编译并安装**
+
+```bash
+bash build.sh --install
+```
+
+编译 OPP 与 whl，安装到 CANN / Python，并跑 whl 冒烟测试。
 
 产物统一落到仓库根目录 `output/`：
 
@@ -56,10 +76,11 @@ export LD_LIBRARY_PATH=${ASCEND_HOME_PATH}/opp/vendors/customize/op_api/lib:${AS
 
 ```bash
 bash build.sh --help                                # 查看全部选项
+bash build.sh --pkg -h                              # Package Options
 bash build.sh -u -h                                 # Test Options
-bash build.sh --clean                               # 先清理再构建
+bash build.sh --clean                               # 先清理再构建（可与上面组合）
 bash build.sh --ops=complex_mul,complex_mul_grad    # 只构建指定算子
-bash build.sh --skip-tests                          # 跳过 whl 冒烟测试
+bash build.sh --install --skip-tests                # 安装后跳过 whl 冒烟测试
 bash build.sh --soc=Ascend910B1 -j16                # 指定 SOC 与并行度
 ```
 
@@ -81,20 +102,19 @@ y = real_irfft(xr, xi, n=256, dim=-1)  # 从半谱重建实信号
 
 ### 测试
 
-```bash
-# 全量无卡单元测试：ophost tiling UT + Triton CPU 回退精度 + Triton AOT 编译检查
-bash build.sh -u
-# 只跑 ophost / 只编译不执行：
-# bash build.sh -u --ophost
-# bash build.sh -u --ophost --noexec
+分类见 [`tests/README.md`](tests/README.md)。
 
-# 只验证已安装的 whl
-bash tests/run_whl_tests.sh
+```bash
+bash build.sh -u                                 # 全部套件（需 910B）
+bash build.sh -u --ut                            # UT：切分 + 上板小 launch
+bash build.sh -u --st                            # ST：多 shape aclnn
+bash build.sh -u --precision                     # 精度
+bash build.sh -u --perf                          # 性能
+
+bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 ```
 
-所有测试用例集中在 [`tests/`](tests/) 下，算子目录只放实现；用例分类与 NPU 依赖见 [`tests/README.md`](tests/README.md)。
-
-> **编译通过不等于功能正确。** 算子在 NPU 上的精度、性能、显存必须在真实 910B 上验证。无卡验证手段与问题定位见[调试与性能分析](docs/zh/debug/op_debug_prof.md)。
+算子在 NPU 上的精度、性能、显存必须在真实 910B 上验证通过。问题定位见[调试与性能分析](docs/zh/debug/op_debug_prof.md)。
 
 ## 📖 接口支持清单
 
@@ -122,19 +142,21 @@ oil-gas-ops-prospect/
 │   └── build.sh            #   AscendC 侧入口（--pkg 打包 / -u --ophost 跑 UT）
 ├── triton-ascend/          # Triton-Ascend 算子（real_fft 打包为 oil_gas_ops_prospect.real_fft）
 │   ├── real_fft/           #   real_rfft / real_irfft
-│   └── tools/              #   无卡 AOT 编译检查
-├── tests/                   # 全部测试用例（算子目录内不放用例）
-│   ├── ascendc/ophost/     #   tiling UT（无卡，googletest）
+│   └── tools/              #   AOT 编译检查
+├── tests/                   # UT / ST / Python 精度性能；operators/ 不再放测试
+│   ├── ut/op_host/         #   tiling googletest
+│   ├── st/aclnn<OpType>/   #   两段式 aclnn 系统测试
+│   ├── ascendc/ophost/     #   汇总编译 ophost_ut（googletest）
 │   ├── ascendc/complex_mul/#   NPU 精度/性能对比
 │   ├── ascendc/fused_bias_softmax/
-│   └── triton/real_fft/    #   rFFT / iRFFT 精度（无卡回退 CPU）
-├── examples/               # 可运行示例
+│   └── triton/real_fft/    #   rFFT / iRFFT 精度（含 CPU 回退路径）
+├── examples/               # Python 示例 + examples/aclnn/<op>/ C++ 样例
 ├── scripts/                # 辅助脚本
 ├── docs/                   # 文档
 ├── cmake/                  # CMake 模块（三方件解析、安全编译选项）
 ├── .gitcode/workflows/     # GitCode Action 门禁流水线
-├── build.sh                # 顶层构建入口（-u 跑无卡 UT）
-├── CMakeLists.txt          # 顶层 CMake（无卡 C++ 目标：ophost UT）
+├── build.sh                # 顶层构建入口（默认只编包；--install 安装；-u 跑测试）
+├── CMakeLists.txt          # 顶层 CMake（ophost tiling UT）
 └── version.cmake           # 版本与依赖定义
 ```
 
@@ -142,12 +164,12 @@ oil-gas-ops-prospect/
 
 ## 🛠️ 开发指南
 
-新增 AscendC 或 Triton-Ascend 算子的完整流程、目录约定、命名约定与自检方式见[算子开发指南](docs/zh/develop/operator_development_guide.md)与[算子开发规格](docs/zh/develop/operator-dev-spec.md)。
+新增 AscendC 或 Triton-Ascend 算子的完整流程、目录约定、命名约定与自检方式见[算子开发指南](docs/zh/develop/operator_development_guide.md)。
 
 提交前自检：
 
 ```bash
-bash build.sh -u                        # 全量无卡单元测试
+bash build.sh -u                        # 全部测试套件（需 910B）
 bash scripts/check_license_header.sh    # 许可证头检查
 ```
 
@@ -158,6 +180,8 @@ bash scripts/check_license_header.sh    # 许可证头检查
 - [目录结构](docs/zh/context/dir_structure.md)
 - [算子列表](docs/zh/op_list.md)
 - [接口列表](docs/zh/api_list.md)
+- [编译参数说明](docs/zh/context/build.md)
+- [算子开发指南](docs/zh/develop/operator_development_guide.md)
 - [贡献指南](CONTRIBUTING.md)
 - [安全声明](SECURITY.md)
 - [变更记录](CHANGELOG.md)

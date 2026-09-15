@@ -19,7 +19,7 @@
 #
 # AscendC 算子本身（op_host / op_kernel）不由本文件编译：CANN 自定义算子必须由
 # msopgen 依据当前 CANN 与 SOC 生成配套工程后再交给 opbuild / bisheng 编译，入口是
-# `bash build.sh` 与 `bash ascendc/build.sh --pkg`，详见 ascendc/README.md。
+# `bash build.sh --pkg` 与 `bash ascendc/build.sh --pkg`，详见 ascendc/README.md。
 
 cmake_minimum_required(VERSION 3.16)
 

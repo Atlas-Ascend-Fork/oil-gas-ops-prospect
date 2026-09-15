@@ -77,7 +77,7 @@ description: >-
 
 ## Stage 2：改码
 
-一次一个主题。改 tiling 公式必须同步改 `tests/ascendc/ophost/` 手算期望。
+一次一个主题。改 tiling 公式必须同步改对应算子 `tests/ut/op_host/` 手算期望。
 
 改完立刻走 [eval.md](references/eval.md)。精度/运行时失败走 repair-guide。
 

@@ -50,18 +50,21 @@ ascendc/operators/${op_name}/
 ascendc/operators/manifest.tsv          # 追加一行（tab 分隔）注册算子
 ascendc/pybind/${op_name}.py            # Python API（autograd + 回退）
 ascendc/pybind/csrc/${op_name}/bindings.cpp  # C++ 绑定（打进 whl，非测试资产）
-tests/ascendc/ophost/                    # 追加 tiling UT，并更新 CMakeLists.txt
-tests/ascendc/${op_name}/                # NPU 精度/性能对比测试
+tests/ut/op_host/${op_name}/                   # tiling UT（自动汇入 ophost_ut）
+tests/st/aclnn<OpType>/                        # 多 case 两段式 aclnn + 真值
+examples/aclnn/${op_name}/                     # 两段式 aclnn 小样例
+tests/ascendc/${op_name}/                      # NPU Python 精度/性能对比
 ```
 
-测试用例统一放在仓库根目录的 `tests/` 下，算子目录只放实现与交付件。
+C++ 测试与样例放在仓库根 `tests/`、`examples/`；`operators/` 只放实现。
 
 约定：
 
 - **切分算法必须抽到 `op_host/<op>_tiling_core.h`**。`<Op>TilingFunc` / `InferShape` 的签名依赖 `gert::TilingContext`，CANN 二进制包未提供 gert faker，无法直接 UT；把与平台无关的算法抽出来后，ophost UT 才能覆盖真实算法。
 - **C++ / CANN 接口**：OpType 用 PascalCase（如 `ComplexMul`），aclnn 为 `aclnn` + OpType（如 `aclnnComplexMul`）。
 - **Python 接口**：蛇形命名（如 `complex_mul`），不要用驼峰，也不要加 `npu_` 前缀。
-- 新增算子后，需把它的 `op_host` 目录加进 `tests/ascendc/ophost/CMakeLists.txt` 的 `OPHOST_UT_INCLUDE_DIRS`，并把测试源加进 `ophost_ut` 目标。
+- 新增算子后，在 `tests/ut/op_host/<op>/` 放下 `test_*.cpp`；`tests/ascendc/ophost/CMakeLists.txt` 会自动收集。
+- 有卡 aclnn：在 `examples/aclnn/<op>/` 放 `test_aclnn_<op>.cpp`（内联小 tensor），在 `tests/st/aclnn<OpType>/` 放 `cases.json` + `gen_data.py` + 两段式 `main.cpp`，并登记 `tests/suites.json`。本仓没有 ATK / `OP_API_UT`，不要空放 `ut/op_api`。
 - pybind 封装：Python API 放在 `ascendc/pybind/<op_family>.py`，C++ 源码放在 `ascendc/pybind/csrc/<op_family>/`，会自动编译成扩展模块 `<op_family>_npu`，不需要改构建脚本。
 
 #### Triton-Ascend 算子（Python whl）
@@ -75,7 +78,7 @@ triton-ascend/${op_family}/
 └── README.md                           # 算子说明
 
 tests/triton/${op_family}/
-└── test_triton_${op_family}.py         # CPU 回退精度测试（无卡可跑）
+└── test_triton_${op_family}.py         # CPU 回退路径精度测试
 ```
 
 同时需在 `setup.py` 的 `packages` / `package_dir` 中按算子名注册，使其进入 whl
@@ -83,23 +86,21 @@ tests/triton/${op_family}/
 
 约定：
 
-- kernel 需提供**非 NPU 环境下的 PyTorch 回退实现**，保证无卡环境可做精度自检。
+- kernel 需提供 **PyTorch 回退实现**，接口语义与 NPU 路径一致。
 - 新增 kernel 分支需能被 `triton-ascend/tools/aot_compile_check.py` 覆盖到。
 
 ### 4. 精度要求
 
-新贡献算子需满足精度标准，具体参见[生态算子开源精度标准](https://gitcode.com/cann/opbase/blob/master/docs/zh/ops_precision_standard/experimental_standard.md)。目录、命名、切分可测与 PR 交付件见[算子开发规格](docs/zh/develop/operator-dev-spec.md)。请在 PR 描述中附上精度测试报告，报告格式参考 [`docs/zh/develop/precision_acceptance_template.md`](docs/zh/develop/precision_acceptance_template.md)。
+新贡献算子需满足精度标准，具体参见[生态算子开源精度标准](https://gitcode.com/cann/opbase/blob/master/docs/zh/ops_precision_standard/experimental_standard.md)。目录、命名、切分可测与 PR 交付件见[算子开发指南](docs/zh/develop/operator_development_guide.md)。请在 PR 描述中附上精度测试报告，报告格式参考 [`docs/zh/develop/precision_acceptance_template.md`](docs/zh/develop/precision_acceptance_template.md)。
 
-> **算子在 NPU 上的精度、性能、显存必须在真实 910B 上验证，编译通过不等于功能正确。**
+> **算子在 NPU 上的精度、性能、显存必须在真实 910B 上验证通过。**
 
-### 5. 提交前本地自检（无卡即可执行）
+### 5. 提交前本地自检
 
 ```bash
-# AscendC：编译打包 OPP .run
-bash ascendc/build.sh --pkg
-
-# 全量无卡单元测试（ophost tiling UT + Triton CPU 回退精度 + Triton AOT 编译）
-bash build.sh -u
+bash build.sh --install
+bash build.sh -u --ut --st --precision --perf
+bash scripts/check_license_header.sh
 ```
 
 ### 6. PR 提交
@@ -108,7 +109,7 @@ bash build.sh -u
   - C++ 代码符合《[C++ 编程规范](https://gitcode.com/cann/community/blob/master/contributor/coding-standards/C++%20Coding%20standards.md)》，可用仓内 `.clang-format` 格式化。
   - 所有新增源文件带 Apache License 2.0 许可证头（参考现有文件）。
   - Markdown 文档语法符合规范。
-  - 无卡自检全部通过。
+  - 本地自检全部通过（含 910B 上板）。
 - **PR 提交**：通过 `git` 命令向目标分支提 PR，检查 PR 标题是否清晰、PR 描述是否规范（说明更改内容和原因、关联对应 Issue）、是否已签署 CLA。
 
 ### 7. CI 门禁
@@ -121,13 +122,9 @@ bash build.sh -u
 
 门禁通过后，请在关联的 Issue 中 @ 指派的 Committer。
 
-### 8. Committer 检视
+### 8. 代码检视与合入
 
-Committer 检视后反馈意见，请据此修改，完成后 @ 指派的 Committer。
-
-### 9. Maintainer 合入
-
-Committer 检视通过后标注 `/lgtm`。Maintainer 将在 1 天内进行最终审核，确认无问题后标注 `/approve` 合入 PR。
+合入前需至少两名 Committer 完成代码检视，并分别在 PR 中评论 `/lgtm` 与 `/approve`。检视意见请据此修改，完成后再次 @ 检视人。
 
 ---
 
@@ -166,7 +163,8 @@ Bug 类 Issue 建议附带：
 - [快速入门](docs/QUICKSTART.md)
 - [目录结构](docs/zh/context/dir_structure.md)
 - [算子列表](docs/zh/op_list.md)
-- [算子开发规格](docs/zh/develop/operator-dev-spec.md)
+- [接口列表](docs/zh/api_list.md)
+- [算子开发指南](docs/zh/develop/operator_development_guide.md)
 - [安全声明](SECURITY.md)
 - [许可证](LICENSE)（Apache License 2.0）
 - [变更记录](CHANGELOG.md)

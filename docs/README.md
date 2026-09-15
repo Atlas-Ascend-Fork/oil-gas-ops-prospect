@@ -7,7 +7,7 @@ oil-gas-ops-prospect 的完整文档索引。
 | 文档 | 说明 |
 |------|------|
 | [快速入门](QUICKSTART.md) | 从环境准备到跑通第一个算子的最短路径 |
-| [环境部署](zh/context/quick_install.md) | CANN Toolkit / Ops 包安装与环境变量配置 |
+| [环境部署](zh/context/quick_install.md) | CANN Toolkit / Ops 包、Triton-Ascend 安装与环境变量配置 |
 | [目录结构](zh/context/dir_structure.md) | 仓库各目录职责说明 |
 
 ## 使用
@@ -22,11 +22,10 @@ oil-gas-ops-prospect 的完整文档索引。
 
 | 文档 | 说明 |
 |------|------|
-| [编译参数说明](zh/context/build.md) | `build.sh` / `scripts/build_options.sh` / `ascendc/build.sh` 全部选项 |
-| [算子开发指南](zh/develop/operator_development_guide.md) | 新增 AscendC / Triton 算子的步骤 |
-| [算子开发规格](zh/develop/operator-dev-spec.md) | 必须遵守的约束、交付件与验收 |
+| [编译参数说明](zh/context/build.md) | `build.sh` 的编译构建与测试报告 |
+| [算子开发指南](zh/develop/operator_development_guide.md) | 新增 AscendC / Triton 算子的步骤、约定与验收 |
 | [精度验收报告模板](zh/develop/precision_acceptance_template.md) | PR 中附带的精度报告格式 |
-| [调试与性能分析](zh/debug/op_debug_prof.md) | 常见问题定位与 profiling |
+| [调试与性能分析](zh/debug/op_debug_prof.md) | Host / Kernel 调试与 msProf 性能采集 |
 
 ## 社区
 

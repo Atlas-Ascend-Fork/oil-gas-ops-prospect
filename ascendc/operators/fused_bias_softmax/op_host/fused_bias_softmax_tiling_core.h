@@ -67,6 +67,25 @@ struct FusedBiasSoftmaxPlan {
 
 inline uint64_t FbsCeilDiv(uint64_t a, uint64_t b) { return (b == 0) ? 0 : (a + b - 1) / b; }
 
+/**
+ * bias 4D 与 x 的 B/H/S 对齐；fullRequired 时 Q 必须等于 xQ，否则 Q 为 1（广播）或 xQ。
+ * 不依赖 gert，供 tiling 入口与 ophost UT 共用。
+ */
+inline bool BiasShapeValid(int64_t xB, int64_t xH, int64_t xQ, int64_t xS, int64_t bB, int64_t bH, int64_t bQ,
+                           int64_t bS, bool fullRequired)
+{
+    if (xB <= 0 || xH <= 0 || xQ <= 0 || xS <= 0 || bB <= 0 || bH <= 0 || bQ <= 0 || bS <= 0) {
+        return false;
+    }
+    if (bB != xB || bH != xH || bS != xS) {
+        return false;
+    }
+    if (fullRequired) {
+        return bQ == xQ;
+    }
+    return bQ == 1 || bQ == xQ;
+}
+
 /** width 对齐到 32B 的元素数与 padding 个数。 */
 inline void ComputePadding(uint64_t width, uint64_t dtypeSize, uint64_t& paddingNum, uint64_t& padLineNum)
 {

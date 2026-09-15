@@ -53,7 +53,7 @@ w_i &= u_r v_i + u_i v_r
 - 四个输入与两个输出必须 **同 shape、同 dtype、`float32`、`ND`**。
 - 输入需连续（Python 绑定会 `contiguous()`）。
 - **AIV-only**：按元素总数在 AIV 核间均分（32B 对齐），核内再按 UB 预算分拍。前向 UB 模型为 13 份 tile（4 路 inQue + 2 路 outQue 的 double buffer + 1 份 tmp）。
-- 切分算法在 `op_host/complex_mul_tiling_core.h`，由 [`tests/ascendc/ophost/test_complex_mul_tiling.cpp`](../../tests/ascendc/ophost/test_complex_mul_tiling.cpp) 覆盖。
+- 切分算法在 `op_host/complex_mul_tiling_core.h`，由 [`tests/ut/op_host/complex_mul/test_complex_mul_tiling.cpp`](../../tests/ut/op_host/complex_mul/test_complex_mul_tiling.cpp) 覆盖。
 - Python 默认走 PyTorch 参考实现；仅当张量在 NPU 且 `OIL_GAS_OPS_COMPLEX_MUL_IMPL` 为 `ascendc` / `auto` 时调用本算子。
 - 精度验收：相对误差默认阈值 `1e-5`（见 [`tests/ascendc/complex_mul/`](../../tests/ascendc/complex_mul/)）。
 
@@ -126,7 +126,7 @@ NPU 融合路径上 **`y` 与 `x` 共享同一块 device 内存**（原地写回
 - 存在的 bias 必须与 `x` **同 dtype**。
 - **AIV-only**。按行（`B*H*Q`）在 AIV 核间均分，每行 `S` 对齐到 32B；高阶 SoftMax 预留 32KB UB。
 - tiling key：`0=fp32`，`1=fp16`，`2=bf16`。
-- 切分算法在 `op_host/fused_bias_softmax_tiling_core.h`，由 [`tests/ascendc/ophost/test_fused_bias_softmax_tiling.cpp`](../../tests/ascendc/ophost/test_fused_bias_softmax_tiling.cpp) 覆盖。
+- 切分算法在 `op_host/fused_bias_softmax_tiling_core.h`，由 [`tests/ut/op_host/fused_bias_softmax/test_fused_bias_softmax_tiling.cpp`](../../tests/ut/op_host/fused_bias_softmax/test_fused_bias_softmax_tiling.cpp) 覆盖。
 - 精度验收（[`tests/ascendc/fused_bias_softmax/`](../../tests/ascendc/fused_bias_softmax/)）：fp32 `max_diff ≤ 1e-5`；bf16 契约式 `atol=2e-2, rtol=4e-3`。
 
 ---
@@ -175,7 +175,7 @@ NPU 融合路径上 **`out` 与 `probs` 共享同一块 device 内存**（原地
 - `fp32` / `fp16` 不走 cube：Ascend 910B fixpipe C 为 16bit 结构上限，`g` 以 half 落盘的量化误差会超出 fp32 契约（`rtol=1e-4`）。
 - 向量路径要求 \(V\) 的 plane（`S * pad(D) * 4` 字节）加上约 48KB 余量能放入 AIV UB，否则 tiling 失败。
 - MIX 路径 workspace = 系统预留 16MB + `B*H*Q*S*sizeof(half)` 的 `g` 缓冲。
-- 切分算法在 `op_host/fused_softmax_grad_tiling_core.h`，由 [`tests/ascendc/ophost/test_fused_softmax_grad_tiling.cpp`](../../tests/ascendc/ophost/test_fused_softmax_grad_tiling.cpp) 覆盖。
+- 切分算法在 `op_host/fused_softmax_grad_tiling_core.h`，由 [`tests/ut/op_host/fused_softmax_grad/test_fused_softmax_grad_tiling.cpp`](../../tests/ut/op_host/fused_softmax_grad/test_fused_softmax_grad_tiling.cpp) 覆盖。
 - 精度验收与前向同一目录：fp32 `max_diff ≤ 1e-5`；bf16 `atol=2e-2, rtol=4e-3`。MIX 路径的 half-`g` 量化误差经 `rowsum(P⊙g)` 放大，与 \(\sum P^2\) 成正比，生产输入应为 softmax 分布。
 
 `attention_core(q, k, v, bias1, bias2)` 是上述两算子按 openfold `AttentionCoreFunction.apply` 语义的组合封装，不是独立 OPP 算子。数学定义见[接口列表](api_list.md#attention_core)。

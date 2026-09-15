@@ -4,12 +4,20 @@
 
 | 示例 | 说明 | 需要 NPU |
 |------|------|----------|
-| [`complex_mul_example.py`](complex_mul_example.py) | AscendC 复数逐点乘的前向、反向与精度对拍 | 否（无卡时走 PyTorch 参考实现） |
-| [`real_fft_example.py`](real_fft_example.py) | Triton-Ascend 实数 FFT 的正反变换、往返重建与 autograd | 否（无卡时回退到 `torch.fft`） |
+| [`complex_mul_example.py`](complex_mul_example.py) | AscendC 四路 float 复数逐点乘的前向、反向与精度对拍 | 有 NPU 时走自定义算子，否则走 PyTorch 参考实现 |
+| [`real_fft_example.py`](real_fft_example.py) | Triton-Ascend 实数 FFT 的正反变换、往返重建与 autograd | 有 NPU 时走 Triton kernel，否则回退 `torch.fft` |
+
+各 AscendC 算子还有对齐 ops-nn addmv 的 C++ 两段式样例：`examples/aclnn/<op>/test_aclnn_*.cpp`（需要 NPU + customize vendor）。
+
+```bash
+bash build.sh -u --examples
+# 或单算子：
+bash examples/aclnn/complex_mul/run.sh
+```
 
 ## 运行
 
-两个示例都会自动探测设备：有 NPU 时走自定义算子，无 NPU 时走各自的回退实现，因此在开发容器里也能跑通。未安装 whl 时会自动回落到仓内源码（见 [`_bootstrap.py`](_bootstrap.py)），不需要额外设置 `PYTHONPATH`：
+两个示例都会自动探测设备：有 NPU 时走自定义算子，否则走各自的回退实现。未安装 whl 时会自动回落到仓内源码（见 [`_bootstrap.py`](_bootstrap.py)），不需要额外设置 `PYTHONPATH`：
 
 ```bash
 python3 examples/complex_mul_example.py

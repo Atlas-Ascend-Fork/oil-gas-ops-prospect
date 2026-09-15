@@ -77,10 +77,11 @@
 
 | 测试项 | 命令 | 用例数 | 通过数 | 结论 |
 |--------|------|--------|--------|------|
-| ophost tiling UT | `bash ascendc/build.sh -u --ophost` | | | |
+| ophost tiling UT | `bash build.sh -u --ophost` | | | |
+| ST | `bash build.sh -u --st --ops=<op>` | | | |
+| 精度 / 性能 | `bash build.sh -u --precision --perf --ops=<op>` | | | |
 | Triton CPU 回退精度 | `python3 -m pytest tests/triton/real_fft -q` | | | |
 | Triton AOT 编译检查 | `python3 triton-ascend/tools/aot_compile_check.py` | | | |
-| NPU 精度/性能对比 | `bash tests/ascendc/<op>/run_test.sh` | | | |
 
 要求：全量 UT 通过且日志无 ERROR。
 

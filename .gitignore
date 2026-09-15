@@ -41,3 +41,11 @@ AGENTS.md
 # 测试报告导出件（不纳入版本管理）
 test_result/
 _errors/
+extra-info/
+
+# examples / ST 运行产物
+examples/**/build/
+examples/aclnn/**/output/
+tests/st/**/build/
+tests/st/**/input/
+tests/st/**/output/

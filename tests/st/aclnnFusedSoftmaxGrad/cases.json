@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"name": "square_2x4x64x64", "shape": [2, 4, 64, 64, 64]},
+    {"name": "small_1x1x8x8", "shape": [1, 1, 8, 8, 8]},
+    {"name": "q_ne_s_1x1x8x16x8", "shape": [1, 1, 8, 16, 8]}
+  ]
+}

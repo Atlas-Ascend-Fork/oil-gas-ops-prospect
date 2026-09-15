@@ -6,17 +6,19 @@
 
 | 项 | 要求 |
 |----|------|
-| CANN | 9.0.0（Toolkit 包 + 对应 SoC 的 Ops 包） |
+| CANN | 9.0.0 官方版本（Toolkit 包 + 对应 SoC 的 Ops 包） |
 | SoC | Ascend 910B（`Ascend910B1`） |
 | Python | >= 3.10 |
-| Python 依赖 | `torch`、`torch-npu`、`triton`（Triton-Ascend），版本需与 CANN 配套 |
-| NPU 设备 | **精度与性能验证必须有真实 NPU**；编译与部分单元测试无卡即可 |
+| Python 依赖 | `torch`、`torch-npu`，以及 **Triton-Ascend 3.2.1**（不要用 PyPI 社区 `triton` 代替） |
+| NPU 设备 | 真实 910B；精度、性能、显存必须在真机上验证通过 |
 
 配置 CANN 环境变量：
 
 ```bash
 source /usr/local/Ascend/cann-9.0.0/set_env.sh
 ```
+
+Triton-Ascend 安装步骤见[环境部署 · 安装 Triton-Ascend](zh/context/quick_install.md#6-安装-triton-ascend)。
 
 ## 2. 获取源码
 
@@ -25,15 +27,17 @@ git clone https://gitcode.com/cann/oil-gas-ops-prospect.git
 cd oil-gas-ops-prospect
 ```
 
-## 3. 一键构建并安装
+## 3. 编译与安装
 
-在仓库根目录执行：
+仓库根目录执行。默认只编译、不安装：
 
 ```bash
-bash build.sh
+bash build.sh --pkg      # 只出 OPP .run
+bash build.sh            # 出 .run 与 Python whl 到 output/，不安装
+bash build.sh --install  # 编译并安装，然后跑 whl 冒烟
 ```
 
-该脚本依次完成：
+`--install` 依次完成：
 
 1. 调用 `ascendc/build.sh --pkg` 编译 AscendC OPP `.run` 包（默认 `Ascend910B1`，默认全部算子）。
 2. 安装生成的 `oil_gas_ops_prospect_opp_*.run` 到当前 CANN 环境。
@@ -87,39 +91,19 @@ y = real_irfft(xr, xi, n=256, dim=-1)  # 重建实信号
 
 更多示例见 [`examples/`](../examples/) 与[算子调用](zh/invocation/quick_op_invocation.md)。
 
-## 5. 无卡验证
+## 5. 测试
 
-开发容器（如 `ascendc-dev`）没有 NPU 设备时，下列验证**不需要卡**：
+分类见 [`tests/README.md`](../tests/README.md)。在已安装 OPP / whl 的 910B 上执行：
 
 ```bash
-# 全量无卡单元测试（--ut 是 -u 的别名）
 bash build.sh -u
-# 只跑 ophost / 只编译不执行：
-# bash build.sh -u --ophost
-# bash build.sh -u --noexec
 ```
 
-等价的分步命令：
-
-```bash
-# 1. ophost 侧 tiling 单元测试（googletest）
-cmake -S . -B build && cmake --build build -j && ctest --test-dir build --output-on-failure
-#    或：bash build.sh -u --ophost
-#    或走 AscendC 侧入口：bash ascendc/build.sh -u --ophost
-
-# 2. Triton 算子 CPU 回退精度
-python3 -m pytest tests/triton/real_fft -q
-
-# 3. Triton kernel 全分支 AOT 编译（TTIR → Linalg → bishengir → npubin）
-python3 triton-ascend/tools/aot_compile_check.py
-```
-
-> **编译通过不等于功能正确。** 算子在 NPU 上的精度、性能、显存必须在真实 910B 上验证。
+算子在 NPU 上的精度、性能、显存必须在真实 910B 上验证通过。
 
 ## 下一步
 
 - [算子列表](zh/op_list.md)：当前支持哪些算子、约束是什么
 - [接口列表](zh/api_list.md)：完整接口签名与环境变量
 - [算子开发指南](zh/develop/operator_development_guide.md)：新增算子步骤
-- [算子开发规格](zh/develop/operator-dev-spec.md)：约束、交付件与验收
 - [贡献指南](../CONTRIBUTING.md)：提交 Issue / PR

@@ -279,7 +279,7 @@ Triton 算子没有 aclnn 入口。
 |----------|------|------|------|
 | `OIL_GAS_OPS_RUN_PKG` | 路径 | 自动探测 | `tests/ascendc/*/run_test.sh` 指定要安装的 OPP `.run` 包 |
 | `OIL_GAS_OPS_WHL_REQUIRE_NPU_EXT` | `0` / `1` | `0` | 置 `1` 时 whl 冒烟测试强制要求已编译的 NPU 扩展存在，否则该用例跳过 |
-| `OIL_GAS_OPS_WHL_TEST` | `0` / `1` | `0` | 由 `tests/run_whl_tests.sh` / `build.sh` 置 `1`，声明本次确实在验证已安装的 whl；此时不把仓内源码挂到 `oil_gas_ops_prospect` 导入名下，若解析到仓内路径则硬失败 |
+| `OIL_GAS_OPS_WHL_TEST` | `0` / `1` | `0` | 由 `tests/run_whl_tests.sh` / `bash build.sh --install` 置 `1`，声明本次确实在验证已安装的 whl；此时不把仓内源码挂到 `oil_gas_ops_prospect` 导入名下，若解析到仓内路径则硬失败 |
 | `OIL_GAS_OPS_RUN_LATENT3D_FFT_TEST` | `0` / `1` | `0` | 置 `1` 时运行 `(2,41,41,41,2048)` 大 shape 的 NPU FFT 重型用例 |
 | `OIL_GAS_OPS_RUN_128_FFT_TEST` | `0` / `1` | `0` | 置 `1` 时运行 `tests/triton/real_fft` 的 128³ NPU 反向与显存用例 |
 

@@ -114,6 +114,8 @@ def bench(fn, n_warm=5, n_iter=20):
 def parse_args(argv):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--build-ext", action="store_true", help="先就地编译 fused_bias_softmax_npu 扩展")
+    p.add_argument("--mode", choices=("all", "precision", "perf"), default="all",
+                   help="all=精度+性能；precision=只精度；perf=只性能")
     return p.parse_args(argv)
 
 
@@ -247,18 +249,48 @@ def run_e2e_cases(ext, fails):
     return fails
 
 
+def _dtype_tag(dtype) -> str:
+    if dtype == torch.bfloat16:
+        return "bf16"
+    if dtype == torch.float32:
+        return "fp32"
+    return str(dtype).replace("torch.", "")
+
+
 def run_perf_bench(ext):
-    """性能微基准。"""
-    print("== perf (us/call, perf_counter, 20 iter) ==")
-    probs = softmax_probs(8, 8, 256, 256, dtype=torch.bfloat16)
-    go = torch.randn(8, 8, 256, 64, dtype=torch.bfloat16, device="npu")
-    v = torch.randn(8, 8, 256, 64, dtype=torch.bfloat16, device="npu")
-    t_fwd = bench(lambda: ext.fused_bias_softmax_forward(probs, None, None))
-    t_bwd = bench(lambda: ext.fused_softmax_grad_backward(probs, go, v))
-    t_ref_bwd = bench(lambda: torch_backward(probs, go, v))
-    print(f"forward [8,8,256,256]: fused={t_fwd:.1f}us")
-    print(f"backward [8,8,256,256]: fused={t_bwd:.1f}us vs torch-decomposed={t_ref_bwd:.1f}us "
-          f"({t_ref_bwd / t_bwd:.2f}x)")
+    """性能微基准，形态与 community/master 开源报告 5.3 对齐。bench 返回 ms。"""
+    print("== perf (ms/call, warmup 5, iter 20) ==")
+    fwd_cases = [
+        ((2, 4, 64, 128), torch.bfloat16, True, True),
+        ((2, 4, 256, 256), torch.bfloat16, True, True),
+        ((2, 4, 64, 64), torch.bfloat16, True, True),
+        ((2, 4, 64, 64), torch.float32, False, False),
+        ((8, 8, 256, 256), torch.bfloat16, True, True),
+    ]
+    for shape, dtype, has_b1, has_b2 in fwd_cases:
+        x0 = torch.randn(*shape, dtype=dtype, device="npu")
+        b1 = torch.randn(*shape[:-2], 1, shape[-1], dtype=dtype, device="npu") if has_b1 else None
+        b2 = torch.randn(*shape, dtype=dtype, device="npu") if has_b2 else None
+        ms_t = bench(lambda: torch_forward(x0, b1, b2))
+        ms_c = bench(lambda: ext.fused_bias_softmax_forward(x0.clone(), b1, b2))
+        tag = "[" + ",".join(str(x) for x in shape) + "] " + _dtype_tag(dtype)
+        print(f"[perf] fwd {tag} torch={ms_t:.3f}ms ascendc={ms_c:.3f}ms speedup={ms_t / ms_c:.3f}x")
+
+    bwd_cases = [
+        ((2, 4, 64, 64, 64), torch.bfloat16),
+        ((8, 8, 256, 256, 64), torch.bfloat16),
+        ((2, 2, 128, 128, 20), torch.bfloat16),
+        ((2, 4, 64, 128, 64), torch.bfloat16),
+        ((2, 4, 64, 64, 64), torch.float32),
+    ]
+    for (b, h, q, s_dim, d_dim), dtype in bwd_cases:
+        probs = softmax_probs(b, h, q, s_dim, dtype=dtype)
+        go = torch.randn(b, h, q, d_dim, dtype=dtype, device="npu")
+        v = torch.randn(b, h, s_dim, d_dim, dtype=dtype, device="npu")
+        ms_t = bench(lambda: torch_backward(probs, go, v))
+        ms_c = bench(lambda: ext.fused_softmax_grad_backward(probs.clone(), go, v))
+        tag = f"[{b},{h},{q},{s_dim}] D{d_dim} {_dtype_tag(dtype)}"
+        print(f"[perf] bwd {tag} torch={ms_t:.3f}ms ascendc={ms_c:.3f}ms speedup={ms_t / ms_c:.3f}x")
 
 
 def main(argv=None):
@@ -274,12 +306,17 @@ def main(argv=None):
         pass
 
     fails = 0
-    fails = run_forward_cases(ext, fails)
-    fails = run_alias_isolation(ext, fails)
-    fails = run_backward_cases(ext, fails)
-    fails = run_e2e_cases(ext, fails)
-    run_perf_bench(ext)
+    if args.mode in ("all", "precision"):
+        fails = run_forward_cases(ext, fails)
+        fails = run_alias_isolation(ext, fails)
+        fails = run_backward_cases(ext, fails)
+        fails = run_e2e_cases(ext, fails)
+    if args.mode in ("all", "perf"):
+        run_perf_bench(ext)
 
+    if args.mode == "perf":
+        print("PASS")
+        return 0
     print("ALL PASS" if fails == 0 else f"{fails} FAILS")
     return 0 if fails == 0 else 1
 

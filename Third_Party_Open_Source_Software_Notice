@@ -87,7 +87,7 @@ Please refer to https://gitee.com/ascend/pytorch/blob/master/LICENSE for the ful
 
 ------------------------------------------------------------------------------------------------
 Software: Triton-Ascend
-Obtained from: https://gitcode.com/cann/triton-ascend
+Obtained from: https://gitcode.com/Ascend/triton-ascend
 Usage: Runtime dependency. Provides the triton.backends.ascend backend used by the Triton
        operators under triton-ascend/. Not redistributed with this SOFTWARE.
 
@@ -96,7 +96,7 @@ Copyright (c) 2018-2026 Philippe Tillet, OpenAI
 Copyright (c) Huawei Technologies Co., Ltd. 2024-2026. All rights reserved.
 
 License: MIT License
-Please refer to https://gitcode.com/cann/triton-ascend/blob/master/LICENSE for the full license
+Please refer to https://gitcode.com/Ascend/triton-ascend/blob/master/LICENSE for the full license
 text.
 
 ------------------------------------------------------------------------------------------------

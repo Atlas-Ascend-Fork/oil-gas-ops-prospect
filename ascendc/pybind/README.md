@@ -3,7 +3,7 @@
 各 AscendC 算子的 **C++ 绑定** 与 **Python 对外接口**（autograd 接线、torch 回退、实现选择）。
 绑定层直接调用 msopgen 生成的 `aclnn` 接口（如 `aclnnComplexMul`）。
 
-测试用例统一在仓库根目录的 [`tests/`](../../test/) 下。
+测试用例统一在仓库根目录的 [`tests/`](../../tests/) 下。
 
 ## 目录结构
 
@@ -36,7 +36,7 @@ Python API 放在 `ascendc/pybind/<op_family>.py`（与 `csrc/<op_family>/` 并�
 正式形态是随 whl 一起构建（仓库根目录执行）：
 
 ```bash
-bash build.sh              # 构建 OPP 包 → 安装 → 构建并安装 whl（含本扩展）
+bash build.sh --install    # 构建 OPP 包 → 安装 → 构建并安装 whl（含本扩展）
 ```
 
 免装 whl 的就地编译，产物 `<op_family>_npu*.so` 落在本目录：
@@ -51,6 +51,6 @@ python3 ascendc/pybind_setup.py build_ext --inplace
 
 - **OPP 包已安装到 CANN**，即 `opp/vendors/customize/op_api/lib/libcust_opapi.so` 存在。
 - 环境内有 `torch` 与 `torch_npu`。
-- 编译可在无卡容器内完成，**运行需要真实 NPU**。
+- 运行需要真实 NPU。
 
 置 `OIL_GAS_OPS_SKIP_EXT=1` 可跳过扩展编译，只构建纯 Python 部分。

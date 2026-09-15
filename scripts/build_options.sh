@@ -27,40 +27,58 @@ usage() {
       package)
         echo "Package Build Options:"
         echo "${dotted_line}"
-        echo "    (default)              Build OPP .run, install it, build/install the wheel, run smoke tests"
+        echo "    (default)              Build OPP .run and wheel into output/; do not install"
+        echo "    --pkg                  Build only the OPP .run; do not build wheel or install"
+        echo "    --install              Build both packages, install them, then run smoke tests"
         echo "    --soc=<SOC>            msopgen SOC version, default: Ascend910B1"
         echo "    --ops=op1,op2,...      Compile specified AscendC operators (comma/space separated), default: all"
         echo "    -j[n], --jobs <N>      Compile parallelism forwarded to ascendc/build.py"
         echo "    --clean                Clean ascendc/_work and output/ before building"
-        echo "    --skip-tests           Install packages but skip whl smoke tests"
+        echo "    --skip-tests           With --install: skip whl smoke tests"
         echo "${dotted_line}"
         echo "Examples:"
+        echo "    bash build.sh --pkg"
         echo "    bash build.sh"
+        echo "    bash build.sh --install"
         echo "    bash build.sh --clean"
         echo "    bash build.sh --ops=complex_mul,complex_mul_grad"
-        echo "    bash build.sh --soc=Ascend910B1 -j16 --skip-tests"
+        echo "    bash build.sh --install --skip-tests"
+        echo "    bash build.sh --soc=Ascend910B1 -j16 --install"
         return
         ;;
       test)
         echo "Test Options:"
         echo "${dotted_line}"
-        echo "    -u                     Build and run all device-free unit tests"
-        echo "    --ut                   Alias of -u"
-        echo "    --noexec               Only compile ophost UT, do not execute"
-        echo "    --cov                  Enable coverage for unit tests"
-        echo "    --gtest_filter=pattern Run only ophost tests matching the gtest filter"
-        echo "    --ophost -u            Build and run ophost tiling unit tests"
-        echo "    --triton -u            Run Triton CPU-fallback pytest"
-        echo "    --aot -u               Run Triton AOT compile check"
+        echo "    -u                   Enter test mode (default: all categories; on-device SKIP without NPU)"
+        echo "    --all                Explicit all categories (same as bare -u)"
+        echo "    --ut                 UT: host tiling + on-device small aclnn launch (needs NPU)"
+        echo "    --ophost             UT-host only: tiling googletest (no NPU)"
+        echo "    --st                 ST: multi-shape C++ aclnn + golden (needs NPU)"
+        echo "    --precision          Python accuracy vs PyTorch (needs NPU)"
+        echo "    --perf               Python performance (needs NPU)"
+        echo "    --examples           UT-device only: C++ small aclnn launch (needs NPU)"
+        echo "    --triton             Triton CPU-fallback pytest"
+        echo "    --aot                Triton AOT compile check"
+        echo "    --ops=op1,op2        Filter UT-device / ST / precision / perf by operator"
+        echo "    --report=<path>      Markdown execution report (default: test_result/test_report_<ts>.md)"
+        echo "    --opensource-report[=path]  Copy community opensource report to test_result/"
+        echo "                         default: test_result/oil-gas-ops-prospect仓开源测试报告.md"
+        echo "                         JSON only gates FAIL; without -u: copy from last JSON, no re-run"
+        echo "    --noexec             Only compile UT-host, do not execute"
+        echo "    --cov                Enable coverage for host unit tests"
+        echo "    --gtest_filter=pattern  gtest filter for UT-host"
         echo "${dotted_line}"
+        echo "See tests/README.md for the category table."
         echo "Examples:"
         echo "    bash build.sh -u"
-        echo "    bash build.sh -u --noexec"
+        echo "    bash build.sh -u --ut"
+        echo "    bash build.sh -u --st --precision --perf"
+        echo "    bash build.sh -u --ut --st --precision --perf"
         echo "    bash build.sh -u --ophost"
-        echo "    bash build.sh -u --ophost --gtest_filter=ComplexMul*"
-        echo "    bash build.sh -u --triton --aot"
-        echo "    bash build.sh -u --ophost --cov"
-        echo "    bash build.sh --ophost --triton --aot -u"
+        echo "    bash build.sh -u --perf --ops=complex_mul"
+        echo "    bash build.sh -u --report=test_result/my.md"
+        echo "    bash build.sh -u --opensource-report"
+        echo "    bash build.sh --opensource-report   # from last -u JSON, no re-run"
         return
         ;;
       clean)
@@ -80,8 +98,12 @@ usage() {
   echo "Usage:"
   echo "    bash build.sh [-h] [-j[n]] [-u]"
   echo ""
-  echo "Default (no -u): build the AscendC OPP .run package, install it into CANN,"
-  echo "build and install the oil_gas_ops_prospect wheel, then run whl smoke tests."
+  echo "Default (no -u): build the AscendC OPP .run and the oil_gas_ops_prospect"
+  echo "wheel into output/; do not install."
+  echo ""
+  echo "    bash build.sh --pkg           Build only the OPP .run (no wheel, no install)"
+  echo "    bash build.sh                 Build .run and wheel into output/; do not install"
+  echo "    bash build.sh --install        Build both packages, install them, then smoke-test"
   echo ""
   echo "Options:"
   echo "${dotted_line}"
@@ -91,22 +113,33 @@ usage() {
   echo "    -j[n], --jobs <N>    Compile thread nums, eg: -j8"
   echo "    --soc=<SOC>          msopgen SOC version, default: Ascend910B1"
   echo "    --ops=op1,op2,...    Compile specified AscendC operators, default: all"
+  echo "    --pkg                Build only the OPP .run; do not build wheel or install"
+  echo "    --install            Build .run and wheel, install both, then run smoke tests"
   echo "    --clean              Clean ascendc/_work and output/ before building"
-  echo "    --skip-tests         Install packages but skip whl smoke tests"
-  echo "    -u, --ut             Build and run all device-free unit tests"
+  echo "    --skip-tests         With --install: skip whl smoke tests"
+  echo "    -u                   Enter test mode (all categories by default; write Markdown report)"
   echo "${dotted_line}"
-  echo "    examples, run ophost UT only and do not execute:"
-  echo "    bash build.sh -u --ophost --noexec"
+  echo "    examples, run UT (host tiling + on-device launch):"
+  echo "    bash build.sh -u --ut"
   echo "${dotted_line}"
   echo "    The following are all supported arguments:"
   echo "${dotted_line}"
-  echo "    --noexec             Only compile ophost UT, do not execute"
-  echo "    --cov                Enable coverage for unit tests"
-  echo "    --gtest_filter=pattern  gtest filter for ophost UT, like: --gtest_filter=ComplexMul*"
-  echo "    --ophost             With -u: ophost tiling UT (googletest)"
-  echo "    --triton             With -u: Triton CPU-fallback pytest"
-  echo "    --aot                With -u: Triton AOT compile check"
-  echo "    --pkg                Cannot be combined with -u (package path is the default without -u)"
+  echo "    --all                With -u: all categories (default when no subset flag)"
+  echo "    --ut                 UT: tiling + on-device small aclnn (needs NPU; may omit -u)"
+  echo "    --ophost             UT-host only: tiling googletest"
+  echo "    --st                 ST: multi-shape C++ aclnn"
+  echo "    --precision          NPU Python accuracy"
+  echo "    --perf               NPU Python performance"
+  echo "    --examples           UT-device only: C++ small aclnn"
+  echo "    --triton             Triton CPU-fallback pytest"
+  echo "    --aot                Triton AOT compile check"
+  echo "    --report=<path>      Markdown execution report path"
+  echo "    --opensource-report[=path]  Copy community opensource report (JSON only gates FAIL)"
+  echo "    --noexec             Only compile UT-host, do not execute"
+  echo "    --cov                Enable coverage for host unit tests"
+  echo "    --gtest_filter=pattern  gtest filter for UT-host, like: --gtest_filter=ComplexMul*"
+  echo "    --pkg                Build only the OPP .run; cannot combine with -u / --install"
+  echo "    --install            Build, install, and smoke-test; cannot combine with -u / --pkg"
   echo ""
   echo "Artifacts (repo root output/):"
   echo "    output/<SOC>/oil_gas_ops_prospect_opp_<os>_<arch>.run"
@@ -119,6 +152,8 @@ usage() {
   echo "Section help:"
   echo "    bash build.sh -h"
   echo "    bash build.sh -u -h"
+  echo "    bash build.sh --pkg -h"
+  echo "    bash build.sh --install -h"
   echo "    bash build.sh --clean -h"
 }
 
@@ -129,13 +164,13 @@ check_help_combinations() {
 
   for arg in "${args[@]}"; do
     case "${arg}" in
-      -u|--ut) has_u=true ;;
-      --pkg) has_package=true ;;
+      -u|--ut|--ophost|--st|--precision|--perf|--examples|--triton|--aot|--all) has_u=true ;;
+      --pkg|--install) has_package=true ;;
     esac
   done
 
   if [[ "${has_package}" == "true" && "${has_u}" == "true" ]]; then
-    echo "[ERROR] --pkg cannot be used with test (-u / --ut)" >&2
+    echo "[ERROR] --pkg / --install cannot be used with test (-u / --ut / --st / ...)" >&2
     return 1
   fi
   return 0
@@ -146,48 +181,105 @@ set_ut_mode() {
     return
   fi
   UT_TEST_ALL=TRUE
+  local has_subset=FALSE
+  if [[ "${OP_UT}" == "TRUE" || "${OP_HOST}" == "TRUE" || "${OP_TRITON}" == "TRUE" || "${OP_AOT}" == "TRUE" || \
+        "${OP_ST}" == "TRUE" || "${OP_PRECISION}" == "TRUE" || "${OP_PERF}" == "TRUE" || \
+        "${OP_EXAMPLES}" == "TRUE" || "${OP_ALL}" == "TRUE" ]]; then
+    has_subset=TRUE
+  fi
+
+  if [[ "${OP_ALL}" == "TRUE" || "${has_subset}" == "FALSE" ]]; then
+    OP_HOST_UT=TRUE
+    TRITON_UT=TRUE
+    AOT_UT=TRUE
+    ST_UT=TRUE
+    PRECISION_UT=TRUE
+    PERF_UT=TRUE
+    EXAMPLES_UT=TRUE
+    FFT_UT=TRUE
+    GATE_UT=TRUE
+    UT_TEST_ALL=TRUE
+    REQUIRE_NPU=FALSE
+    return
+  fi
+
+  UT_TEST_ALL=FALSE
+  REQUIRE_NPU=FALSE
+  if [[ "${OP_UT}" == "TRUE" ]]; then
+    # UT = host tiling + on-device small launch
+    OP_HOST_UT=TRUE
+    EXAMPLES_UT=TRUE
+    REQUIRE_NPU=TRUE
+  fi
   if [[ "${OP_HOST}" == "TRUE" ]]; then
     OP_HOST_UT=TRUE
-    UT_TEST_ALL=FALSE
   fi
   if [[ "${OP_TRITON}" == "TRUE" ]]; then
     TRITON_UT=TRUE
-    UT_TEST_ALL=FALSE
   fi
   if [[ "${OP_AOT}" == "TRUE" ]]; then
     AOT_UT=TRUE
-    UT_TEST_ALL=FALSE
   fi
-
-  if [[ "${UT_TEST_ALL}" == "FALSE" && "${OP_HOST_UT}" == "FALSE" && "${TRITON_UT}" == "FALSE" && "${AOT_UT}" == "FALSE" ]]; then
-    echo "[ERROR] At least one test target must be specified (use -u with one of: --ophost, --triton, --aot)" >&2
-    usage test
-    exit 1
+  if [[ "${OP_ST}" == "TRUE" ]]; then
+    ST_UT=TRUE
+    REQUIRE_NPU=TRUE
+  fi
+  if [[ "${OP_PRECISION}" == "TRUE" ]]; then
+    PRECISION_UT=TRUE
+    REQUIRE_NPU=TRUE
+  fi
+  if [[ "${OP_PERF}" == "TRUE" ]]; then
+    PERF_UT=TRUE
+    REQUIRE_NPU=TRUE
+  fi
+  if [[ "${OP_EXAMPLES}" == "TRUE" ]]; then
+    EXAMPLES_UT=TRUE
+    REQUIRE_NPU=TRUE
   fi
 }
 
 check_param() {
+  if [[ "${ENABLE_PACKAGE}" == "TRUE" && "${ENABLE_INSTALL}" == "TRUE" ]]; then
+    echo "[ERROR] --pkg and --install cannot be used together" >&2
+    exit 1
+  fi
+
   if [[ "${ENABLE_PACKAGE}" == "TRUE" && "${ENABLE_TEST}" == "TRUE" ]]; then
-    echo "[ERROR] --pkg cannot be used with -u / --ut" >&2
+    echo "[ERROR] --pkg cannot be used with -u / --ut / --st / --precision / ..." >&2
+    exit 1
+  fi
+
+  if [[ "${ENABLE_INSTALL}" == "TRUE" && "${ENABLE_TEST}" == "TRUE" ]]; then
+    echo "[ERROR] --install cannot be used with -u / --ut / --st / --precision / ..." >&2
+    exit 1
+  fi
+
+  if [[ "${ENABLE_SKIP_SMOKE}" == "TRUE" && "${ENABLE_INSTALL}" != "TRUE" ]]; then
+    echo "[ERROR] --skip-tests can only be used with --install" >&2
     exit 1
   fi
 
   if [[ "${ENABLE_TEST}" != "TRUE" ]]; then
-    if [[ "${OP_HOST}" == "TRUE" || "${OP_TRITON}" == "TRUE" || "${OP_AOT}" == "TRUE" ]]; then
-      echo "[ERROR] --ophost / --triton / --aot require -u (this repo has no standalone library build for those flags)" >&2
-      usage test
-      exit 1
-    fi
-    if [[ "${ENABLE_UT_EXEC}" == "FALSE" || "${ENABLE_COVERAGE}" == "TRUE" || -n "${GTEST_FILTER}" ]]; then
-      echo "[ERROR] --noexec / --cov / --gtest_filter can only be used with -u" >&2
+    if [[ "${ENABLE_UT_EXEC}" == "FALSE" || "${ENABLE_COVERAGE}" == "TRUE" || -n "${GTEST_FILTER}" || -n "${REPORT_PATH}" ]]; then
+      echo "[ERROR] --noexec / --cov / --gtest_filter / --report can only be used with test mode (-u / --ut / --st / ...)" >&2
       usage test
       exit 1
     fi
   fi
 
+  if [[ "${ENABLE_PACKAGE}" == "TRUE" && -n "${OPENSOURCE_REPORT}" ]]; then
+    echo "[ERROR] --opensource-report cannot be used with --pkg" >&2
+    exit 1
+  fi
+
+  if [[ "${ENABLE_INSTALL}" == "TRUE" && -n "${OPENSOURCE_REPORT}" ]]; then
+    echo "[ERROR] --opensource-report cannot be used with --install" >&2
+    exit 1
+  fi
+
   if [[ -n "${GTEST_FILTER}" && "${ENABLE_TEST}" == "TRUE" ]]; then
-    if [[ "${UT_TEST_ALL}" != "TRUE" && "${OP_HOST_UT}" != "TRUE" ]]; then
-      echo "[ERROR] --gtest_filter can only be used with ophost UT (-u or -u --ophost)" >&2
+    if [[ "${OP_HOST_UT}" != "TRUE" ]]; then
+      echo "[ERROR] --gtest_filter can only be used with UT-host (-u --ophost, -u --ut, or -u with default all)" >&2
       exit 1
     fi
   fi
@@ -213,6 +305,7 @@ checkopts() {
 
   ENABLE_TEST=FALSE
   ENABLE_PACKAGE=FALSE
+  ENABLE_INSTALL=FALSE
   ENABLE_CLEAN=FALSE
   ENABLE_SKIP_SMOKE=FALSE
   ENABLE_UT_EXEC=TRUE
@@ -220,10 +313,25 @@ checkopts() {
   OP_HOST=FALSE
   OP_TRITON=FALSE
   OP_AOT=FALSE
+  OP_UT=FALSE
+  OP_ST=FALSE
+  OP_PRECISION=FALSE
+  OP_PERF=FALSE
+  OP_EXAMPLES=FALSE
+  OP_ALL=FALSE
   OP_HOST_UT=FALSE
   TRITON_UT=FALSE
   AOT_UT=FALSE
+  ST_UT=FALSE
+  PRECISION_UT=FALSE
+  PERF_UT=FALSE
+  EXAMPLES_UT=FALSE
+  FFT_UT=FALSE
+  GATE_UT=FALSE
   UT_TEST_ALL=FALSE
+  REQUIRE_NPU=FALSE
+  REPORT_PATH=""
+  OPENSOURCE_REPORT=""
 
   local arg
   for arg in "$@"; do
@@ -235,9 +343,9 @@ checkopts() {
       local prev
       for prev in "$@"; do
         case "${prev}" in
-          -u|--ut|--ophost|--triton|--aot|--noexec|--cov|--gtest_filter*) show_help="test" ;;
+          -u|--ut|--ophost|--triton|--aot|--st|--precision|--perf|--examples|--all|--noexec|--cov|--gtest_filter*|--report*|--opensource-report*) show_help="test" ;;
           --clean) show_help="clean" ;;
-          --pkg|--skip-tests) show_help="package" ;;
+          --pkg|--install|--skip-tests) show_help="package" ;;
         esac
       done
       usage "${show_help}"
@@ -247,8 +355,13 @@ checkopts() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -u|--ut)
+      -u)
         ENABLE_TEST=TRUE
+        shift
+        ;;
+      --ut)
+        ENABLE_TEST=TRUE
+        OP_UT=TRUE
         shift
         ;;
       --noexec)
@@ -272,19 +385,79 @@ checkopts() {
         shift 2
         ;;
       --ophost)
+        ENABLE_TEST=TRUE
         OP_HOST=TRUE
         shift
         ;;
       --triton)
+        ENABLE_TEST=TRUE
         OP_TRITON=TRUE
         shift
         ;;
       --aot)
+        ENABLE_TEST=TRUE
         OP_AOT=TRUE
         shift
         ;;
+      --st)
+        ENABLE_TEST=TRUE
+        OP_ST=TRUE
+        shift
+        ;;
+      --precision)
+        ENABLE_TEST=TRUE
+        OP_PRECISION=TRUE
+        shift
+        ;;
+      --perf)
+        ENABLE_TEST=TRUE
+        OP_PERF=TRUE
+        shift
+        ;;
+      --examples)
+        ENABLE_TEST=TRUE
+        OP_EXAMPLES=TRUE
+        shift
+        ;;
+      --all)
+        ENABLE_TEST=TRUE
+        OP_ALL=TRUE
+        shift
+        ;;
+      --report=*)
+        REPORT_PATH="${1#*=}"
+        shift
+        ;;
+      --report)
+        REPORT_PATH="${2:-}"
+        if [[ -z "${REPORT_PATH}" ]]; then
+          echo "[ERROR] --report requires a path" >&2
+          exit 1
+        fi
+        shift 2
+        ;;
+      --opensource-report=*)
+        OPENSOURCE_REPORT="${1#*=}"
+        if [[ -z "${OPENSOURCE_REPORT}" ]]; then
+          OPENSOURCE_REPORT="test_result/oil-gas-ops-prospect仓开源测试报告.md"
+        fi
+        shift
+        ;;
+      --opensource-report)
+        if [[ -n "${2:-}" && "${2}" != -* ]]; then
+          OPENSOURCE_REPORT="$2"
+          shift 2
+        else
+          OPENSOURCE_REPORT="test_result/oil-gas-ops-prospect仓开源测试报告.md"
+          shift
+        fi
+        ;;
       --pkg)
         ENABLE_PACKAGE=TRUE
+        shift
+        ;;
+      --install)
+        ENABLE_INSTALL=TRUE
         shift
         ;;
       --soc=*)

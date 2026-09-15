@@ -37,7 +37,8 @@
 | 三方件声明 | 不涉及 | Third_Party_Open_Source_Software_List.yaml<br>Third_Party_Open_Source_Software_Notice | [https://gitcode.com/cann-src-third-party/googletest](https://gitcode.com/cann-src-third-party/googletest) | googletest 上游获取地址，用于三方件清单声明，不在构建期访问 |
 | 三方件声明 | 不涉及 | Third_Party_Open_Source_Software_List.yaml<br>Third_Party_Open_Source_Software_Notice | [https://github.com/pytorch/pytorch](https://github.com/pytorch/pytorch) | PyTorch 上游获取地址，用于三方件清单声明。PyTorch 由用户自行安装，本仓不下载、不分发 |
 | 三方件声明 | 不涉及 | Third_Party_Open_Source_Software_List.yaml<br>Third_Party_Open_Source_Software_Notice | [https://gitee.com/ascend/pytorch](https://gitee.com/ascend/pytorch) | torch_npu 上游获取地址，用于三方件清单声明。由用户自行安装，本仓不下载、不分发 |
-| 三方件声明 | 不涉及 | Third_Party_Open_Source_Software_List.yaml<br>Third_Party_Open_Source_Software_Notice | [https://gitcode.com/cann/triton-ascend](https://gitcode.com/cann/triton-ascend) | Triton-Ascend 上游获取地址，用于三方件清单声明。由用户自行安装，本仓不下载、不分发 |
+| 三方件声明 | 不涉及 | Third_Party_Open_Source_Software_List.yaml<br>Third_Party_Open_Source_Software_Notice | [https://gitcode.com/Ascend/triton-ascend](https://gitcode.com/Ascend/triton-ascend) | Triton-Ascend 上游获取地址，用于三方件清单声明。由用户自行安装，本仓不下载、不分发 |
+| 依赖 | 不涉及 | docs/zh/context/quick_install.md | [https://mirrors.huaweicloud.com/ascend/repos/pypi](https://mirrors.huaweicloud.com/ascend/repos/pypi) | 用户按环境部署文档 `pip install triton-ascend==3.2.1` 时使用的 extra-index。本仓不下载、不分发 |
 
 ---
 

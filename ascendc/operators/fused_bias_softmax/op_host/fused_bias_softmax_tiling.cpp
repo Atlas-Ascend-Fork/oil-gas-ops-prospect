@@ -45,20 +45,16 @@ bool CheckBiasValid(gert::TilingContext* context, uint32_t idx, const gert::Shap
     if (shapeVal.GetDimNum() != OgOpsCommon::kOgDimNum || shapeVal.GetShapeSize() == 0) {
         return false;
     }
-    if (shapeVal.GetDim(OgOpsCommon::kOgDim0) != xShape.GetDim(OgOpsCommon::kOgDim0) ||
-        shapeVal.GetDim(OgOpsCommon::kOgDim1) != xShape.GetDim(OgOpsCommon::kOgDim1) ||
-        shapeVal.GetDim(OgOpsCommon::kOgDim3) != xShape.GetDim(OgOpsCommon::kOgDim3)) {
+    if (!FusedBiasSoftmaxHost::BiasShapeValid(static_cast<int64_t>(xShape.GetDim(OgOpsCommon::kOgDim0)),
+                                              static_cast<int64_t>(xShape.GetDim(OgOpsCommon::kOgDim1)),
+                                              static_cast<int64_t>(xShape.GetDim(OgOpsCommon::kOgDim2)),
+                                              static_cast<int64_t>(xShape.GetDim(OgOpsCommon::kOgDim3)),
+                                              static_cast<int64_t>(shapeVal.GetDim(OgOpsCommon::kOgDim0)),
+                                              static_cast<int64_t>(shapeVal.GetDim(OgOpsCommon::kOgDim1)),
+                                              static_cast<int64_t>(shapeVal.GetDim(OgOpsCommon::kOgDim2)),
+                                              static_cast<int64_t>(shapeVal.GetDim(OgOpsCommon::kOgDim3)),
+                                              b1FullRequired == 1)) {
         return false;
-    }
-    if (b1FullRequired == 1) {
-        if (shapeVal.GetDim(OgOpsCommon::kOgDim2) != xShape.GetDim(OgOpsCommon::kOgDim2)) {
-            return false;
-        }
-    } else {
-        if (shapeVal.GetDim(OgOpsCommon::kOgDim2) != 1 &&
-            shapeVal.GetDim(OgOpsCommon::kOgDim2) != xShape.GetDim(OgOpsCommon::kOgDim2)) {
-            return false;
-        }
     }
     return desc->GetDataType() == context->GetInputDesc(kShapeInput)->GetDataType();
 }

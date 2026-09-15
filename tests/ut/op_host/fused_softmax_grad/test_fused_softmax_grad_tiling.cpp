@@ -16,7 +16,8 @@
 /**
  * FusedSoftmaxGrad ophost UT：切分算法核心（fused_softmax_grad_tiling_core.h）。
  *
- * 与平台无关，无卡可跑。重点覆盖：MIX/VEC 路径分发（tiling key 0-3）、
+ * 对齐 ops-nn `<op>/tests/ut/op_host`。与平台无关，无卡可跑。重点覆盖：
+ * MIX/VEC 路径分发（tiling key 0-3）、
  * UB 预算约束（rowsPerIter、V plane 驻留上限）、对齐计算、非法输入拒绝。
  * 期望值均为手算常数，不与实现共用计算路径。
  */

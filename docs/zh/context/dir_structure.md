@@ -13,8 +13,8 @@ oil-gas-ops-prospect/
 ├── .gitignore                                  # Git 忽略规则
 ├── .clang-format                               # C++ 代码格式
 ├── .pre-commit-config.yaml                     # 提交前检查钩子
-├── build.sh                                    # 顶层构建入口（OPP + whl + 冒烟；-u 跑无卡 UT）
-├── CMakeLists.txt                              # 顶层 CMake（无卡 C++ 目标：ophost UT）
+├── build.sh                                    # 顶层构建入口（默认只编包；--install 安装；-u 跑测试）
+├── CMakeLists.txt                              # 顶层 CMake（ophost tiling UT）
 ├── version.cmake                               # 版本与依赖定义
 ├── requirements.txt                            # Python 依赖声明
 ├── pyproject.toml                              # Python 打包元数据
@@ -24,7 +24,7 @@ oil-gas-ops-prospect/
 │   └── workflows/                              # GitCode Action 门禁流水线
 │       ├── PR-pipeline_oil-gas-ops-prospect.yml #   门禁总编排
 │       ├── compile_action.yml                  #   编译（x86 / aarch64）
-│       ├── llt_action.yml                      #   无卡 LLT（ophost UT + Triton 精度 + AOT 编译）
+│       ├── llt_action.yml                      #   LLT（ophost UT + Triton 精度 + AOT 编译）
 │       └── staticcheck_action.yml              #   静态检查
 │
 ├── cmake/                                      # CMake 模块
@@ -39,7 +39,7 @@ oil-gas-ops-prospect/
 │   ├── operators/
 │   │   ├── manifest.tsv                        #   算子注册表（tab 分隔）
 │   │   ├── _common/                            #   多算子共用的 host/kernel 头
-│   │   ├── complex_mul/                        #   ComplexMul
+│   │   ├── complex_mul/                        #   ComplexMul（仅 op_host / op_kernel）
 │   │   │   ├── op_host/                        #     OpDef / InferShape / Tiling
 │   │   │   └── op_kernel/                      #     kernel 实现
 │   │   ├── complex_mul_grad/                   #   ComplexMulGrad
@@ -60,22 +60,31 @@ oil-gas-ops-prospect/
 │   │   ├── triton_fft_real.py                  #     Triton kernel 与 autograd 封装
 │   │   └── README.md
 │   └── tools/
-│       └── aot_compile_check.py                #   无卡 AOT 编译检查
+│       └── aot_compile_check.py                #   AOT 编译检查
 │
-├── tests/                                       # ★ 全部测试用例（算子目录内不放用例）
+├── tests/                                       # ★ 全部测试（operators/ 不再放 tests）
+│   ├── suites.json                             #   build.sh -u 套件清单
+│   ├── _common/aclnn/                          #   ST 共用脚手架
+│   ├── ut/op_host/<op>/                        #   tiling googletest
+│   ├── st/aclnn<OpType>/                       #   多 case 两段式 aclnn
 │   ├── conftest.py                             #   pytest 收集配置
 │   ├── test_oil_gas_ops_prospect_whl.py        #   基于已安装 whl 的冒烟用例
 │   ├── run_whl_tests.sh                        #   构建 whl → 安装 → 跑冒烟
 │   ├── ascendc/
-│   │   ├── ophost/                             #   tiling UT（googletest，无卡可跑）
+│   │   ├── ophost/                             #   汇总编译 ophost_ut
 │   │   ├── complex_mul/                        #   NPU 精度/性能对比测试
 │   │   └── fused_bias_softmax/                 #   融合注意力 NPU 精度/性能对比
 │   └── triton/
-│       └── real_fft/                           #   rFFT / iRFFT 精度（无卡回退 CPU）
+│       └── real_fft/                           #   rFFT / iRFFT 精度（含 CPU 回退路径）
 │
-├── examples/                                   # 示例代码
+├── examples/                                   # Python 示例 + C++ 两段式样例
+│   ├── _common/                                #   aclnn 样例脚手架
+│   ├── aclnn/<op>/                             #   test_aclnn_*.cpp
+│   └── *.py
 ├── scripts/                                    # 辅助脚本
 │   ├── build_options.sh                        #   根目录 build.sh 的选项解析与分节帮助
+│   ├── run_tests.py                            #   统一编排 UT/ST/精度/性能并写 Markdown 报告
+│   ├── opensource_report.py                    #   按 -u JSON 生成开源测试报告
 │   ├── check_license_header.sh                 #   许可证头检查
 │   └── local_pkg.py                            #   裸 checkout 下解析 oil_gas_ops_prospect 导入名
 ├── docs/                                       # 文档
@@ -85,9 +94,8 @@ oil-gas-ops-prospect/
 │       ├── op_list.md                          #     算子列表
 │       ├── api_list.md                         #     接口列表
 │       ├── context/                            #     背景与环境
-│       ├── develop/                            #     开发指南与规格
-│       │   ├── operator_development_guide.md   #       新增算子步骤
-│       │   ├── operator-dev-spec.md            #       约束、交付件与验收
+│       ├── develop/                            #     开发指南
+│       │   ├── operator_development_guide.md   #       新增算子步骤、约定与验收
 │       │   └── precision_acceptance_template.md
 │       ├── debug/                              #     调试与性能
 │       └── invocation/                         #     调用示例

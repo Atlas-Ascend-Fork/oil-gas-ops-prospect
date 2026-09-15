@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"name": "fp32_no_bias_2x4x64x64", "shape": [2, 4, 64, 64], "bias1": "none"},
+    {"name": "small_1x1x8x8", "shape": [1, 1, 8, 8], "bias1": "none"},
+    {"name": "bcast_bias1_2x2x16x16", "shape": [2, 2, 16, 16], "bias1": "broadcast"}
+  ]
+}

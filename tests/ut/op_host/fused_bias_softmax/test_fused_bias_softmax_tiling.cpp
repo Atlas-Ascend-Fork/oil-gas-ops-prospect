@@ -16,8 +16,8 @@
 /**
  * FusedBiasSoftmax ophost UT：切分算法核心（fused_bias_softmax_tiling_core.h）。
  *
- * 与平台无关，无卡可跑。期望值均为手算常数（推导见各用例注释），不与实现共用
- * 计算路径，避免同义反复。
+ * 对齐 ops-nn `<op>/tests/ut/op_host`。与平台无关，无卡可跑。期望值均为手算
+ * 常数（推导见各用例注释），不与实现共用计算路径，避免同义反复。
  */
 
 #include <gtest/gtest.h>
@@ -160,6 +160,19 @@ TEST(FusedBiasSoftmaxCore, Fp16UsesFp16Key)
     ASSERT_TRUE(FusedBiasSoftmaxHost::ComputeFusedBiasSoftmaxTilingCore(
         2, 4, 64, 64, 2, FusedBiasSoftmaxHost::FBS_KEY_FP16, 1, 1, 0, kUbSize, kAivNum, params, plan));
     EXPECT_EQ(plan.tilingKey, FusedBiasSoftmaxHost::FBS_KEY_FP16);
+}
+
+TEST(FusedBiasSoftmaxCore, BiasShapeValidMatchesBroadcastAndFull)
+{
+    // bias1 广播 [B,H,1,S]、全尺寸 [B,H,Q,S] 合法；bias2 必须全尺寸
+    EXPECT_TRUE(FusedBiasSoftmaxHost::BiasShapeValid(2, 4, 64, 128, 2, 4, 1, 128, false));
+    EXPECT_TRUE(FusedBiasSoftmaxHost::BiasShapeValid(2, 4, 64, 128, 2, 4, 64, 128, false));
+    EXPECT_TRUE(FusedBiasSoftmaxHost::BiasShapeValid(2, 4, 64, 128, 2, 4, 64, 128, true));
+    EXPECT_FALSE(FusedBiasSoftmaxHost::BiasShapeValid(2, 4, 64, 128, 2, 4, 1, 128, true));
+    EXPECT_FALSE(FusedBiasSoftmaxHost::BiasShapeValid(2, 4, 64, 128, 2, 4, 32, 128, false));
+    EXPECT_FALSE(FusedBiasSoftmaxHost::BiasShapeValid(2, 4, 64, 128, 1, 4, 64, 128, true));
+    EXPECT_FALSE(FusedBiasSoftmaxHost::BiasShapeValid(2, 4, 64, 128, 2, 4, 64, 64, true));
+    EXPECT_FALSE(FusedBiasSoftmaxHost::BiasShapeValid(2, 4, 64, 128, 2, 4, 0, 128, false));
 }
 
 } // namespace

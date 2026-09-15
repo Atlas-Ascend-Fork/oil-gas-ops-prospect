@@ -9,7 +9,7 @@ source /usr/local/Ascend/cann-9.0.0/set_env.sh
 export LD_LIBRARY_PATH=${ASCEND_HOME_PATH}/opp/vendors/customize/op_api/lib:${ASCEND_HOME_PATH}/lib64:$LD_LIBRARY_PATH
 ```
 
-并已通过 `bash build.sh` 完成 OPP 包与 whl 的安装。
+并已通过 `bash build.sh --install` 完成 OPP 包与 whl 的安装。
 
 ## AscendC：复数逐点乘
 

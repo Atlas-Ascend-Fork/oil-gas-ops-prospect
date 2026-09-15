@@ -88,6 +88,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--shape", type=int, nargs="+", default=[1, 1, 192, 320, 320])
     p.add_argument("--rtol", type=float, default=1e-5)
     p.add_argument("--build-ext", action="store_true", help="先就地编译 complex_mul_npu 扩展")
+    p.add_argument("--mode", choices=("all", "precision", "perf"), default="all",
+                   help="all=精度+性能；precision=只精度；perf=只性能")
     return p.parse_args(argv)
 
 
@@ -124,6 +126,8 @@ def check_accuracy(ext, tensors, shape) -> list[float]:
         ext.complex_mul_forward(ur, ui, vr, vi)
         ext.complex_mul_backward(gwr, gwi, ur, ui, vr, vi)
     torch.npu.synchronize()
+    # 小 morph 上 warmup 可能把后续 launch 写到旧指针；对拍前换新缓冲。
+    ur, ui, vr, vi, gwr, gwi = (t.detach().clone().contiguous() for t in (ur, ui, vr, vi, gwr, gwi))
 
     wr_t, wi_t = torch_fwd(ur, ui, vr, vi)
     wr_c, wi_c = ext.complex_mul_forward(ur, ui, vr, vi)
@@ -143,17 +147,31 @@ def check_accuracy(ext, tensors, shape) -> list[float]:
     return [e_wr, e_wi, *errs.values()]
 
 
-def report_perf(ext, tensors) -> None:
+# 与 community/master 开源报告 5.3 代表形态对齐。
+PERF_SHAPES = (
+    (4, 1024),
+    (1, 1, 32, 32, 32),
+    (1, 1, 96, 160, 160),
+    (1, 1, 192, 320, 320),
+)
+
+
+def _shape_tag(shape: tuple[int, ...]) -> str:
+    return "[" + ",".join(str(x) for x in shape) + "]"
+
+
+def report_perf(ext, tensors, shape: tuple[int, ...]) -> None:
     ur, ui, vr, vi, gwr, gwi = tensors
     ms_t = bench(lambda: torch_fwd(ur, ui, vr, vi))
     ms_c = bench(lambda: ext.complex_mul_forward(ur, ui, vr, vi))
     ms_tb = bench(lambda: torch_bwd(gwr, gwi, ur, ui, vr, vi))
     ms_cb = bench(lambda: ext.complex_mul_backward(gwr, gwi, ur, ui, vr, vi))
-    print(f"[perf] fwd torch={ms_t:.3f}ms ascendc={ms_c:.3f}ms speedup={ms_t/ms_c:.3f}x")
-    print(f"[perf] bwd torch={ms_tb:.3f}ms ascendc={ms_cb:.3f}ms speedup={ms_tb/ms_cb:.3f}x")
+    tag = _shape_tag(shape)
+    print(f"[perf] fwd {tag} torch={ms_t:.3f}ms ascendc={ms_c:.3f}ms speedup={ms_t/ms_c:.3f}x")
+    print(f"[perf] bwd {tag} torch={ms_tb:.3f}ms ascendc={ms_cb:.3f}ms speedup={ms_tb/ms_cb:.3f}x")
 
 
-def check_autograd(tensors) -> None:
+def check_autograd(tensors) -> list[float]:
     """经 autograd 封装再对一遍，验证 Function 的接线（强制走自定义算子）。"""
     os.environ["OIL_GAS_OPS_COMPLEX_MUL_IMPL"] = "ascendc"
     os.environ["OIL_GAS_OPS_REQUIRE_ASCENDC_COMPLEX_MUL"] = "1"
@@ -162,14 +180,23 @@ def check_autograd(tensors) -> None:
 
     ur, ui, vr, vi, gwr, gwi = tensors
     ref_bwd = torch_bwd(gwr, gwi, ur, ui, vr, vi)
+    try:
+        torch.npu.empty_cache()
+    except Exception:
+        pass
     leaves = [t.detach().requires_grad_(True) for t in (ur, ui, vr, vi)]
     wr2, wi2 = complex_mul(*leaves)
-    (wr2 * gwr + wi2 * gwi).sum().backward()
-    parts = " ".join(
-        f"{name}={rel_err(ref, leaf.grad):.3e}"
-        for name, ref, leaf in zip(("gur", "gui", "gvr", "gvi"), ref_bwd, leaves)
-    )
-    print(f"[autograd] {parts}")
+    torch.autograd.backward((wr2, wi2), (gwr, gwi))
+    errs = []
+    parts = []
+    for name, ref, leaf in zip(("gur", "gui", "gvr", "gvi"), ref_bwd, leaves):
+        if leaf.grad is None:
+            raise RuntimeError(f"autograd missing grad for {name}")
+        err = rel_err(ref, leaf.grad)
+        errs.append(err)
+        parts.append(f"{name}={err:.3e}")
+    print(f"[autograd] {' '.join(parts)}")
+    return errs
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -186,11 +213,15 @@ def main(argv: list[str] | None = None) -> int:
     shape = tuple(args.shape)
     tensors = make_inputs(shape, device)
 
-    errs = check_accuracy(ext, tensors, shape)
-    report_perf(ext, tensors)
-    check_autograd(tensors)
+    errs: list[float] = []
+    if args.mode in ("all", "precision"):
+        errs = check_accuracy(ext, tensors, shape)
+        errs.extend(check_autograd(tensors))
+    if args.mode in ("all", "perf"):
+        for perf_shape in PERF_SHAPES:
+            report_perf(ext, make_inputs(perf_shape, device), perf_shape)
 
-    if max(errs) > args.rtol:
+    if args.mode != "perf" and errs and max(errs) > args.rtol:
         print(f"FAIL max_rel_err={max(errs):.3e} > rtol={args.rtol}")
         return 1
     print("PASS")

@@ -25,87 +25,59 @@ WHEEL_DIR="${OUTPUT_DIR}/wheels"
 # shellcheck source=scripts/build_options.sh
 source "${SCRIPT_DIR}/scripts/build_options.sh"
 
-run_ophost_ut() {
-  local build_dir="${ASCENDC_ROOT}/_work/ophost_ut"
-  local ut_src="${SCRIPT_DIR}/tests/ascendc/ophost"
-  local cmake_flags=(-DCMAKE_BUILD_TYPE=Release)
+run_unified_tests() {
+  local suites=()
+  [[ "${OP_HOST_UT}" == "TRUE" ]] && suites+=("ophost")
+  [[ "${TRITON_UT}" == "TRUE" ]] && suites+=("triton")
+  [[ "${AOT_UT}" == "TRUE" ]] && suites+=("aot")
+  [[ "${ST_UT}" == "TRUE" ]] && suites+=("st")
+  [[ "${PRECISION_UT}" == "TRUE" ]] && suites+=("precision")
+  [[ "${PERF_UT}" == "TRUE" ]] && suites+=("perf")
+  [[ "${EXAMPLES_UT}" == "TRUE" ]] && suites+=("examples")
+  [[ "${FFT_UT}" == "TRUE" ]] && suites+=("fft")
+  [[ "${GATE_UT}" == "TRUE" ]] && suites+=("gate")
 
-  if [[ "${ENABLE_COVERAGE}" == "TRUE" ]]; then
-    cmake_flags+=(-DCMAKE_CXX_FLAGS=--coverage -DCMAKE_EXE_LINKER_FLAGS=--coverage)
+  if [[ ${#suites[@]} -eq 0 ]]; then
+    echo "[ERROR] no test suites selected" >&2
+    exit 1
   fi
 
-  echo "[ut] ophost tiling UT (googletest)..."
-  cmake -S "${ut_src}" -B "${build_dir}" "${cmake_flags[@]}"
-  cmake --build "${build_dir}" -j "${THREAD_NUM}"
+  local suite_csv
+  suite_csv="$(IFS=,; echo "${suites[*]}")"
 
-  if [[ "${ENABLE_UT_EXEC}" != "TRUE" ]]; then
-    echo "[ut] --noexec: skip running ophost_ut"
-    return 0
-  fi
-
+  # 取值一律用 --flag=value。裸 --orig-argv -u 会被 argparse 当成新选项，
+  # 导致 `bash build.sh -u` / `--ut` / `--st` 等单 flag 入口立刻失败。
+  local args=(
+    python3 -u "${SCRIPT_DIR}/scripts/run_tests.py"
+    --suites="${suite_csv}"
+    --jobs="${THREAD_NUM}"
+    --orig-argv="${USE_CMD}"
+    --results-json="${SCRIPT_DIR}/test_result/test_results.json"
+  )
   if [[ -n "${GTEST_FILTER}" ]]; then
-    echo "[ut] --gtest_filter=${GTEST_FILTER}"
-    "${build_dir}/ophost_ut" --gtest_filter="${GTEST_FILTER}"
-  else
-    ctest --test-dir "${build_dir}" --output-on-failure
+    args+=(--gtest-filter="${GTEST_FILTER}")
   fi
-}
-
-run_triton_ut() {
-  local pytest_args=("${SCRIPT_DIR}/tests/triton/real_fft" -q)
-
   if [[ "${ENABLE_UT_EXEC}" != "TRUE" ]]; then
-    echo "[ut] --noexec: skip Triton CPU-fallback pytest"
-    return 0
+    args+=(--noexec)
   fi
-
   if [[ "${ENABLE_COVERAGE}" == "TRUE" ]]; then
-    if python3 -c "import pytest_cov" >/dev/null 2>&1; then
-      pytest_args+=(--cov --cov-report=term-missing)
-    else
-      echo "[WARN] --cov requested but pytest-cov is not installed; skip Python coverage"
-    fi
+    args+=(--cov)
+  fi
+  if [[ "${REQUIRE_NPU}" == "TRUE" ]]; then
+    args+=(--require-npu)
+  fi
+  if [[ -n "${REPORT_PATH}" ]]; then
+    args+=(--report="${REPORT_PATH}")
+  fi
+  if [[ -n "${OPENSOURCE_REPORT}" ]]; then
+    args+=(--opensource-report="${OPENSOURCE_REPORT}")
+  fi
+  if [[ "${OPS_LIST}" != "all" && -n "${OPS_LIST}" ]]; then
+    args+=(--ops="${OPS_LIST}")
   fi
 
-  echo "[ut] Triton CPU-fallback accuracy tests..."
-  python3 -m pytest "${pytest_args[@]}"
-}
-
-run_aot_check() {
-  if [[ "${ENABLE_UT_EXEC}" != "TRUE" ]]; then
-    echo "[ut] --noexec: skip Triton AOT compile check"
-    return 0
-  fi
-  echo "[ut] Triton AOT compile check..."
-  python3 "${SCRIPT_DIR}/triton-ascend/tools/aot_compile_check.py"
-}
-
-run_device_free_ut() {
-  local run_ophost=FALSE
-  local run_triton=FALSE
-  local run_aot=FALSE
-
-  if [[ "${UT_TEST_ALL}" == "TRUE" || "${OP_HOST_UT}" == "TRUE" ]]; then
-    run_ophost=TRUE
-  fi
-  if [[ "${UT_TEST_ALL}" == "TRUE" || "${TRITON_UT}" == "TRUE" ]]; then
-    run_triton=TRUE
-  fi
-  if [[ "${UT_TEST_ALL}" == "TRUE" || "${AOT_UT}" == "TRUE" ]]; then
-    run_aot=TRUE
-  fi
-
-  if [[ "${run_ophost}" == "TRUE" ]]; then
-    run_ophost_ut
-  fi
-  if [[ "${run_triton}" == "TRUE" ]]; then
-    run_triton_ut
-  fi
-  if [[ "${run_aot}" == "TRUE" ]]; then
-    run_aot_check
-  fi
-
-  echo "[oil_gas_ops_prospect] Device-free unit tests passed."
+  echo "[oil_gas_ops_prospect] test suites: ${suite_csv}"
+  "${args[@]}"
 }
 
 split_ops_list() {
@@ -117,18 +89,35 @@ for item in raw.split():
 PY
 }
 
-run_full_pipeline() {
-  echo "[oil_gas_ops_prospect] SOC_VERSION=${SOC_VERSION}"
-  echo "[oil_gas_ops_prospect] OPS_LIST=${OPS_LIST}"
+latest_artifact() {
+  python3 - <<'PY' "$1" "$2"
+from pathlib import Path
+import sys
 
+out_dir = Path(sys.argv[1])
+pattern = sys.argv[2]
+candidates = sorted(out_dir.glob(pattern), key=lambda p: p.stat().st_mtime)
+if not candidates:
+    raise SystemExit(f"no artifact matching {pattern} in {out_dir}")
+print(candidates[-1])
+PY
+}
+
+maybe_clean_outputs() {
+  local step="$1"
   if [[ "${ENABLE_CLEAN}" == "TRUE" ]]; then
-    echo "[1/5] Cleaning AscendC build outputs..."
+    echo "[${step}] Cleaning AscendC build outputs..."
     (cd "${ASCENDC_ROOT}" && OIL_GAS_OPS_OUTPUT_DIR="${OUTPUT_DIR}" python3 build.py clean)
   else
-    echo "[1/5] Skip clean (use --clean to clean ascendc/_work and output/ first)."
+    echo "[${step}] Skip clean (use --clean to clean ascendc/_work and output/ first)."
   fi
+}
 
-  echo "[2/5] Building AscendC OPP package (bash build.sh --pkg)..."
+build_opp_run() {
+  local step="${1:-}"
+  if [[ -n "${step}" ]]; then
+    echo "[${step}] Building AscendC OPP package..."
+  fi
   local ops_item
   local ops_array=()
   while IFS= read -r ops_item; do
@@ -140,43 +129,34 @@ run_full_pipeline() {
     build_args+=(-j "${JOBS}")
   fi
   (cd "${ASCENDC_ROOT}" && OIL_GAS_OPS_OUTPUT_DIR="${OUTPUT_DIR}" bash build.sh "${build_args[@]}")
+  RUN_PKG="$(latest_artifact "${OUTPUT_DIR}/${SOC_VERSION}" "*_opp_*.run")"
+}
 
-  local run_pkg
-  run_pkg="$(
-    python3 - <<'PY' "${OUTPUT_DIR}/${SOC_VERSION}"
-from pathlib import Path
-import sys
+install_opp_run() {
+  local step="${1:-}"
+  if [[ -n "${step}" ]]; then
+    echo "[${step}] Installing OPP package: ${RUN_PKG}"
+  fi
+  bash "${RUN_PKG}" --quiet
+}
 
-out_dir = Path(sys.argv[1])
-candidates = sorted(out_dir.glob("*_opp_*.run"), key=lambda p: p.stat().st_mtime)
-if not candidates:
-    raise SystemExit(f"no OPP run package found in {out_dir}")
-print(candidates[-1])
-PY
-  )"
-
-  echo "[3/5] Installing OPP package: ${run_pkg}"
-  bash "${run_pkg}" --quiet
-
-  echo "[4/5] Building and installing oil_gas_ops_prospect wheel..."
+build_python_wheel() {
+  local step="${1:-}"
+  if [[ -n "${step}" ]]; then
+    echo "[${step}] Building oil_gas_ops_prospect wheel..."
+  fi
   rm -rf "${SCRIPT_DIR}/build" "${SCRIPT_DIR}"/*.egg-info
   mkdir -p "${WHEEL_DIR}"
   (cd "${SCRIPT_DIR}" && python3 setup.py bdist_wheel --dist-dir "${WHEEL_DIR}")
+  WHEEL_PATH="$(latest_artifact "${WHEEL_DIR}" "oil_gas_ops_prospect-*.whl")"
+  rm -rf "${SCRIPT_DIR}/build" "${SCRIPT_DIR}"/*.egg-info
+}
 
-  local wheel_path
-  wheel_path="$(
-    python3 - <<'PY' "${WHEEL_DIR}"
-from pathlib import Path
-import sys
-
-wheel_dir = Path(sys.argv[1])
-candidates = sorted(wheel_dir.glob("oil_gas_ops_prospect-*.whl"), key=lambda p: p.stat().st_mtime)
-if not candidates:
-    raise SystemExit(f"no oil_gas_ops_prospect wheel found in {wheel_dir}")
-print(candidates[-1])
-PY
-  )"
-
+install_python_wheel() {
+  local step="${1:-}"
+  if [[ -n "${step}" ]]; then
+    echo "[${step}] Installing wheel: ${WHEEL_PATH}"
+  fi
   python3 -m pip uninstall -y oil-gas-ops-prospect >/dev/null 2>&1 || true
   python3 - <<'PY'
 from pathlib import Path
@@ -203,27 +183,71 @@ for root in {Path(p) for p in roots if p}:
     for path in root.glob("complex_mul_npu*.so"):
         path.unlink(missing_ok=True)
 PY
-  python3 -m pip install --force-reinstall --no-deps "${wheel_path}"
-  rm -rf "${SCRIPT_DIR}/build" "${SCRIPT_DIR}"/*.egg-info
+  python3 -m pip install --force-reinstall --no-deps "${WHEEL_PATH}"
+}
 
-  if [[ "${ENABLE_SKIP_SMOKE}" != "TRUE" ]]; then
-    echo "[5/5] Running whl smoke tests..."
-    # OIL_GAS_OPS_WHL_TEST=1 让 tests/conftest.py 不要把仓内源码挂到导入名下。
-    OIL_GAS_OPS_WHL_TEST=1 \
-      python3 -m pytest "${SCRIPT_DIR}/tests/test_oil_gas_ops_prospect_whl.py" -q
-  else
-    echo "[5/5] Skip tests (--skip-tests)."
+run_whl_smoke() {
+  local step="$1"
+  if [[ "${ENABLE_SKIP_SMOKE}" == "TRUE" ]]; then
+    echo "[${step}] Skip tests (--skip-tests)."
+    return 0
   fi
+  echo "[${step}] Running whl smoke tests..."
+  # OIL_GAS_OPS_WHL_TEST=1 让 tests/conftest.py 不要把仓内源码挂到导入名下。
+  OIL_GAS_OPS_WHL_TEST=1 \
+    python3 -m pytest "${SCRIPT_DIR}/tests/test_oil_gas_ops_prospect_whl.py" -q
+}
 
+print_build_summary() {
+  local installed="$1"
+  echo
+  echo "[oil_gas_ops_prospect] Done."
+  echo "OPP package : ${RUN_PKG}"
+  if [[ -n "${WHEEL_PATH}" ]]; then
+    echo "Wheel       : ${WHEEL_PATH}"
+  fi
+  if [[ "${installed}" != "TRUE" ]]; then
+    echo "Install     : skipped (packages left in output/)"
+    return 0
+  fi
   cat <<EOF
-
-[oil_gas_ops_prospect] Done.
-OPP package : ${run_pkg}
-Wheel       : ${wheel_path}
 
 For later shells, keep this runtime library path:
 export LD_LIBRARY_PATH=${ASCEND_HOME_PATH}/opp/vendors/customize/op_api/lib:${ASCEND_HOME_PATH}/lib64:\$LD_LIBRARY_PATH
 EOF
+}
+
+# --pkg: 只编 OPP .run。默认: 编 .run 与 whl，不安装。--install: 编译安装一体并冒烟。
+run_build_pipeline() {
+  echo "[oil_gas_ops_prospect] SOC_VERSION=${SOC_VERSION}"
+  echo "[oil_gas_ops_prospect] OPS_LIST=${OPS_LIST}"
+
+  RUN_PKG=""
+  WHEEL_PATH=""
+
+  if [[ "${ENABLE_PACKAGE}" == "TRUE" ]]; then
+    maybe_clean_outputs "1/2"
+    build_opp_run "2/2"
+    print_build_summary FALSE
+    return 0
+  fi
+
+  if [[ "${ENABLE_INSTALL}" != "TRUE" ]]; then
+    maybe_clean_outputs "1/3"
+    build_opp_run "2/3"
+    build_python_wheel "3/3"
+    print_build_summary FALSE
+    return 0
+  fi
+
+  maybe_clean_outputs "1/5"
+  build_opp_run "2/5"
+  install_opp_run "3/5"
+  echo "[4/5] Building and installing oil_gas_ops_prospect wheel..."
+  build_python_wheel
+  install_python_wheel
+  run_whl_smoke "5/5"
+  print_build_summary TRUE
 }
 
 main() {
@@ -239,11 +263,20 @@ main() {
       echo "[ut] cleaning ophost UT build dir..."
       rm -rf "${ASCENDC_ROOT}/_work/ophost_ut"
     fi
-    run_device_free_ut
+    run_unified_tests
     return 0
   fi
 
-  run_full_pipeline
+  if [[ -n "${OPENSOURCE_REPORT}" ]]; then
+    local json_path="${SCRIPT_DIR}/test_result/test_results.json"
+    echo "[oil_gas_ops_prospect] generating opensource report from ${json_path}"
+    python3 "${SCRIPT_DIR}/scripts/opensource_report.py" \
+      --from-json="${json_path}" \
+      --out="${OPENSOURCE_REPORT}"
+    return 0
+  fi
+
+  run_build_pipeline
 }
 
 main "$@"

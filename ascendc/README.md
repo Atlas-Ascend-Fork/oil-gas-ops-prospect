@@ -44,25 +44,27 @@ output/
 
 ## 编译与 UT
 
-在本目录执行（容器内一般为 `/root/projects/oil-gas-ops-prospect/ascendc`）：
+在本目录执行：
 
 ```bash
 # 编译并打包 OPP .run（默认 SOC=Ascend910B1，默认全部算子）
 # → <repo>/output/Ascend910B1/oil_gas_ops_prospect_opp_<os>_<arch>.run
 bash build.sh --pkg
 
-# 运行 ophost 侧单元测试（googletest，无需 NPU 设备）
+# 运行 ophost 侧单元测试（googletest）
 bash build.sh -u --ophost
 ```
 
-测试用例统一收在仓库根目录的 [`tests/`](../test/) 下，本目录只放算子实现。
-ophost UT 工程在 [`tests/ascendc/ophost/`](../tests/ascendc/ophost/)，覆盖两部分：
+C++ 测试放在仓库根 `tests/ut`、`tests/st`；样例在 `examples/aclnn/`。`tests/ascendc/ophost/` 只做汇总编译。`operators/` 只保留 `op_host` / `op_kernel`。
 
 | 测试文件 | 覆盖内容 |
 |----------|----------|
-| `test_complex_mul_tiling.cpp` | 两个算子的 `*_tiling_core.h`：UB 预算约束（前向 13 份 tile / 反向 21 份）、`tileFloats` 的 32B 对齐与上限、小 tensor 收缩、退化输入（负元素数、`aivNum=0`、空张量）、以及 kernel 侧核间切分的覆盖性不变量（每个元素恰好被一个 AIV 核处理一次、区间无空洞无重叠） |
-| `test_fused_bias_softmax_tiling.cpp` | `FusedBiasSoftmax` 切分：对齐 padding、bias 广播/全尺寸 UB 预算、非法输入拒绝 |
-| `test_fused_softmax_grad_tiling.cpp` | `FusedSoftmaxGrad` 切分：MIX/VEC 路径分发、V plane 驻留上限、`Q≠S` |
+| `tests/ut/op_host/complex_mul/test_complex_mul_tiling.cpp` | 前向 `*_tiling_core.h`：UB 预算、32B 对齐、小 tensor 收缩、退化输入、核间覆盖性不变量 |
+| `tests/ut/op_host/complex_mul_grad/test_complex_mul_grad_tiling.cpp` | 反向 UB 份数（21）与单拍更短 |
+| `tests/ut/op_host/fused_bias_softmax/test_fused_bias_softmax_tiling.cpp` | 对齐 padding、bias 广播/全尺寸 UB 预算、非法输入拒绝 |
+| `tests/ut/op_host/fused_softmax_grad/test_fused_softmax_grad_tiling.cpp` | MIX/VEC 路径分发、V plane 驻留上限、`Q≠S` |
+| `examples/aclnn/<op>/` | 两段式 `aclnn` 小样例（需要 NPU） |
+| `tests/st/aclnn<OpType>/` | 多 case 两段式 `aclnn` + 真值对比（需要 NPU） |
 
 > `<Op>TilingFunc` / `InferShape` 的入口签名依赖 `gert::TilingContext`，`Compute<Op>Tiling`
 > 依赖 `platform_ascendc::PlatformAscendC`，CANN 二进制包未提供 gert faker（该基建在
@@ -70,8 +72,7 @@ ophost UT 工程在 [`tests/ascendc/ophost/`](../tests/ascendc/ophost/)，覆盖
 > `op_host/<op>_tiling_core.h`，UT 直接驱动核心函数，覆盖的是真实算法。产物在
 > `_work/ophost_ut/`。
 >
-> 新增算子时：把它的 `op_host` 目录加进 `tests/ascendc/ophost/CMakeLists.txt` 的
-> `OPHOST_UT_INCLUDE_DIRS`，并把测试源加进 `ophost_ut` 目标。
+> 新增算子时：在 `tests/ut/op_host/<op>/` 放下 `test_*.cpp`，CMake 会自动收集。
 
 常用打包参数：
 
@@ -90,13 +91,12 @@ bash build.sh list-ops
 python3 build.py -v Ascend910B1 --ops complex_mul complex_mul_grad
 ```
 
-## 一键构建并安装 OPP + whl
+## 编译与安装 OPP + whl
 
 如果目标是直接使用自定义算子（含 whl），优先在仓库根目录执行：
 
 ```bash
-cd /root/projects/oil-gas-ops-prospect
-bash build.sh
+bash build.sh --install
 ```
 
 该脚本会自动完成：
@@ -110,18 +110,21 @@ bash build.sh
 常用参数：
 
 ```bash
+bash build.sh --pkg                 # 只编译 OPP .run
+bash build.sh                       # 编译 .run 与 whl，不安装
+bash build.sh --install             # 编译并安装
 bash build.sh --clean               # 先清理 ascendc/_work 与 output/
 bash build.sh --ops=complex_mul     # 只构建指定 AscendC 算子
-bash build.sh --skip-tests          # 跳过 whl 冒烟测试
+bash build.sh --install --skip-tests  # 安装后跳过 whl 冒烟测试
 bash build.sh --soc=Ascend910B1 -j16
-bash build.sh -u                    # 无卡 UT
+bash build.sh -u                    # 全部测试套件（需 910B）
 bash build.sh -u --ophost --noexec  # 只编译 ophost UT
 ```
 
 如 CANN 安装路径不是默认的 `/usr/local/Ascend/cann-9.0.0`，可通过环境变量指定：
 
 ```bash
-ASCEND_HOME_PATH=/path/to/cann bash build.sh
+ASCEND_HOME_PATH=/path/to/cann bash build.sh --install
 ```
 
 ### 包名与 vendor
@@ -184,7 +187,7 @@ CANN 内部框架头（`op_host/tiling_base.h`、`op_host/tiling_templates_regis
 
 | 目录名 | OpType | aclnn 接口 | Python | 说明 |
 |--------|--------|-----------|--------|------|
-| `complex_mul` | `ComplexMul` | `aclnnComplexMul` | `oil_gas_ops_prospect.complex_mul.complex_mul` | 复数逐点乘（AIV-only） |
+| `complex_mul` | `ComplexMul` | `aclnnComplexMul` | `oil_gas_ops_prospect.complex_mul.complex_mul` | 四路 float 复数逐点乘（AIV-only） |
 | `complex_mul_grad` | `ComplexMulGrad` | `aclnnComplexMulGrad` | 由 `complex_mul` 的 autograd 调用 | 上者的反向（AIV-only） |
 | `fused_bias_softmax` | `FusedBiasSoftmax` | `aclnnFusedBiasSoftmax` | `oil_gas_ops_prospect.fused_bias_softmax.fused_bias_softmax` | `softmax(x+bias1+bias2,-1)`，原地写回 |
 | `fused_softmax_grad` | `FusedSoftmaxGrad` | `aclnnFusedSoftmaxGrad` | `oil_gas_ops_prospect.fused_bias_softmax.fused_softmax_grad` | 注意力 softmax JVP，原地覆写 probs |
@@ -247,7 +250,8 @@ Python 还提供 `attention_core(q, k, v, bias1, bias2)`，把上述两算子按
 > C++ 侧 OpType 为 PascalCase（`ComplexMul`），aclnn 为 `aclnnComplexMul`。
 > Python 侧公开函数为蛇形命名（`complex_mul`），不加 `npu_` 前缀。
 > kernel 入口通过 `opFile.value`/`opInterface.value` 固定为蛇形文件名
-> （`complex_mul` / `complex_mul_grad` / `fused_bias_softmax` / `fused_softmax_grad`），
+> （`complex_mul` / `complex_mul_grad` /
+> `fused_bias_softmax` / `fused_softmax_grad`），
 > OpType 改名不影响 kernel 源码；aclnn 接口随 OpType 变化。
 
 ## 测试用例
@@ -270,13 +274,12 @@ tests/ascendc/<op>/
 测试用到的 pybind 扩展是算子交付件而非测试资产，源码在
 [`pybind/`](pybind/)，详见 [`pybind/README.md`](pybind/README.md)。
 
-另有不依赖 NPU 的 ophost UT，见上文「编译与 UT」。
+另有 ophost tiling UT，见上文「编译与 UT」。
 
 ### 前置条件
 
-1. 已在 `ascendc-dev` 容器中构建出 OPP 包（见上文「编译与 UT」），产物在 `<repo>/output/<SOC>/oil_gas_ops_prospect_opp_*.run`。
+1. 已构建出 OPP 包（见上文「编译与 UT」），产物在 `<repo>/output/<SOC>/oil_gas_ops_prospect_opp_*.run`。
 2. **测试需在带 NPU 设备的机器上运行**，且环境内有 `torch` 与 `torch_npu`。
-   编译可在容器内完成，跑测试需真实 NPU。
 
 ### 运行
 

@@ -8,7 +8,7 @@
 bash ascendc/build.sh -u --ophost
 ```
 
-覆盖 `tests/ascendc/ophost/test_fused_bias_softmax_tiling.cpp` 与 `test_fused_softmax_grad_tiling.cpp`。切分公式一变，先改这些手算期望。
+覆盖 `tests/ut/op_host/fused_bias_softmax/test_fused_bias_softmax_tiling.cpp` 与 `tests/ut/op_host/fused_softmax_grad/test_fused_softmax_grad_tiling.cpp`。切分公式一变，先改这些手算期望。
 
 ## NPU 官方精度
 

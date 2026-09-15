@@ -74,23 +74,34 @@ def torch_complex_mul_grad(
     return gur, gui, gvr, gvi
 
 
+def _kernel_in(t: torch.Tensor, *, clone: bool = False) -> torch.Tensor:
+    t = t.detach().contiguous()
+    return t.clone() if clone else t
+
+
 def _ascendc_forward(ur, ui, vr, vi):
     ext = _load_extension()
-    return ext.complex_mul_forward(
-        ur.contiguous(), ui.contiguous(), vr.contiguous(), vi.contiguous()
+    wr, wi = ext.complex_mul_forward(
+        _kernel_in(ur),
+        _kernel_in(ui),
+        _kernel_in(vr),
+        _kernel_in(vi),
     )
+    # pybind 把 std::vector 变成 list；autograd.Function 多输出必须是独立 tensor 的 tuple。
+    return wr.clone(), wi.clone()
 
 
 def _ascendc_backward(gwr, gwi, ur, ui, vr, vi):
     ext = _load_extension()
-    return ext.complex_mul_backward(
-        gwr.contiguous(),
-        gwi.contiguous(),
-        ur.contiguous(),
-        ui.contiguous(),
-        vr.contiguous(),
-        vi.contiguous(),
+    gur, gui, gvr, gvi = ext.complex_mul_backward(
+        _kernel_in(gwr, clone=True),
+        _kernel_in(gwi, clone=True),
+        _kernel_in(ur),
+        _kernel_in(ui),
+        _kernel_in(vr),
+        _kernel_in(vi),
     )
+    return gur, gui, gvr, gvi
 
 
 class _ComplexMulFn(torch.autograd.Function):

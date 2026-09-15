@@ -15,7 +15,7 @@ oil-gas-ops-prospect:
     license: BSD 3-Clause License
     type: run
   triton-ascend:
-    url: https://gitcode.com/cann/triton-ascend
+    url: https://gitcode.com/Ascend/triton-ascend
     version: matched with CANN
     license: MIT License
     type: run

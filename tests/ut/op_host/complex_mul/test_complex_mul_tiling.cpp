@@ -14,13 +14,12 @@
  */
 
 /**
- * ComplexMul / ComplexMulGrad ophost UT：切分算法。
+ * ComplexMul ophost UT：切分算法核心（complex_mul_tiling_core.h）。
  *
- * 覆盖两个算子的 *_tiling_core.h（平台无关部分）。tiling 入口
- * ComplexMul[Grad]TilingFunc 的签名依赖 gert::TilingContext，而
- * ComputeComplexMul[Grad]Tiling 依赖 platform_ascendc::PlatformAscendC，
- * 两者在 CANN 二进制包下都无法构造（无 gert faker），因此把切分算法抽到 core 头
- * 后在这里直接驱动 —— 覆盖的是真实算法，且无需 NPU 设备。
+ * 对齐 ops-nn `<op>/tests/ut/op_host`。tiling 入口 ComplexMulTilingFunc 依赖
+ * gert::TilingContext，ComputeComplexMulTiling 依赖 PlatformAscendC，CANN
+ * 二进制包下无法构造，因此直接驱动 core 头。反向见
+ * complex_mul_grad 见 tests/ut/op_host/complex_mul_grad/test_complex_mul_grad_tiling.cpp。
  */
 
 #include <gtest/gtest.h>
@@ -28,7 +27,6 @@
 #include <cstdint>
 #include <vector>
 
-#include "complex_mul_grad_tiling_core.h"
 #include "complex_mul_tiling_core.h"
 
 namespace {
@@ -174,58 +172,6 @@ TEST(ComplexMulTiling, DegenerateInputs)
     ASSERT_TRUE(ComplexMulHost::ComputeComplexMulTilingCore(0, kAivNum, 0, tiling, plan));
     EXPECT_EQ(tiling.totalElems, 0);
     EXPECT_GT(tiling.tileFloats, 0);
-}
-
-// ------------------------------------------------------------ ComplexMulGrad
-
-TEST(ComplexMulGradTiling, TileFloatsFitsUbBudget)
-{
-    // 反向多 2 路输入、2 路输出：inQue(2×6) + outQue(2×4) + tmp = 21 份 tile
-    EXPECT_EQ(ComplexMulGradHost::UB_SLOT_FACTOR, 21);
-    EXPECT_LE(
-        ComplexMulGradHost::TILE_FLOATS_CAP * static_cast<int64_t>(sizeof(float)) * ComplexMulGradHost::UB_SLOT_FACTOR,
-        ComplexMulGradHost::UB_BUDGET_BYTES);
-    EXPECT_GT(ComplexMulGradHost::TILE_FLOATS_CAP, 0);
-    EXPECT_EQ(ComplexMulGradHost::TILE_FLOATS_CAP % ComplexMulGradHost::ALIGN_FLOATS, 0);
-}
-
-TEST(ComplexMulGradTiling, TileIsSmallerThanForward)
-{
-    // 反向占用的 UB 份数更多，单拍元素数必须更少，否则会超 UB
-    EXPECT_GT(ComplexMulGradHost::UB_SLOT_FACTOR, ComplexMulHost::UB_SLOT_FACTOR);
-    EXPECT_LT(ComplexMulGradHost::TILE_FLOATS_CAP, ComplexMulHost::TILE_FLOATS_CAP);
-}
-
-TEST(ComplexMulGradTiling, PlanIsFilledForRepresentativeShapes)
-{
-    for (int64_t total : TotalElemsCases()) {
-        ComplexMulGradTilingData tiling{};
-        ComplexMulGradHost::ComplexMulGradPlan plan;
-        ASSERT_TRUE(ComplexMulGradHost::ComputeComplexMulGradTilingCore(total, kAivNum, kLibApiWorkspace, tiling, plan))
-            << "total=" << total;
-
-        EXPECT_EQ(tiling.totalElems, total) << "total=" << total;
-        EXPECT_EQ(tiling.coreNum, static_cast<int64_t>(kAivNum)) << "total=" << total;
-        EXPECT_EQ(plan.blockDim, kAivNum) << "total=" << total;
-        EXPECT_EQ(plan.tilingKey, COMPLEX_MUL_GRAD_TILING_KEY) << "total=" << total;
-        EXPECT_EQ(plan.totalWorkspace, kLibApiWorkspace) << "total=" << total;
-
-        EXPECT_GT(tiling.tileFloats, 0) << "total=" << total;
-        EXPECT_EQ(tiling.tileFloats % ComplexMulGradHost::ALIGN_FLOATS, 0) << "total=" << total;
-        EXPECT_LE(tiling.tileFloats, ComplexMulGradHost::TILE_FLOATS_CAP) << "total=" << total;
-    }
-}
-
-TEST(ComplexMulGradTiling, DegenerateInputs)
-{
-    ComplexMulGradTilingData tiling{};
-    ComplexMulGradHost::ComplexMulGradPlan plan;
-
-    EXPECT_FALSE(ComplexMulGradHost::ComputeComplexMulGradTilingCore(-1, kAivNum, 0, tiling, plan));
-
-    ASSERT_TRUE(ComplexMulGradHost::ComputeComplexMulGradTilingCore(1024, 0, 0, tiling, plan));
-    EXPECT_EQ(plan.blockDim, 1u);
-    EXPECT_EQ(tiling.coreNum, 1);
 }
 
 // --------------------------------------------- kernel 侧核间切分的覆盖性不变量

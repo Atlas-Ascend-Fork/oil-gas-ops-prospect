@@ -22,13 +22,12 @@ repository-level `tests/` directory.
 
 ## Commands
 
-在仓库根目录 `oil-gas-ops-prospect/` 下执行（容器内一般为 `/root/projects/oil-gas-ops-prospect`）。
+在仓库根目录执行：
 
 Run the default pytest coverage. This covers CPU fallback and Fourier basis correctness, and skips NPU-only cases when NPU is unavailable:
 
 ```bash
-cd /root/projects/oil-gas-ops-prospect
-python -m pytest tests/triton/real_fft/test_triton_fft_real.py -q
+python3 -m pytest tests/triton/real_fft/test_triton_fft_real.py -q
 ```
 
 Two cases cross-check these kernels against the downstream model code they replace.
@@ -44,9 +43,8 @@ export OIL_GAS_OPS_FFT_BACKBONE=my_pkg.backbone:MyNet  # optional, overrides the
 Run pytest with the opt-in 128^3 NPU backward and memory test:
 
 ```bash
-cd /root/projects/oil-gas-ops-prospect
 OIL_GAS_OPS_RUN_128_FFT_TEST=1 \
-python -m pytest tests/triton/real_fft/test_triton_fft_real.py -s -q
+python3 -m pytest tests/triton/real_fft/test_triton_fft_real.py -s -q
 ```
 
 Use `-s` when you want pytest to show the intermediate precision, memory, and latency lines while the test is running. Without `-s`, pytest may capture stdout and only print the final pass/fail summary.

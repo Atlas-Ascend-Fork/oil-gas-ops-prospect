@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"name": "2d_8x64", "shape": [8, 64]},
+    {"name": "small_2x2", "shape": [2, 2]},
+    {"name": "rank1_64", "shape": [64]}
+  ]
+}
