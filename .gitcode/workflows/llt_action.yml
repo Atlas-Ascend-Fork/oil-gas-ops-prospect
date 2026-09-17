@@ -38,6 +38,8 @@ jobs:
         name: ophost_ut
         run: |
           cd ${{ steps.process_checkout.outputs.path }}
+          source /opt/rh/devtoolset-7/enable
+          source /home/jenkins/Ascend/cann/bin/setenv.bash
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j "$(nproc)"
           ctest --test-dir build --output-on-failure
@@ -45,11 +47,15 @@ jobs:
         name: triton_cpu_fallback_ut
         run: |
           cd ${{ steps.process_checkout.outputs.path }}
+          source /opt/rh/devtoolset-7/enable
+          source /home/jenkins/Ascend/cann/bin/setenv.bash
           python3 -m pytest tests/triton/real_fft -v
       -
         name: triton_aot_compile_check
         run: |
           cd ${{ steps.process_checkout.outputs.path }}
+          source /opt/rh/devtoolset-7/enable
+          source /home/jenkins/Ascend/cann/bin/setenv.bash
           python3 triton-ascend/tools/aot_compile_check.py
       -
         name: upload

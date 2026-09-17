@@ -57,6 +57,8 @@ jobs:
             export task_name=${{ inputs.task_name }}
             export GIT_TARGET_BRANCH=${{ env.TARGET_BRANCH }}
             export OS_TYPE=${{ inputs.arch == 'arm64' && 'aarch64' || 'x86_64' }}
+            source /opt/rh/devtoolset-7/enable
+            source /home/jenkins/Ascend/cann/bin/setenv.bash
             # AscendC 算子包：msopgen 生成工程 -> opbuild/bisheng 编译 -> OPP .run
             BuildAccelerate bash ascendc/build.sh --pkg
           AC_SERVER_IP: ${{ vars.AC_SERVER_IP }}
