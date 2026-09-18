@@ -131,6 +131,9 @@ jobs:
               ln -s /home/jenkins/opensource/ubuntu20/lib_cache /home/jenkins/opensource/lib_cache
           fi
           source /home/jenkins/Ascend/cann/bin/setenv.bash
+          export PATH=/opt/buildtools/python-3.10.2/bin:$PATH
+          python3 -m pip uninstall -y triton triton-ascend
+          python3 -m pip install triton-ascend==3.2.1 --extra-index-url=https://mirrors.huaweicloud.com/ascend/repos/pypi
           python3 triton-ascend/tools/aot_compile_check.py
       -
         name: upload
