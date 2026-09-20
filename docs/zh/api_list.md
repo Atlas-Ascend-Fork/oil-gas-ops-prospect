@@ -6,7 +6,8 @@
 oil_gas_ops_prospect
 ├── complex_mul           # complex_mul, torch_complex_mul, torch_complex_mul_grad
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
-└── real_fft              # real_rfft, real_irfft, make_basis
+├── real_fft              # real_rfft, real_irfft, make_basis
+└── conv3d_custom         # Conv3d；functional 子模块： conv3d
 ```
 
 数学定义、shape / dtype 约束与精度阈值见[算子列表](op_list.md)。
@@ -231,6 +232,56 @@ def make_basis(
 构造并按 `(n, device, norm)` 缓存长度为 `n` 的稠密 Fourier 基。`norm` 必须为 `"ortho"`。
 
 返回 `(rfft_cos, rfft_sin, irfft_cos, irfft_sin)`，均为 `float32`，shape 为 `(n, n // 2 + 1)`。一般无需直接调用，由 `real_rfft` / `real_irfft` 内部使用。
+
+---
+
+## `oil_gas_ops_prospect.conv3d_custom`
+
+### `Conv3d`
+
+```python
+from oil_gas_ops_prospect.conv3d_custom import Conv3d
+
+class Conv3d(torch.nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int | tuple[int, int, int],
+        stride: int | tuple[int, int, int] = 1,
+        padding: int | tuple[int, int, int] = 0,
+        dilation: int | tuple[int, int, int] = 1,
+        groups: int = 1,
+        bias: bool = True,
+        padding_mode: str = "zeros",
+    ) -> None
+    def forward(self, x: torch.Tensor) -> torch.Tensor
+```
+
+`torch.nn.Conv3d` 的等价替换（纯 PyTorch 组合实现）。构造参数与 `nn.Conv3d` 一致；`forward(x)` 返回 \((N, C_{out}, D_{out}, H_{out}, W_{out})\)。
+
+- **state_dict 互通**：key 与 `nn.Conv3d` 完全一致，可双向 `load_state_dict`（strict）。
+- **路径选择**：`use_custom` 跟随 NPU 可用性（`torch_npu` 已导入即开启），不限制 stride / dilation；否则回退 `F.conv3d`。测试可强制 `module.use_custom = True` 在 CPU 上驱动自定义路径。
+- **反向**：前/反向封装在内部 `_Conv3dFunction`（`torch.autograd.Function`）；支持双阶反向；与原生 autograd 数学等价（float64 ≤ 1.78e-14）。
+- **`padding_mode != 'zeros'`**：`replicate` / `reflect` / `circular` 语义同 `nn.Conv3d`（先 `F.pad` 再卷积）。
+
+### `conv3d`
+
+```python
+from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
+
+def conv3d(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None = None,
+    stride: int | tuple[int, int, int] = 1,
+    padding: int | tuple[int, int, int] = 0,
+    dilation: int | tuple[int, int, int] = 1,
+    groups: int = 1,
+) -> torch.Tensor
+```
+
+`torch.nn.functional.conv3d` 的等价替换（函数式入口，仅引用的包不同）。签名与 `F.conv3d` 一致；始终经内部 `_Conv3dFunction`（`torch.autograd.Function`）组织前/反向 —— 与原生数学等价（支持任意 stride / dilation 与双阶反向），NPU 上可绕开原生 backward 对大 kernel depthwise 的 L1 限制。nn.Module 形态与 NPU 回退逻辑见 `Conv3d`。
 
 ---
 

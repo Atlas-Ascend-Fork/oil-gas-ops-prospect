@@ -33,6 +33,7 @@ from pybind_extensions import build_extensions  # noqa: E402
 # 源码树不保留 oil_gas_ops_prospect/ 目录。whl 按算子名组装，不暴露后端：
 #   oil_gas_ops_prospect                  ← ascendc/pybind/（complex_mul.py、fused_bias_softmax.py）
 #   oil_gas_ops_prospect.real_fft         ← triton-ascend/real_fft/
+#   oil_gas_ops_prospect.conv3d_custom    ← composite-torch/conv3d_custom/
 setup(
     name="oil-gas-ops-prospect",
     version="0.1.0",
@@ -40,15 +41,18 @@ setup(
     packages=[
         "oil_gas_ops_prospect",
         "oil_gas_ops_prospect.real_fft",
+        "oil_gas_ops_prospect.conv3d_custom",
     ],
     package_dir={
         "oil_gas_ops_prospect": "ascendc/pybind",
         "oil_gas_ops_prospect.real_fft": "triton-ascend/real_fft",
+        "oil_gas_ops_prospect.conv3d_custom": "composite-torch/conv3d_custom",
     },
     include_package_data=False,
     exclude_package_data={
         "oil_gas_ops_prospect": ["csrc*", "csrc/*", "csrc/*/*", "README.md"],
         "oil_gas_ops_prospect.real_fft": ["README.md"],
+        "oil_gas_ops_prospect.conv3d_custom": ["README.md"],
     },
     ext_modules=build_extensions(relative_to=ROOT),
     cmdclass={"build_ext": BuildExtension},

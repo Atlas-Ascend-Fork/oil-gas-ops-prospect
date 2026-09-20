@@ -3,7 +3,8 @@ name: llt_action
 # 无卡门禁用例（LLT）：不依赖 NPU 设备，PR 触发时全量执行。
 #   1. ophost 侧 tiling 单元测试（googletest + ctest）
 #   2. Triton 算子 CPU 回退精度测试（pytest）
-#   3. Triton kernel 全分支 AOT 编译检查
+#   3. Composite（纯 PyTorch）算子 CPU 精度测试（pytest）
+#   4. Triton kernel 全分支 AOT 编译检查（triton-ascend 安装由流水线侧提供）
 
 on:
   workflow_call:
@@ -100,6 +101,11 @@ jobs:
           fi
           source /home/jenkins/Ascend/cann/bin/setenv.bash
           python3 -m pytest tests/triton/real_fft -v
+      -
+        name: composite_cpu_ut
+        run: |
+          cd ${{ steps.process_checkout.outputs.path }}
+          python3 -m pytest tests/composite -v
       -
         name: triton_aot_compile_check
         run: |

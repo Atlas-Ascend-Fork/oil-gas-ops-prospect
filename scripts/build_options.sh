@@ -58,6 +58,8 @@ usage() {
         echo "    --perf               Python performance (needs NPU)"
         echo "    --examples           UT-device only: C++ small aclnn launch (needs NPU)"
         echo "    --triton             Triton CPU-fallback pytest"
+  echo "    --composite          Composite (pure PyTorch) CPU pytest"
+        echo "    --composite          Composite (pure PyTorch) CPU pytest"
         echo "    --aot                Triton AOT compile check"
         echo "    --ops=op1,op2        Filter UT-device / ST / precision / perf by operator"
         echo "    --report=<path>      Markdown execution report (default: test_result/test_report_<ts>.md)"
@@ -132,6 +134,7 @@ usage() {
   echo "    --perf               NPU Python performance"
   echo "    --examples           UT-device only: C++ small aclnn"
   echo "    --triton             Triton CPU-fallback pytest"
+  echo "    --composite          Composite (pure PyTorch) CPU pytest"
   echo "    --aot                Triton AOT compile check"
   echo "    --report=<path>      Markdown execution report path"
   echo "    --opensource-report[=path]  Copy community opensource report (JSON only gates FAIL)"
@@ -164,7 +167,7 @@ check_help_combinations() {
 
   for arg in "${args[@]}"; do
     case "${arg}" in
-      -u|--ut|--ophost|--st|--precision|--perf|--examples|--triton|--aot|--all) has_u=true ;;
+      -u|--ut|--ophost|--st|--precision|--perf|--examples|--triton|--composite|--aot|--all) has_u=true ;;
       --pkg|--install) has_package=true ;;
     esac
   done
@@ -182,8 +185,8 @@ set_ut_mode() {
   fi
   UT_TEST_ALL=TRUE
   local has_subset=FALSE
-  if [[ "${OP_UT}" == "TRUE" || "${OP_HOST}" == "TRUE" || "${OP_TRITON}" == "TRUE" || "${OP_AOT}" == "TRUE" || \
-        "${OP_ST}" == "TRUE" || "${OP_PRECISION}" == "TRUE" || "${OP_PERF}" == "TRUE" || \
+  if [[ "${OP_UT}" == "TRUE" || "${OP_HOST}" == "TRUE" || "${OP_TRITON}" == "TRUE" || "${OP_COMPOSITE}" == "TRUE" || \
+        "${OP_AOT}" == "TRUE" || "${OP_ST}" == "TRUE" || "${OP_PRECISION}" == "TRUE" || "${OP_PERF}" == "TRUE" || \
         "${OP_EXAMPLES}" == "TRUE" || "${OP_ALL}" == "TRUE" ]]; then
     has_subset=TRUE
   fi
@@ -191,6 +194,7 @@ set_ut_mode() {
   if [[ "${OP_ALL}" == "TRUE" || "${has_subset}" == "FALSE" ]]; then
     OP_HOST_UT=TRUE
     TRITON_UT=TRUE
+    COMPOSITE_UT=TRUE
     AOT_UT=TRUE
     ST_UT=TRUE
     PRECISION_UT=TRUE
@@ -216,6 +220,9 @@ set_ut_mode() {
   fi
   if [[ "${OP_TRITON}" == "TRUE" ]]; then
     TRITON_UT=TRUE
+  fi
+  if [[ "${OP_COMPOSITE}" == "TRUE" ]]; then
+    COMPOSITE_UT=TRUE
   fi
   if [[ "${OP_AOT}" == "TRUE" ]]; then
     AOT_UT=TRUE
@@ -312,6 +319,7 @@ checkopts() {
   ENABLE_COVERAGE=FALSE
   OP_HOST=FALSE
   OP_TRITON=FALSE
+  OP_COMPOSITE=FALSE
   OP_AOT=FALSE
   OP_UT=FALSE
   OP_ST=FALSE
@@ -321,6 +329,7 @@ checkopts() {
   OP_ALL=FALSE
   OP_HOST_UT=FALSE
   TRITON_UT=FALSE
+  COMPOSITE_UT=FALSE
   AOT_UT=FALSE
   ST_UT=FALSE
   PRECISION_UT=FALSE
@@ -343,7 +352,7 @@ checkopts() {
       local prev
       for prev in "$@"; do
         case "${prev}" in
-          -u|--ut|--ophost|--triton|--aot|--st|--precision|--perf|--examples|--all|--noexec|--cov|--gtest_filter*|--report*|--opensource-report*) show_help="test" ;;
+          -u|--ut|--ophost|--triton|--composite|--aot|--st|--precision|--perf|--examples|--all|--noexec|--cov|--gtest_filter*|--report*|--opensource-report*) show_help="test" ;;
           --clean) show_help="clean" ;;
           --pkg|--install|--skip-tests) show_help="package" ;;
         esac
@@ -392,6 +401,11 @@ checkopts() {
       --triton)
         ENABLE_TEST=TRUE
         OP_TRITON=TRUE
+        shift
+        ;;
+      --composite)
+        ENABLE_TEST=TRUE
+        OP_COMPOSITE=TRUE
         shift
         ;;
       --aot)

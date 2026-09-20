@@ -1,6 +1,6 @@
 # 算子列表
 
-当前仓库交付 4 个 AscendC/CANN OPP 算子和 2 个 Triton-Ascend Python 算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
+当前仓库交付 4 个 AscendC/CANN OPP 算子、2 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
 
@@ -12,6 +12,7 @@
 | `FusedSoftmaxGrad` | AscendC | `aclnnFusedSoftmaxGrad` / `fused_softmax_grad` | [`ascendc/operators/fused_softmax_grad/`](../../ascendc/operators/fused_softmax_grad/) | 注意力 softmax JVP，原地覆写 probs | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 实数正向 FFT：`x → (xr, xi)` | NPU kernel 为 `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 半谱重建实数：`(xr, xi), n → y` | NPU kernel 为 `float32` | Ascend 910B |
+| `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | `nn.Conv3d` / `F.conv3d` 等价替换（自定义前/反向） | 任意（同 `nn.Conv3d`） | 任意（纯 PyTorch） |
 
 命名约定：
 
@@ -274,3 +275,51 @@ y[t] = \sum_{k=0}^{n//2} \bigl( X_r[k]\,\mathrm{irfft\_cos}[t,k] + X_i[k]\,\math
 `make_basis(n, device, norm)` 是内部辅助，一般不必直接调用；签名见[接口列表](api_list.md#make_basis)。
 
 实现与调试用法详见 [`triton-ascend/real_fft/README.md`](../../triton-ascend/real_fft/README.md)。
+
+---
+
+## Composite-Torch 算子
+
+交付物为 Python whl 内的纯 PyTorch 组合模块（`torch.autograd.Function` 组织前/反向，无自定义 kernel），CPU / NPU 行为一致。
+
+### Conv3d
+
+`torch.nn.Conv3d` / `F.conv3d` 的等价替换。NPU 可用（`torch_npu` 已导入）时模块走 `conv3d` 自定义前/反向，否则回退 `F.conv3d`；weight/bias 为顶层参数，state_dict 的 key 与 `nn.Conv3d` 完全一致。
+
+#### 数学定义
+
+前向与 `F.conv3d` 完全一致（3D cross-correlation）。反向对已知 \(\partial L/\partial \text{out}\) 的三个梯度：
+
+\[
+\begin{aligned}
+\text{grad\_bias}[o] &= \sum_{n,d,h,w} \text{grad\_out}[n,o,d,h,w] \\
+\text{grad\_weight} &= \texttt{torch.nn.grad.conv3d\_weight}(\text{input}, \text{grad\_out}, \ldots) \\
+\text{grad\_in} &= \texttt{F.conv3d}\bigl(\widetilde{\text{grad\_out}},\ \text{flip}(W)^{\top},\ \text{pad}=d(K{-}1)-p,\ \ldots\bigr)
+\end{aligned}
+\]
+
+其中 \(\widetilde{\text{grad\_out}}\) 为 grad_output 的零膨胀（stride>1 时元素间插 \(s-1\) 个零，`output_padding` 补齐到 input 尺寸），\(\text{flip}(W)^{\top}\) 为空间翻转 + in/out channel 转置（groups>1 时组内转置）；padding 为负时裁剪膨胀张量两侧。
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `x` | 输入特征 | \((N, C_{in}, D, H, W)\) | 任意（同 `nn.Conv3d`） |
+| 输出 | `output` | 输出特征 | \((N, C_{out}, D_{out}, H_{out}, W_{out})\) | 与输入相同 |
+
+构造参数 `in_channels / out_channels / kernel_size / stride / padding / dilation / groups / bias / padding_mode` 与 `nn.Conv3d` 一致，支持 int 或 3 元组。
+
+#### 约束与行为
+
+- `use_custom` 跟随 NPU 可用性（`torch_npu` 已导入即开启），**不限制 stride / dilation**；测试可强制 `module.use_custom = True` 在 CPU 上驱动自定义路径。
+- `padding_mode != 'zeros'` 时先 `F.pad` 再以 `conv_padding=0` 进入自定义 Function，梯度经 `F.pad` 的 autograd 正确回传。
+- 支持双阶反向（二阶混合导数与原生一致）。
+- 与原生的数值关系：前向逐位相同；反向 float64 最大绝对误差 ≤ 1.78e-14（数学等价）；NPU float32 上 grad_weight 因不同内核累加顺序存在 5.8e-4 ~ 9.3e-3 差异（float32 正常范围）。
+- NPU 上原生 `aclnnConvolutionBackward` 对大 kernel depthwise（kernel ≥ 7 + 大空间）会因 L1 buffer 超限崩溃，本实现分步构造反向可正常完成。
+
+#### 验证
+
+- 精度 / 性能用例：[`tests/composite/conv3d_custom/`](../../tests/composite/conv3d_custom/)（主要取值场景组合、11 种实际训练调用模式、性能基准）。
+- 数学等价性与 NPU 实机精度已验证：float64 三梯度与原生 autograd 一致（阈值 1e-12 内）；NPU float32 实际训练尺寸全模式对比通过，20 epochs 训练 loss 正常收敛。
+
+实现与使用说明详见 [`composite-torch/conv3d_custom/README.md`](../../composite-torch/conv3d_custom/README.md)。

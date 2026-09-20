@@ -4,12 +4,13 @@
 
 oil-gas-ops-prospect 是面向**油气勘探**（oil & gas exploration）领域的昇腾自定义算子库。仓名即 **oil-gas-ops**（油气算子）+ **prospect**（勘探目标），面向地震成像、全波形反演等勘探计算场景。
 
-本仓按**交付物形态**分为两类算子后端；Python 对外接口按算子名暴露，不区分实现后端：
+本仓按**交付物形态**分为三类算子后端；Python 对外接口按算子名暴露，不区分实现后端：
 
 | 后端 | 目录 | 交付物 | 适用场景 |
 |------|------|--------|----------|
 | AscendC | [`ascendc/`](ascendc/) | CANN OPP `.run` 算子包，暴露 `aclnn` 接口 | 需要精细控制核间切分与流水、追求极致性能的算子 |
 | Triton-Ascend | [`triton-ascend/`](triton-ascend/) | Python whl 内的 Triton kernel | 用 Python 快速表达、依赖 autograd、形态多变的算子 |
+| Composite-Torch | [`composite-torch/`](composite-torch/) | Python whl 内的纯 PyTorch 组合模块 | 组合现有 torch 算子即可表达、无需自定义 kernel 的算子 |
 
 ## 📌 版本配套
 
@@ -118,7 +119,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 
 ## 📖 接口支持清单
 
-当前交付 4 个 AscendC 算子和 2 个 Triton-Ascend 算子：
+当前交付 4 个 AscendC 算子、2 个 Triton-Ascend 算子和 1 个 Composite-Torch 算子：
 
 | 名称 / OpType | 后端 / 交付物 | 功能 | dtype / format |
 |---------------|---------------|------|----------------|
@@ -128,6 +129,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 | [`FusedSoftmaxGrad`](ascendc/operators/fused_softmax_grad/) | AscendC / OPP `.run`（可走 MIX） | 注意力 softmax JVP：`g = go @ V^T` 后原地覆写 probs | `fp32` / `fp16` / `bf16`，`ND` |
 | [`real_rfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 实数正向 FFT：`x -> (xr, xi)`，频率轴长度 `n // 2 + 1` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
 | [`real_irfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 从实部、虚部半谱重建实数：`(xr, xi), n -> y` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
+| [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | `nn.Conv3d` 等价替换（自定义前/反向，state_dict 互通） | 任意（同 `nn.Conv3d`） |
 
 数学定义、约束与支持范围见[算子列表](docs/zh/op_list.md)；完整接口签名、参数与环境变量见[接口列表](docs/zh/api_list.md)。
 
@@ -143,6 +145,8 @@ oil-gas-ops-prospect/
 ├── triton-ascend/          # Triton-Ascend 算子（real_fft 打包为 oil_gas_ops_prospect.real_fft）
 │   ├── real_fft/           #   real_rfft / real_irfft
 │   └── tools/              #   AOT 编译检查
+├── composite-torch/        # Composite-Torch 算子（纯 PyTorch 组合，打包为 oil_gas_ops_prospect.<op>）
+│   └── conv3d_custom/      #   Conv3d（nn.Conv3d 等价替换）
 ├── tests/                   # UT / ST / Python 精度性能；operators/ 不再放测试
 │   ├── ut/op_host/         #   tiling googletest
 │   ├── st/aclnn<OpType>/   #   两段式 aclnn 系统测试
@@ -164,7 +168,7 @@ oil-gas-ops-prospect/
 
 ## 🛠️ 开发指南
 
-新增 AscendC 或 Triton-Ascend 算子的完整流程、目录约定、命名约定与自检方式见[算子开发指南](docs/zh/develop/operator_development_guide.md)。
+新增 AscendC / Triton-Ascend / Composite 算子的完整流程、目录约定、命名约定与自检方式见[算子开发指南](docs/zh/develop/operator_development_guide.md)。
 
 提交前自检：
 

@@ -62,6 +62,14 @@ oil-gas-ops-prospect/
 │   └── tools/
 │       └── aot_compile_check.py                #   AOT 编译检查
 │
+├── composite-torch/                            # ★ Composite-Torch 算子（纯 PyTorch 组合，打包为 oil_gas_ops_prospect.<op>）
+│   ├── README.md                               #   轨道说明与接入约定
+│   └── conv3d_custom/                          #   Conv3d / conv3d（nn.Conv3d / F.conv3d 等价替换）
+│       ├── __init__.py                         #     对外导出 Conv3d
+│       ├── conv3d.py                           #     Conv3d 模块（nn.Module 形态，NPU 回退）
+│       ├── functional.py                       #     conv3d 函数式入口 + autograd 实现
+│       └── README.md                           #     算子说明
+│
 ├── tests/                                       # ★ 全部测试（operators/ 不再放 tests）
 │   ├── suites.json                             #   build.sh -u 套件清单
 │   ├── _common/aclnn/                          #   ST 共用脚手架
@@ -74,6 +82,7 @@ oil-gas-ops-prospect/
 │   │   ├── ophost/                             #   汇总编译 ophost_ut
 │   │   ├── complex_mul/                        #   NPU 精度/性能对比测试
 │   │   └── fused_bias_softmax/                 #   融合注意力 NPU 精度/性能对比
+│   ├── composite/conv3d_custom/                #   Conv3d / conv3d CPU 精度与性能基准
 │   └── triton/
 │       └── real_fft/                           #   rFFT / iRFFT 精度（含 CPU 回退路径）
 │
@@ -104,22 +113,24 @@ oil-gas-ops-prospect/
     └── wheels/oil_gas_ops_prospect-*.whl
 ```
 
-## 两类算子后端的分工
+## 三类算子后端的分工
 
-本仓按**交付物形态**分为两个业务目录，标记为 ★：
+本仓按**交付物形态**分为三个业务目录，标记为 ★：
 
 | 目录 | 后端 | 交付物 | 何时用 |
 |------|------|--------|--------|
 | `ascendc/` | AscendC | CANN OPP `.run` 算子包，暴露 `aclnn` 接口 | 需要精细控制切分与流水、追求极致性能的算子 |
 | `triton-ascend/` | Triton-Ascend | Python whl 内的 Triton kernel | 用 Python 快速表达、依赖 autograd、形态多变的算子 |
+| `composite-torch/` | Composite-Torch（纯 PyTorch） | Python whl 内的组合模块（`torch.autograd.Function`） | 组合现有 torch 算子即可表达、无需自定义 kernel 的算子 |
 
-两者最终都通过统一的 Python 包 `oil_gas_ops_prospect` 按**算子名**对外暴露（源码树里**没有**这个目录，由 `setup.py` 的 `package_dir` 在打包时组装，不区分后端）：
+三者最终都通过统一的 Python 包 `oil_gas_ops_prospect` 按**算子名**对外暴露（源码树里**没有**这个目录，由 `setup.py` 的 `package_dir` 在打包时组装，不区分后端）：
 
 - `oil_gas_ops_prospect.complex_mul` → `ascendc/pybind/complex_mul.py`
 - `oil_gas_ops_prospect.fused_bias_softmax` → `ascendc/pybind/fused_bias_softmax.py`
 - `oil_gas_ops_prospect.real_fft` → `triton-ascend/real_fft/`
+- `oil_gas_ops_prospect.conv3d_custom` → `composite-torch/conv3d_custom/`
 
-裸 checkout 通过 `scripts/local_pkg.py`（examples / pytest `conftest.py` 会自动激活）把上述目录挂到同一导入名下，因此装包与不装包时调用方式一致。验证已安装 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`（`tests/run_whl_tests.sh` 已处理），避免测到仓内源码。
+裸 checkout 通过 `scripts/local_pkg.py`（examples / pytest `conftest.py` 会自动激活）把上述目录挂到同一导入名下，因此装包与不装包时调用方式一致；`composite-torch/` 下的算子由该脚本自动发现，无需手工登记。验证已安装 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`（`tests/run_whl_tests.sh` 已处理），避免测到仓内源码。
 
 ## 产物与临时目录
 

@@ -29,6 +29,7 @@ run_unified_tests() {
   local suites=()
   [[ "${OP_HOST_UT}" == "TRUE" ]] && suites+=("ophost")
   [[ "${TRITON_UT}" == "TRUE" ]] && suites+=("triton")
+  [[ "${COMPOSITE_UT}" == "TRUE" ]] && suites+=("composite")
   [[ "${AOT_UT}" == "TRUE" ]] && suites+=("aot")
   [[ "${ST_UT}" == "TRUE" ]] && suites+=("st")
   [[ "${PRECISION_UT}" == "TRUE" ]] && suites+=("precision")

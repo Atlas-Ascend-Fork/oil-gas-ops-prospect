@@ -1,13 +1,14 @@
 # 算子开发指南
 
-本文说明如何新增 AscendC / Triton-Ascend 算子，以及必须遵守的目录、命名、封装与验收约定。路径以 [`dir_structure.md`](../context/dir_structure.md) 为准。Issue / PR 流程见[贡献指南](../../../CONTRIBUTING.md)。
+本文说明如何新增 AscendC / Triton-Ascend / Composite 算子，以及必须遵守的目录、命名、封装与验收约定。路径以 [`dir_structure.md`](../context/dir_structure.md) 为准。Issue / PR 流程见[贡献指南](../../../CONTRIBUTING.md)。
 
-本仓有两类算子后端，交付件与开发流程不同。请先判断新算子属于哪一类：
+本仓有三类算子后端，交付件与开发流程不同。请先判断新算子属于哪一类：
 
 | 场景 | 选择 |
 |------|------|
 | 需要精细控制核间切分、UB 分配与流水，追求极致性能 | AscendC 算子 → `ascendc/` |
 | 用 Python 快速表达、依赖 autograd、形态多变 | Triton-Ascend 算子 → `triton-ascend/` |
+| 组合现有 torch 算子即可表达（含 `autograd.Function` 自定义前/反向），无需自定义 kernel | Composite-Torch 算子 → `composite-torch/` |
 
 ---
 
@@ -231,7 +232,54 @@ bash tests/run_whl_tests.sh
 
 ---
 
-## 三、提交前自检
+## 三、Composite-Torch 算子（纯 PyTorch 组合）
+
+只用现有 torch 算子组合实现的算子（`torch.autograd.Function` 组织前/反向，无任何自定义 kernel），放在与 `triton-ascend/` 同级的 `composite-torch/` 下。
+
+### 1. 目录结构
+
+```text
+composite-torch/${op_family}/
+├── __init__.py                         # 对外导出
+├── ${op_family}.py                     # torch.autograd.Function 封装 + 公开 API
+└── README.md                           # 算子说明
+
+tests/composite/${op_family}/
+└── test_${op_family}.py                # pytest 用例
+```
+
+`composite-torch/` 本身不是包目录（同 `triton-ascend/`，测试目录同 `tests/triton/` 取短名 `tests/composite/`）；实现简单时可退化为顶层单文件 `composite-torch/${op_family}.py`，也可按 torch 习惯在包内拆分模块类与函数式入口（如 `conv3d_custom/` 的 `conv3d.py` + `functional.py` 分别对应 `nn.Conv3d` / `F.conv3d`）。
+
+### 2. 注册进 whl
+
+同 Triton 方式，在 `setup.py` 的 `packages` 与 `package_dir` 中按算子名登记：
+
+```python
+packages=[
+    ...,
+    "oil_gas_ops_prospect.${op_family}",
+],
+package_dir={
+    ...,
+    "oil_gas_ops_prospect.${op_family}": "composite-torch/${op_family}",
+},
+```
+
+不要加二级后端包。裸 checkout 由 `scripts/local_pkg.py` **自动发现** `composite-torch/` 下的算子（子目录含 `__init__.py`，或顶层单文件 `.py`），无需手工登记；验 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`。
+
+### 3. 封装约定
+
+| 规则 | 说明 |
+|------|------|
+| 函数式 API 走 `autograd.Function.apply` | 自定义 backward 时直接组合调用会断梯度图 |
+| 公开名蛇形、无 `npu_` 前缀 | 与其他轨道一致 |
+| 不依赖自定义扩展 | 纯 torch 算子组合；需要 kernel 时应走 AscendC / Triton 轨道 |
+
+约束与数学定义写入 [op_list.md](../op_list.md)，签名写入 [api_list.md](../api_list.md)。
+
+---
+
+## 四、提交前自检
 
 ```bash
 bash build.sh --install
@@ -255,5 +303,6 @@ bash scripts/check_license_header.sh
 | 文档 | `docs/zh/op_list.md`、`api_list.md`；AscendC 还要 `ascendc/README.md` |
 | 精度报告 | PR 描述附 [模板](precision_acceptance_template.md) |
 | Triton 登记 | `setup.py` 的 `packages` / `package_dir`；AOT 检查覆盖 |
+| Composite-Torch 登记 | `composite-torch/<family>/`（纯 Python，`setup.py` 的 `packages` / `package_dir`；测试放 `tests/composite/<family>/`） |
 
 不要在 `operators/<op>/` 下再建 `tests/`、`examples/`、`testplan/`、`teste2e/`、`delivery/`。`output/`、`ascendc/_work/`、`build/`、`*.so` 等已在 `.gitignore`，不要提交。

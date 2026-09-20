@@ -37,6 +37,7 @@ bash build.sh --opensource-report
 | **精度** | Python 对拍 PyTorch / autograd，看相对误差 | `tests/ascendc/<op>/test_*_npu.py --mode precision` | **是** |
 | **性能** | Python 计时、加速比 | 同上 `--mode perf` | **是** |
 | **Triton CPU** | rFFT CPU 回退精度（pytest） | `tests/triton/real_fft/test_triton_fft_real.py` | 否 |
+| **Composite CPU** | Conv3d / conv3d 前反向精度与取值组合（pytest） | `tests/composite/conv3d_custom/` | 否 |
 | **Triton AOT** | kernel 分支能编译 | `triton-ascend/tools/aot_compile_check.py` | 否 |
 | **Triton 大形态 / 微基准** | `128^3` 与业务 5D 精度，以及开源报告 5.3 的 FFT 计时 | `tests/triton/real_fft/verify_triton_fft_real_128_3d.py`、`bench_opensource_perf.py` | **是** |
 | **开源门禁** | 文档清单与章节关键词、`build.sh -h`、OPP vendor、公开接口 CPU 冒烟 | `tests/opensource_gates.py` | 安装痕迹要 CANN |
@@ -45,7 +46,9 @@ bash build.sh --opensource-report
 
 - **UT** = UT-host + UT-device。切分不依赖 NPU；「UT 要上板」指的是 UT-device 必须在 NPU 上把算子跑起来。
 - **ST** 比 UT-device 更重：按 `cases.json` 循环多个 shape，并和 golden 比。
-- **精度 / 性能** 走 Python API（pybind），不是 C++ aclnn 那条路径。
+- **精度 / 性能** 走 Python API（pybind），不是 C++ aclnn 那条路径。脚本按算子登记在
+  `tests/suites.json` 的 `npu_python`；composite 算子经同一 `--mode precision/perf` 协议接入
+  （如 `tests/composite/conv3d_custom/bench_conv3d_custom_perf.py`）。
 - Python 示例 `examples/*.py`、whl 冒烟见文末。Triton 大形态已纳入全量 `-u`。
 
 ---
@@ -65,6 +68,7 @@ bash build.sh --opensource-report
 | `bash build.sh -u --perf` | **性能** | **FAIL** |
 | `bash build.sh -u --examples` | 只 UT-device | **FAIL** |
 | `bash build.sh -u --triton` | Triton CPU | 可跑 |
+| `bash build.sh -u --composite` | Composite CPU | 可跑 |
 | `bash build.sh -u --aot` | Triton AOT | 可跑 |
 
 `--ut` 也可以单独写（等同进入测试模式并只跑 UT）：
@@ -116,12 +120,13 @@ tests/
 ├── _common/aclnn/                       # ST 脚手架
 ├── ascendc/ophost/                      # 汇总编译 ophost_ut
 ├── ascendc/<op>/test_*_npu.py           # 精度 + 性能
-└── triton/real_fft/                     # Triton CPU（及可选 NPU verify）
+├── triton/real_fft/                     # Triton CPU（及可选 NPU verify）
+└── composite/conv3d_custom/             # Composite CPU（Conv3d / conv3d）
 
 examples/aclnn/<op>/                     # UT-device（C++ 两段式小 launch）
 ```
 
-新增算子：实现放 `operators/`；UT-host 放 `tests/ut/op_host/<op>/`；UT-device 放 `examples/aclnn/<op>/`；ST 放 `tests/st/aclnn<OpType>/`；精度脚本放 `tests/ascendc/<op>/`；后三项登记 `tests/suites.json`。
+新增算子：实现放 `operators/`；UT-host 放 `tests/ut/op_host/<op>/`；UT-device 放 `examples/aclnn/<op>/`；ST 放 `tests/st/aclnn<OpType>/`；精度脚本放 `tests/ascendc/<op>/`；后三项登记 `tests/suites.json`。Composite 算子的 NPU 精度/性能同样经 `tests/suites.json` 的 `npu_python` 登记（脚本需支持 `--mode precision/perf` 协议，参考 `bench_conv3d_custom_perf.py`）。
 
 ---
 

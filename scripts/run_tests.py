@@ -215,6 +215,20 @@ def run_triton(cov: bool, noexec: bool) -> JobResult:
                        extract_notes(out) or ("passed" if code == 0 else "pytest failed"), out)
 
 
+def run_composite(cov: bool, noexec: bool) -> JobResult:
+    t0 = time.perf_counter()
+    if noexec:
+        return make_result("composite_cpu", "ut", SKIP, 0.0, "--noexec")
+    args = [sys.executable, "-m", "pytest", str(REPO_ROOT / "tests" / "composite"), "-q"]
+    if cov:
+        probe = subprocess.run([sys.executable, "-c", "import pytest_cov"], capture_output=True)
+        if probe.returncode == 0:
+            args += ["--cov", "--cov-report=term-missing"]
+    code, out = run_cmd(args)
+    return make_result("composite_cpu", "ut", PASS if code == 0 else FAIL, time.perf_counter() - t0,
+                       extract_notes(out) or ("passed" if code == 0 else "pytest failed"), out)
+
+
 def run_aot(noexec: bool) -> JobResult:
     t0 = time.perf_counter()
     if noexec:
@@ -337,8 +351,8 @@ def _attach_flag_values(argv: list[str], flags: tuple[str, ...]) -> list[str]:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--suites", default="ophost,triton,aot,st,precision,perf,examples,fft,gate",
-                   help="comma-separated: ophost,triton,aot,st,precision,perf,examples,fft,gate")
+    p.add_argument("--suites", default="ophost,triton,composite,aot,st,precision,perf,examples,fft,gate",
+                   help="comma-separated: ophost,triton,composite,aot,st,precision,perf,examples,fft,gate")
     p.add_argument("--ops", default="", help="filter operator names, comma-separated")
     p.add_argument("--jobs", type=int, default=os.cpu_count() or 8)
     p.add_argument("--gtest-filter", default="")
@@ -520,6 +534,9 @@ def run_suites(ctx: SuiteContext, wanted: list[str], results: list[JobResult]) -
     if "triton" in wanted:
         print("[test] triton CPU pytest")
         results.append(run_triton(ctx.args.cov, ctx.noexec))
+    if "composite" in wanted:
+        print("[test] composite CPU pytest")
+        results.append(run_composite(ctx.args.cov, ctx.noexec))
     if "aot" in wanted:
         print("[test] triton AOT")
         results.append(run_aot(ctx.noexec))

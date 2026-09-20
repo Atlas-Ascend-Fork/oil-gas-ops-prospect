@@ -19,6 +19,7 @@ whl 由 ``setup.py`` 的 ``package_dir`` 按算子名组装：
 
 - ``oil_gas_ops_prospect`` → ``ascendc/pybind/``（``complex_mul.py``、``fused_bias_softmax.py``）
 - ``oil_gas_ops_prospect.real_fft`` → ``triton-ascend/real_fft/``
+- ``oil_gas_ops_prospect.<op>`` → ``composite-torch/<op>/``（``_composite_mapping()`` 自动发现）
 
 裸 checkout 没有物理包目录，本模块在 ``sys.meta_path`` 上挂一个 finder，
 让 ``from oil_gas_ops_prospect.complex_mul import complex_mul`` 等导入与装包后一致。
@@ -86,6 +87,25 @@ class _SourceTreeFinder:
         return None
 
 
+def _composite_mapping(composite_root: Path) -> dict[str, Path]:
+    """自动发现 ``composite-torch/`` 下的算子：子目录含 ``__init__.py``，或顶层单文件 ``.py``。
+
+    ``_`` 前缀的条目（如 ``_common/``）与 ``README.md`` 等非算子文件跳过。
+    """
+    mapping: dict[str, Path] = {}
+    if not composite_root.is_dir():
+        return mapping
+    for entry in sorted(composite_root.iterdir()):
+        if entry.name.startswith("_"):
+            continue
+        if entry.is_dir():
+            if (entry / "__init__.py").is_file():
+                mapping[f"{_PKG}.{entry.name}"] = entry
+        elif entry.is_file() and entry.suffix == ".py":
+            mapping[f"{_PKG}.{entry.stem}"] = entry
+    return mapping
+
+
 def activate(repo_root: Path | None = None) -> bool:
     """把源码树挂到 ``oil_gas_ops_prospect`` 导入名下。已激活则直接返回 True。"""
     if os.environ.get("OIL_GAS_OPS_WHL_TEST") == "1":
@@ -105,12 +125,11 @@ def activate(repo_root: Path | None = None) -> bool:
         if name == _PKG or name.startswith(_PKG + "."):
             del sys.modules[name]
 
-    finder = _SourceTreeFinder(
-        pybind,
-        {
-            f"{_PKG}.real_fft": triton / "real_fft",
-        },
-    )
+    mapping = {
+        f"{_PKG}.real_fft": triton / "real_fft",
+    }
+    mapping.update(_composite_mapping(root / "composite-torch"))
+    finder = _SourceTreeFinder(pybind, mapping)
     setattr(finder, _FINDER_ATTR, True)
     sys.meta_path.insert(0, finder)
     return True

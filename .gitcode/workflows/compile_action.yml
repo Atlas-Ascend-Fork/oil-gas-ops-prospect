@@ -60,7 +60,7 @@ jobs:
             source /opt/rh/devtoolset-7/enable
             source /home/jenkins/Ascend/cann/bin/setenv.bash
             # AscendC 算子包：msopgen 生成工程 -> opbuild/bisheng 编译 -> OPP .run
-            BuildAccelerate bash ascendc/build.sh --pkg
+            BuildAccelerate bash ascendc/build.sh
           AC_SERVER_IP: ${{ vars.AC_SERVER_IP }}
       -
         name: collect_package
@@ -69,6 +69,7 @@ jobs:
           cd ${{ steps.process_checkout.outputs.path }}
           mkdir -p build_out
           find output -name '*_opp_*.run' -exec cp {} build_out/ \;
+          find output -name '*.whl' -exec cp {} build_out/ \;
           cd build_out
           for f in *.run; do
             [ -f "$f" ] || continue
@@ -93,7 +94,7 @@ jobs:
           access-key: ${{ secrets.AK }}
           secret-key: ${{ secrets.SK }}
           artifact-path: |
-            ${{ steps.process_checkout.outputs.path }}/build_out/*.run
+            ${{ steps.process_checkout.outputs.path }}/build_out/*.*
           object-prefix: ${{ env.obs_path }}/
     if: "${{ default() }}"
     runs-on:

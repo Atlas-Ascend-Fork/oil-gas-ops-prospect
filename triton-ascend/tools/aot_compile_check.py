@@ -43,7 +43,9 @@
     python3 triton-ascend/tools/aot_compile_check.py --filter irfft
     python3 triton-ascend/tools/aot_compile_check.py --dump-dir /tmp/ir
 
-退出码 0 表示全部分支编译通过。
+退出码 0 表示全部分支编译通过；triton-ascend 后端缺失时先打印
+``[FAIL]`` 定位与安装说明，再原样抛出（退出码非 0，安装方式见
+``docs/zh/context/quick_install.md``）。
 """
 
 from __future__ import annotations
@@ -99,6 +101,33 @@ def stub_soc_runtime_queries() -> None:
     driver.NPUUtils.get_arch = lambda self: ARCH  # type: ignore[method-assign]
     driver.NPUUtils.get_aicore_num = lambda self: 20  # type: ignore[method-assign]
     driver.NPUUtils.get_aivector_core_num = lambda self: 40  # type: ignore[method-assign]
+
+
+def ensure_triton_ascend_available() -> None:
+    """triton / 昇腾后端可用性预检，缺失时打印易读说明后原样抛出。
+
+    PyPI 社区版 triton 没有 ``triton.backends.ascend`` 后端，不能替代
+    Triton-Ascend（见 docs/zh/context/quick_install.md）。此时本脚本无法
+    执行编译链路；先打印定位与修复说明，再重新抛出原始异常，保持
+    与直接崩溃一致的失败语义（退出码非 0）。
+    """
+    try:
+        import triton  # noqa: F401
+    except ModuleNotFoundError:
+        print("[FAIL] AOT 编译检查无法执行：未安装 triton。")
+        print("       Triton 算子的编译期回归需在装有 Triton-Ascend 的环境执行，")
+        print("       安装方式见 docs/zh/context/quick_install.md。")
+        raise
+    try:
+        import triton.backends.ascend  # noqa: F401
+    except ModuleNotFoundError as exc:
+        print(f"[FAIL] AOT 编译检查无法执行：当前 triton {getattr(triton, '__version__', '?')}"
+              f" 无昇腾后端（缺失模块: {exc.name}）。")
+        print("       PyPI 社区版 triton 不能替代 Triton-Ascend。安装方式：")
+        print("       pip uninstall -y triton triton-ascend && \\")
+        print("       pip install triton-ascend==3.2.1 "
+              "--extra-index-url=https://mirrors.huaweicloud.com/ascend/repos/pypi")
+        raise
 
 
 def build_src(ast_source_cls, kernel, ptr_types: list[str], meta: dict):
@@ -237,6 +266,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+
+    ensure_triton_ascend_available()
 
     selected = [c for c in cases() if not args.filter or args.filter in c[0]]
     if args.list:

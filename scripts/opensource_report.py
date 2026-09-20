@@ -182,6 +182,7 @@ class Statuses:
 
     ophost: str = NA
     triton: str = NA
+    composite: str = NA
     aot: str = NA
     st_cm: str = NA
     st_cmg: str = NA
@@ -193,8 +194,10 @@ class Statuses:
     ex_bwd: str = NA
     prec_cm: str = NA
     prec_fused: str = NA
+    prec_conv3d: str = NA
     perf_cm: str = NA
     perf_fused: str = NA
+    perf_conv3d: str = NA
     fft_v: str = NA
     fft_p: str = NA
     docs: str = NA
@@ -218,6 +221,8 @@ class PerfSummary:
     bwd_bf16: list[PerfRow] = field(default_factory=list)
     fft_rows: list[PerfRow] = field(default_factory=list)
     fft_reg: list[PerfRow] = field(default_factory=list)
+    conv3d_fwd: list[PerfRow] = field(default_factory=list)
+    conv3d_fwdbwd: list[PerfRow] = field(default_factory=list)
     gmean_txt: str = "未解析"
     fft_metric: str = ""
 
@@ -226,6 +231,7 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
     return Statuses(
         ophost=job_status(jobs, "ophost_ut"),
         triton=job_status(jobs, "triton_cpu"),
+        composite=job_status(jobs, "composite_cpu"),
         aot=job_status(jobs, "triton_aot"),
         st_cm=job_status(jobs, "aclnnComplexMul"),
         st_cmg=job_status(jobs, "aclnnComplexMulGrad"),
@@ -237,8 +243,10 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
         ex_bwd=job_status(jobs, "example_fused_softmax_grad"),
         prec_cm=job_status(jobs, "complex_mul_precision"),
         prec_fused=job_status(jobs, "fused_bias_softmax_precision"),
+        prec_conv3d=job_status(jobs, "conv3d_custom_precision"),
         perf_cm=job_status(jobs, "complex_mul_perf"),
         perf_fused=job_status(jobs, "fused_bias_softmax_perf"),
+        perf_conv3d=job_status(jobs, "conv3d_custom_perf"),
         fft_v=combine(job_status(jobs, "fft_npu_verify"), job_status(jobs, "fft_npu_verify_5d")),
         fft_p=job_status(jobs, "fft_npu_perf"),
         docs=job_status(jobs, "docs_gate"),
@@ -262,6 +270,7 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
     cm_rows = parse_perf_rows(job_log(jobs, "complex_mul_perf"))
     fused_rows = parse_perf_rows(job_log(jobs, "fused_bias_softmax_perf"))
     fft_rows = parse_perf_rows(job_log(jobs, "fft_npu_perf"))
+    conv3d_rows = parse_perf_rows(job_log(jobs, "conv3d_custom_perf"))
     fused_fwd = [r for r in fused_rows if r[0].startswith("fwd ")]
     fused_bwd = [r for r in fused_rows if r[0].startswith("bwd ")]
     gmean = geo_mean(speedup_vals(fft_rows))
@@ -277,6 +286,8 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
         bwd_bf16=[r for r in fused_bwd if "bf16" in r[0]],
         fft_rows=fft_rows,
         fft_reg=[r for r in fft_rows if not r[0].endswith(("5d W", "5d H", "5d D")) and "5d " not in r[0]],
+        conv3d_fwd=[r for r in conv3d_rows if r[0].endswith(" fwd")],
+        conv3d_fwdbwd=[r for r in conv3d_rows if r[0].endswith(" fwdbwd")],
         gmean_txt=f"{gmean:.2f}x" if gmean else "未解析",
         fft_metric=fft_metric_text(fft_rows),
     )
@@ -297,6 +308,8 @@ def build_features(st: Statuses) -> list[tuple[str, str, str, str, str, str, str
          combine(st.triton, st.aot, st.fft_v), st.triton, st.fft_p, st.triton, st.install),
         ("real_irfft", combine(st.triton, st.aot, st.fft_v, st.fft_p),
          combine(st.triton, st.aot, st.fft_v), st.triton, st.fft_p, st.triton, st.install),
+        ("Conv3d / conv3d", combine(st.composite, st.prec_conv3d, st.perf_conv3d, st.api, st.install),
+         st.composite, st.prec_conv3d, st.perf_conv3d, st.composite, st.install),
     ]
 
 
@@ -328,6 +341,12 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
          "多 shape/dim 反向与 CPU `torch.fft` 对拍"),
         ("real_rfft / real_irfft 大形态", st.fft_v,
          "三维潜变量形态与 `128^3` 往返/反向；默认示例可运行"),
+        ("Conv3d / conv3d NPU 精度与性能", combine(st.prec_conv3d, st.perf_conv3d),
+         "实际训练尺寸 11 模式真机对拍：自定义前/反向 vs 原生（float32 L2 相对误差阈值 `1e-5`；"
+         "大 kernel depthwise 原生反向崩溃模式验证自定义侧可用）；fwd / fwd+bwd 计时"),
+        ("Conv3d / conv3d 前反向精度", st.composite,
+         "主要取值场景组合（含 stride/dilation/非立方 kernel/负 padding）、11 种实际训练调用模式；"
+         "与 `nn.Conv3d` / `F.conv3d` 原生前反向对拍（float64 阈值 `1e-12`）"),
         ("算子文档", st.docs,
          "交付文档齐全（README、LICENSE、SECURITY、文档导航及入门/使用/开发文档共 "
          f"{len(load_doc_checks())} 份）；核对应子清单、公开接口与 `--pkg` / `--install` / `-u` 入口。"
@@ -381,6 +400,8 @@ def section_overview(cmd: str, ok: bool, rate: str) -> list[str]:
         "`fp32` / `fp16` / `bf16` |",
         "| 5 | real_rfft | 实数正向 FFT：`x → (xr, xi)`，`norm=\"ortho\"`，频率轴长度为 `n//2+1` |",
         "| 6 | real_irfft | 由半谱实部、虚部重建实数：`(xr, xi), n → y`，`norm=\"ortho\"` |",
+        "| 7 | Conv3d / conv3d | `torch.nn.Conv3d` / `F.conv3d` 的等价替换（纯 PyTorch 组合实现）："
+        "NPU 自定义前/反向，支持任意 stride / dilation / groups / padding_mode，state_dict 互通 |",
         "",
         "`attention_core(q, k, v, bias1, bias2)` 为 FusedBiasSoftmax 与 FusedSoftmaxGrad 按 openfold "
         "注意力语义的组合封装，随上述融合算子一并验证。",
@@ -443,7 +464,7 @@ def section_conclusion(conclusion: str, total: int, ok: bool, rate: str) -> list
         "| 评估维度 | 评估结果 |",
         "| --- | --- |",
         f"| 测试用例总数 | {total} 组（按已交付算子与关键测试活动归并，不含参数化子项展开） |",
-        f"| 测试执行通过率 | {'100%（18/18）' if ok else rate} |",
+        f"| 测试执行通过率 | {'100%（' + rate + '）' if ok else rate} |",
         f"| 测试结论 | {'通过' if ok else '未通过'} |",
         "",
     ]
@@ -553,6 +574,10 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_fused)} | 无 |",
         "| 算子微基准 | 不涉及 | real_rfft / real_irfft | 同设备 `torch.fft.rfft` / `irfft`，"
         f"`norm=\"ortho\"` | {perf.fft_metric} | Atlas A2 + CANN 9.0.0 | {cell(st.fft_p)} | 无 |",
+        "| 算子微基准 | 不涉及 | Conv3d / conv3d | 同设备 `nn.Conv3d` / `F.conv3d`（实际训练尺寸 11 模式） | "
+        f"前向 {speedup_span(perf.conv3d_fwd)}，fwd+bwd {speedup_span(perf.conv3d_fwdbwd)}（大 kernel depthwise "
+        "原生反向崩溃模式仅自定义侧可跑） | "
+        f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_conv3d)} | 无 |",
         "",
         "代表形态实测如下（精度见本次 `-u` 精度 job）。",
         "",
@@ -561,7 +586,9 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
 
 
 def section_perf_tables(perf: PerfSummary) -> list[str]:
-    lines = perf_md_table("ComplexMul / ComplexMulGrad（相对同设备逐元素公式）", perf.cm_rows)
+    lines = perf_md_table("Conv3d / conv3d 前向（相对同设备 nn.Conv3d，实际训练尺寸）", perf.conv3d_fwd)
+    lines += perf_md_table("Conv3d / conv3d fwd+bwd（相对同设备 nn.Conv3d autograd）", perf.conv3d_fwdbwd)
+    lines += perf_md_table("ComplexMul / ComplexMulGrad（相对同设备逐元素公式）", perf.cm_rows)
     lines += perf_md_table("FusedBiasSoftmax（相对同设备 fp32 `softmax`）", perf.fused_fwd)
     lines += perf_md_table("FusedSoftmaxGrad（相对同设备 `matmul` + softmax JVP）", perf.fused_bwd)
     lines += [
@@ -616,7 +643,7 @@ def section_compat(st: Statuses, env: dict[str, str], has_npu: bool) -> list[str
 
 
 def section_coverage(st: Statuses, cases: list[tuple[str, str, str]]) -> list[str]:
-    feature_cases = cases[:16]
+    feature_cases = cases[:-2]
     feature_pass = sum(1 for c in feature_cases if c[1] == PASS)
     perf_all = combine(st.perf_cm, st.perf_fused, st.fft_p)
     rel_all = combine(st.ophost, st.prec_fused, st.api, st.prec_fused)
@@ -631,8 +658,8 @@ def section_coverage(st: Statuses, cases: list[tuple[str, str, str]]) -> list[st
         "",
         "| 测试活动 | 测试结论 | 用例数 | 用例覆盖率 | 用例通过率 |",
         "| --- | --- | --- | --- | --- |",
-        f"| 特性测试 | {'pass' if feature_pass == len(feature_cases) else 'fail'} | 16 | 100% | "
-        f"{feature_pass}/16 |",
+        f"| 特性测试 | {'pass' if feature_pass == len(feature_cases) else 'fail'} | {len(feature_cases)} | 100% | "
+        f"{feature_pass}/{len(feature_cases)} |",
         f"| 性能测试 | {'pass' if perf_all == PASS else 'fail'} | 4 | 100% | "
         f"{'4/4' if perf_all == PASS else cell(perf_all)} |",
         f"| 可靠性测试 | {'pass' if rel_all == PASS else 'fail'} | 4 | 100% | "
@@ -643,7 +670,7 @@ def section_coverage(st: Statuses, cases: list[tuple[str, str, str]]) -> list[st
         f"| 安全测试 | {'pass' if sec_ok else 'fail'} | 2 | 100% | "
         f"{'2/2' if sec_ok else '见 5.1'} |",
         "",
-        "说明：特性测试第 1～16 组覆盖文档、编译安装与全部已交付算子；性能测试、可靠性、兼容性、安全与第 4、5 节表格对应。"
+        f"说明：特性测试第 1～{len(feature_cases)} 组覆盖文档、编译安装与全部已交付算子；性能测试、可靠性、兼容性、安全与第 4、5 节表格对应。"
         "首发版本无继承特性。下游模型仓交叉验证未配置，不纳入本次范围，不计入失败。",
         "",
     ]

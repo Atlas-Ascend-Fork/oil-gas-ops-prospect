@@ -94,9 +94,11 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "FusedSoftmaxGrad",
             "real_rfft",
             "real_irfft",
+            "Conv3d",
+            "conv3d",
             "数学定义",
         ),
-        "6 个已交付算子的数学定义、输入输出与约束",
+        "7 个已交付算子的数学定义、输入输出与约束",
     ),
     (
         "docs/zh/api_list.md",
@@ -108,6 +110,8 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "attention_core",
             "real_rfft",
             "real_irfft",
+            "Conv3d",
+            "conv3d",
             "aclnnComplexMul",
         ),
         "Python 公开接口与 aclnn 两段式入口、环境变量",
@@ -225,7 +229,19 @@ def check_api() -> int:
         fused_bias_softmax,
         fused_softmax_grad,
     )
+    from oil_gas_ops_prospect.conv3d_custom import Conv3d
+    from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
     from oil_gas_ops_prospect.real_fft import real_irfft, real_rfft
+
+    xc = torch.randn(1, 3, 6, 6, 6, requires_grad=True)
+    wc = torch.randn(4, 3, 3, 3, 3, requires_grad=True)
+    oc = conv3d(xc, wc, None, 1, 1, 1, 1)
+    gc = torch.autograd.grad(oc.sum(), (xc, wc))
+    if oc.shape != (1, 4, 6, 6, 6) or gc[0].shape != xc.shape or gc[1].shape != wc.shape:
+        return _fail("conv3d fwd/bwd shape")
+    mod = Conv3d(3, 4, 3, padding=1)
+    if mod(torch.randn(1, 3, 5, 5, 5)).shape != (1, 4, 5, 5, 5):
+        return _fail("Conv3d module shape")
 
     ur = torch.randn(4, 8)
     ui, vr, vi = torch.randn_like(ur), torch.randn_like(ur), torch.randn_like(ur)
@@ -257,7 +273,7 @@ def check_api() -> int:
         return _fail("real_irfft shape")
     print(
         "PASS public API CPU fallback: complex_mul fused_bias_softmax "
-        "fused_softmax_grad attention_core real_rfft real_irfft"
+        "fused_softmax_grad attention_core real_rfft real_irfft Conv3d conv3d"
     )
     return 0
 

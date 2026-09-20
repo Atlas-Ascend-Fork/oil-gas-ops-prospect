@@ -64,6 +64,8 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     assert importlib.metadata.version("oil-gas-ops-prospect")
 
     from oil_gas_ops_prospect.complex_mul import complex_mul, torch_complex_mul, torch_complex_mul_grad
+    from oil_gas_ops_prospect.conv3d_custom import Conv3d
+    from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
     from oil_gas_ops_prospect.fused_bias_softmax import (
         attention_core,
         fused_bias_softmax,
@@ -76,6 +78,8 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     assert callable(complex_mul)
     assert callable(torch_complex_mul)
     assert callable(torch_complex_mul_grad)
+    assert callable(Conv3d)
+    assert callable(conv3d)
     assert callable(fused_bias_softmax)
     assert callable(fused_softmax_grad)
     assert callable(attention_core)
@@ -200,6 +204,38 @@ def test_real_fft_whl_cpu_fallback_matches_torch_fft():
 
     y = real_irfft(xr, xi, n=x.shape[1], dim=1, norm="ortho")
     assert torch.allclose(y, x, rtol=1e-5, atol=1e-5)
+
+
+def test_conv3d_custom_whl_cpu_forward_backward():
+    """CPU 上验证 Conv3d / conv3d 前反向接线与数学一致性。"""
+    import torch.nn.functional as F
+
+    from oil_gas_ops_prospect.conv3d_custom import Conv3d
+    from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
+
+    torch.manual_seed(14)
+    dtype = torch.float64
+    x = torch.randn(1, 3, 6, 6, 6, dtype=dtype, requires_grad=True)
+    w = torch.randn(4, 3, 3, 3, 3, dtype=dtype, requires_grad=True)
+    out = conv3d(x, w, None, 1, 1, 1, 1)
+    ref_leaves = [t.detach().clone().requires_grad_(True) for t in (x, w)]
+    ref = F.conv3d(ref_leaves[0], ref_leaves[1], None, 1, 1, 1, 1)
+    assert torch.allclose(out, ref, rtol=1e-6, atol=1e-6)
+
+    gout = torch.randn_like(out)
+    gx, gw = torch.autograd.grad(out, (x, w), gout)
+    rgx, rgw = torch.autograd.grad(ref, ref_leaves, gout)
+    assert torch.allclose(gx, rgx, rtol=1e-6, atol=1e-6)
+    assert torch.allclose(gw, rgw, rtol=1e-6, atol=1e-6)
+
+    m = Conv3d(3, 4, 3, padding=1).double()
+    m.use_custom = True  # CPU 上强制走自定义前/反向路径
+    xm = torch.randn(1, 3, 5, 5, 5, dtype=dtype, requires_grad=True)
+    y = m(xm)
+    y.sum().backward()
+    assert y.shape == (1, 4, 5, 5, 5)
+    assert xm.grad is not None and xm.grad.shape == xm.shape
+    assert m.weight.grad is not None and m.weight.grad.shape == m.weight.shape
 
 
 def test_complex_mul_npu_extension_import_when_required():
