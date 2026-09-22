@@ -57,7 +57,8 @@ jobs:
             export task_name=${{ inputs.task_name }}
             export GIT_TARGET_BRANCH=${{ env.TARGET_BRANCH }}
             export OS_TYPE=${{ inputs.arch == 'arm64' && 'aarch64' || 'x86_64' }}
-            source /opt/rh/devtoolset-7/enable
+            # 注意: 不要 source devtoolset-7（GCC 7）——whl 的 pybind 扩展对接
+            # torch 头文件要求 GCC>=9，镜像默认 gcc（>=15）满足；source 会遮蔽。
             source /home/jenkins/Ascend/cann/bin/setenv.bash
             # AscendC 算子包：msopgen 生成工程 -> opbuild/bisheng 编译 -> OPP .run
             BuildAccelerate bash ascendc/build.sh
