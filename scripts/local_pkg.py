@@ -107,7 +107,23 @@ def _composite_mapping(composite_root: Path) -> dict[str, Path]:
 
 
 def activate(repo_root: Path | None = None) -> bool:
-    """把源码树挂到 ``oil_gas_ops_prospect`` 导入名下。已激活则直接返回 True。"""
+    """把源码树挂到 ``oil_gas_ops_prospect`` 导入名下。已激活则直接返回 True。
+
+    同时处理 torch 的设备后端自动加载（``TORCH_DEVICE_BACKEND_AUTOLOAD``）：
+    LLT 等无卡镜像可能装有 torch_npu 但缺 CANN 运行环境，torch 2.7+ 默认开启的
+    自动加载会在 ``import torch`` / 访问 ``torch.npu`` 时抛
+    ``RuntimeError: Failed to load the backend extension: torch_npu``。因此先
+    关闭自动加载（显式置 ``1`` 可覆盖，setdefault 语义），再**显式尽早**导入
+    torch_npu：NPU 环境下 autograd 引擎按首次执行时已注册的设备初始化 ready
+    queues，torch_npu 晚于首次 autograd 注册会触发 ``device_ready_queues_``
+    内部断言；导入失败（无卡 / 缺 CANN）则静默跳过，CPU 用例照常运行。
+    whl 验证路径同样受益。
+    """
+    os.environ.setdefault("TORCH_DEVICE_BACKEND_AUTOLOAD", "0")
+    try:
+        import torch_npu  # noqa: F401  尽早注册 NPU 设备（见上）
+    except Exception:
+        pass
     if os.environ.get("OIL_GAS_OPS_WHL_TEST") == "1":
         return False
 

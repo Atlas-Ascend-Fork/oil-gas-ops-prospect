@@ -47,8 +47,12 @@ output/
 在本目录执行：
 
 ```bash
-# 编译并打包 OPP .run（默认 SOC=Ascend910B1，默认全部算子）
+# 编译 OPP .run 与 Python whl，不安装（无参数默认）
 # → <repo>/output/Ascend910B1/oil_gas_ops_prospect_opp_<os>_<arch>.run
+#   <repo>/output/wheels/oil_gas_ops_prospect-*.whl
+bash build.sh
+
+# 只编译并打包 OPP .run（默认 SOC=Ascend910B1，默认全部算子）
 bash build.sh --pkg
 
 # 运行 ophost 侧单元测试（googletest）

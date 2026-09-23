@@ -25,6 +25,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+OUTPUT_DIR="${REPO_ROOT}/output"
 BUILD_PY="${SCRIPT_DIR}/build.py"
 DEFAULT_SOC="Ascend910B1"
 
@@ -36,7 +38,8 @@ FORWARD_ARGS=()
 usage() {
   cat <<'EOF'
 Usage:
-  bash build.sh --pkg [options]              Build and package OPP .run
+  bash build.sh                              Build OPP .run and Python whl, no install (default)
+  bash build.sh --pkg [options]              Build and package OPP .run only
   bash build.sh -u --ophost [options]        Build and run ophost unit tests
   bash build.sh clean                        Clean ascendc/_work/ and <repo>/output/
   bash build.sh list-ops                     List operators in manifest
@@ -97,7 +100,20 @@ run_pkg() {
     args+=("${FORWARD_ARGS[@]}")
   fi
   echo "[build.sh] packaging via: python3 build.py ${args[*]}"
-  exec python3 "${BUILD_PY}" "${args[@]}"
+  python3 "${BUILD_PY}" "${args[@]}"
+}
+
+build_wheel() {
+  # 与根目录 build.sh 的 build_python_wheel 一致：whl 落 <repo>/output/wheels/
+  local repo_root wheel_dir
+  repo_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  wheel_dir="${repo_root}/output/wheels"
+  echo "[build.sh] building wheel via: python3 setup.py bdist_wheel --dist-dir ${wheel_dir}"
+  (
+    cd "${repo_root}"
+    python3 setup.py bdist_wheel --dist-dir "${wheel_dir}"
+    rm -rf build ./*.egg-info
+  )
 }
 
 run_ut() {
@@ -127,12 +143,9 @@ case "${MODE}" in
     run_ut
     ;;
   "")
-    # Legacy: bash build.sh -v Ascend910B1 --ops ...
-    if [[ "${HAS_SOC}" -eq 1 || ${#FORWARD_ARGS[@]} -gt 0 ]]; then
-      run_pkg
-    fi
-    usage >&2
-    exit 2
+    # 无参数 = 编译 .run 与 whl，不安装
+    run_pkg
+    build_wheel
     ;;
   *)
     echo "未知模式: ${MODE}" >&2

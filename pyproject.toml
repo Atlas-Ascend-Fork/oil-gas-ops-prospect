@@ -1,14 +1,16 @@
 [build-system]
-# setuptools>=77 for the PEP 639 SPDX ``license`` / ``license-files`` keys.
-requires = ["setuptools>=77", "wheel"]
+# ``project.license`` 采用 PEP 621 表格形式（非 PEP 639 SPDX 字符串）：
+# CI 编译镜像为 python 3.10 + 旧版 setuptools（<77），SPDX 字符串形式会
+# 校验失败；表格形式新旧 setuptools 均可构建（新版仅弃用告警）。
+# LICENSE 文件由 setuptools 自动识别并随 whl 分发，无需 license-files。
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "oil-gas-ops-prospect"
 version = "0.1.0"
 description = "AscendC and Triton-Ascend custom operators for oil & gas exploration"
-license = "Apache-2.0"
-license-files = ["LICENSE"]
+license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 dependencies = [
     "torch",

@@ -24,8 +24,12 @@
   - 仓库根 `setup.py`：把扩展打进 `oil_gas_ops_prospect` whl；
   - `ascendc/pybind_setup.py`：就地编译，供 NPU 测试直接 import。
 
-前置条件：OPP 包已安装到 CANN（`opp/vendors/customize/op_api/lib/libcust_opapi.so`
-存在），因为扩展直接链接 msopgen 生成的 aclnn 接口。
+aclnn 头与 ``libcust_opapi.so`` 的取用顺序（见 ``_vendor_opapi``）：
+
+1. msopgen 构建工作区产物（``ascendc/_work/CustomOp_*/build_out/``）——
+   构建流程内无需安装 OPP 即可编扩展，且与刚构建的 `.run` 严格同源；
+2. 已安装的 CANN vendor 目录（``opp/vendors/customize/op_api/``，两种
+   历史布局）—— 适合 `pybind_setup.py` 就地编译等仅有安装件的环境。
 """
 # pyright: reportMissingImports=false
 
@@ -56,16 +60,27 @@ def _torch_npu_include_root() -> Path:
         return Path(torch.__file__).parent / ".." / "torch_npu"
 
 
-def _vendor_opapi() -> Path:
-    """自定义算子包的 vendor 目录（不同 CANN 版本布局略有差异）。"""
+def _vendor_opapi() -> tuple[Path, Path]:
+    """返回 (aclnn 头目录, libcust_opapi 库目录)。
+
+    优先 msopgen 构建工作区（``_work`` 会随 ``build.sh clean`` 清理，
+    每次打包重新生成，与刚构建的 `.run` 同源）；回退已安装 vendor 目录
+    （不同 CANN 版本布局略有差异）；均不存在时返回安装布局的默认路径，
+    让编译以缺头文件的明确报错终止。
+    """
+    for custom_op in sorted((ASCENDC_DIR / "_work").glob("CustomOp_*")):
+        build_out = custom_op / "build_out"
+        headers, libdir = build_out / "autogen", build_out / "op_host"
+        if (libdir / "libcust_opapi.so").is_file() and any(headers.glob("aclnn_*.h")):
+            return headers, libdir
     candidates = [
         Path(ASCEND_DIR) / "opp" / "vendors" / "customize" / "op_api",
         Path(ASCEND_DIR) / "vendors" / "customize" / "op_api",
     ]
-    return next(
-        (p for p in candidates if (p / "lib" / "libcust_opapi.so").is_file()),
-        candidates[0],
-    )
+    for p in candidates:
+        if (p / "lib" / "libcust_opapi.so").is_file():
+            return p / "include", p / "lib"
+    return candidates[0] / "include", candidates[0] / "lib"
 
 
 def discover() -> list[Path]:
@@ -90,7 +105,7 @@ def build_extensions(relative_to: Path | None = None) -> list[CppExtension]:
 
     base = Path(relative_to).resolve() if relative_to is not None else PYBIND_DIR
     torch_npu_root = _torch_npu_include_root()
-    vendor_opapi = _vendor_opapi()
+    opapi_include, opapi_lib = _vendor_opapi()
 
     include_dirs = [
         str(CSRC_DIR / "_common"),
@@ -98,11 +113,11 @@ def build_extensions(relative_to: Path | None = None) -> list[CppExtension]:
         str(torch_npu_root / "include" / "third_party" / "acl" / "inc"),
         str(torch_npu_root / "include" / "third_party" / "op-plugin"),
         f"{ASCEND_DIR}/include",
-        str(vendor_opapi / "include"),
+        str(opapi_include),
     ]
     library_dirs = [
         f"{ASCEND_DIR}/lib64",
-        str(vendor_opapi / "lib"),
+        str(opapi_lib),
         str(torch_npu_root / "lib"),
     ]
     libraries = ["cust_opapi", "ascendcl", "nnopbase", "opapi", "torch_npu"]

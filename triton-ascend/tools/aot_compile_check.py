@@ -65,6 +65,8 @@ for _p in (TRITON_ROOT / "real_fft",):
 DEFAULT_ARCH = "Ascend910B1"
 os.environ.setdefault("TRITON_ASCEND_ARCH", DEFAULT_ARCH)
 os.environ.setdefault("TRITON_CACHE_DIR", "/tmp/triton_cache_aot")
+# 无卡镜像可能装有 torch_npu 但缺 CANN 运行环境，torch 后端自动加载会抛错
+os.environ.setdefault("TORCH_DEVICE_BACKEND_AUTOLOAD", "0")
 ARCH = os.environ["TRITON_ASCEND_ARCH"]
 
 
