@@ -15,7 +15,7 @@
 # -----------------------------------------------------------------------------------------------------------
 
 CURRENT_DIR=$(
-    cd $(dirname ${BASH_SOURCE:-$0})
+    cd -- "$(dirname -- "${BASH_SOURCE:-$0}")" &&
     pwd
 )
 ACLNN_EXE=test_aclnn_fused_bias_softmax
