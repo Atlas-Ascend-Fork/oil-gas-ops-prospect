@@ -1,6 +1,6 @@
 # 评测
 
-在 **已挂载本仓库** 的 NPU 容器里执行。容器入口由环境决定，不要把机器地址写进提交物。
+先从本容器中**实际挂载的仓库根目录**启动 shell，再执行以下命令；不要假定固定仓库路径。容器入口由环境决定，不要把机器地址写进提交物。
 
 ```bash
 source /usr/local/Ascend/cann-9.0.0/set_env.sh
@@ -8,7 +8,6 @@ export LD_LIBRARY_PATH="/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/
 export ASCEND_HOME_PATH="${ASCEND_HOME_PATH:-/usr/local/Ascend/cann-9.0.0}"
 export ASCEND_RT_VISIBLE_DEVICES=0
 export ACLNN_CACHE_LIMIT=0
-cd /root/work/workspace/mcg/oil-gas-ops-prospect
 ```
 
 `docker exec` 用 `/bin/bash -c`，不要 `-lc`。
