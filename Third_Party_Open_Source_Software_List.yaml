@@ -1,21 +1,20 @@
-oil-gas-ops-prospect:
-  googletest:
-    url: https://gitcode.com/cann-src-third-party/googletest
-    version: v1.14.0
-    license: BSD 3-Clause License
-    type: test
-  pytorch:
-    url: https://github.com/pytorch/pytorch
-    version: ">=2.1"
-    license: BSD 3-Clause License
-    type: run
-  torch_npu:
-    url: https://gitee.com/ascend/pytorch
-    version: matched with CANN
-    license: BSD 3-Clause License
-    type: run
-  triton-ascend:
-    url: https://gitcode.com/Ascend/triton-ascend
-    version: matched with CANN
-    license: MIT License
-    type: run
+googletest:
+  url: https://gitcode.com/cann-src-third-party/googletest
+  version: v1.14.0
+  license: BSD 3-Clause License
+  type: test
+pytorch:
+  url: https://github.com/pytorch/pytorch
+  version: ">=2.1"
+  license: BSD 3-Clause License
+  type: run
+torch_npu:
+  url: https://gitee.com/ascend/pytorch
+  version: matched with CANN
+  license: BSD 3-Clause License
+  type: run
+triton-ascend:
+  url: https://gitcode.com/cann/triton-ascend
+  version: matched with CANN
+  license: MIT License
+  type: run
