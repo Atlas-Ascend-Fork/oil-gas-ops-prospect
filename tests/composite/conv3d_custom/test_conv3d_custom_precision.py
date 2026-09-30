@@ -59,6 +59,7 @@ from _common import (  # noqa: E402
     tensor_diff,
 )
 from oil_gas_ops_prospect.conv3d_custom import Conv3d  # noqa: E402
+from oil_gas_ops_prospect.conv3d_custom.functional import conv3d  # noqa: E402
 
 DTYPES = [torch.float64, torch.float32]
 DTYPE_IDS = ["f64", "f32"]
@@ -262,3 +263,34 @@ def test_cpu_fallback_matches_native_for_stride4(dtype):
 
     expected = F.conv3d(x, weight, None, 4, 0, 1, 1)
     assert tensor_diff(m(x), expected, metric) <= tol
+
+
+@pytest.mark.parametrize("padding", ["valid", "same"])
+@pytest.mark.parametrize("padding_mode", ["zeros", "reflect"])
+def test_string_padding_matches_native(padding, padding_mode):
+    """PyTorch's valid/same padding strings work through the custom module path."""
+    gen = torch.Generator().manual_seed(SEED)
+    x_ref = randn((1, 2, 5, 6, 7), gen, torch.float64).requires_grad_(True)
+    x_custom = x_ref.detach().clone().requires_grad_(True)
+    ref = nn.Conv3d(
+        2, 3, (2, 3, 2), padding=padding, padding_mode=padding_mode, dtype=torch.float64
+    )
+    custom = Conv3d(
+        2, 3, (2, 3, 2), padding=padding, padding_mode=padding_mode
+    ).to(torch.float64)
+    custom.load_state_dict(ref.state_dict())
+    custom.use_custom = True
+
+    out_ref = ref(x_ref)
+    out_custom = custom(x_custom)
+    assert torch.allclose(out_custom, out_ref, rtol=1e-12, atol=1e-12)
+
+    out_functional = conv3d(x_ref.detach(), custom.weight, custom.bias, padding=padding)
+    ref_functional = F.conv3d(x_ref.detach(), custom.weight, custom.bias, padding=padding)
+    assert torch.allclose(out_functional, ref_functional, rtol=1e-12, atol=1e-12)
+
+    grad = randn(out_ref.shape, torch.Generator().manual_seed(SEED + 1), torch.float64)
+    grads_ref = torch.autograd.grad(out_ref, (x_ref, ref.weight, ref.bias), grad)
+    grads_custom = torch.autograd.grad(out_custom, (x_custom, custom.weight, custom.bias), grad)
+    for actual, expected in zip(grads_custom, grads_ref):
+        assert torch.allclose(actual, expected, rtol=1e-12, atol=1e-12)

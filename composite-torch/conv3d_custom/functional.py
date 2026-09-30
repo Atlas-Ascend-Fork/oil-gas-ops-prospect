@@ -179,6 +179,33 @@ class _Conv3dFunction(Function):
         return grad_output_dilated[tuple(slices)]
 
 
+def _padding_for_string(padding, kernel_size, stride, dilation):
+    """Return F.pad's six-value order for the string padding accepted by conv3d."""
+    if padding == "valid":
+        return (0, 0, 0, 0, 0, 0)
+    if padding != "same":
+        raise ValueError(f"expected padding to be 'valid' or 'same', got {padding!r}")
+
+    def triple(value):
+        if isinstance(value, int):
+            return (value, value, value)
+        result = tuple(value)
+        if len(result) != 3:
+            raise ValueError(f"expected a 3-tuple, got {value!r}")
+        return result
+
+    if any(s != 1 for s in triple(stride)):
+        raise ValueError("padding='same' is not supported for strided convolutions")
+    kernel = triple(kernel_size)
+    dilation = triple(dilation)
+    totals = tuple(d * (k - 1) for k, d in zip(kernel, dilation))
+    before = tuple(total // 2 for total in totals)
+    after = tuple(total - left for total, left in zip(totals, before))
+    d0, h0, w0 = before
+    d1, h1, w1 = after
+    return (w0, w1, h0, h1, d0, d1)
+
+
 def conv3d(x, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
     """torch.nn.functional.conv3d 的等价替换（函数式入口，仅引用的包不同）。
 
@@ -186,4 +213,9 @@ def conv3d(x, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
     stride / dilation 与双阶反向），NPU 上可绕开原生 backward 对大 kernel
     depthwise 的 L1 限制。nn.Module 形态与 NPU 回退逻辑见 Conv3d。
     """
+    if isinstance(padding, str):
+        explicit_padding = _padding_for_string(padding, weight.shape[2:], stride, dilation)
+        if any(explicit_padding):
+            x = F.pad(x, explicit_padding)
+        padding = 0
     return _Conv3dFunction.apply(x, weight, bias, stride, padding, dilation, groups)

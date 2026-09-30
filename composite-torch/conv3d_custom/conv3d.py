@@ -33,7 +33,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .functional import conv3d
+from .functional import _padding_for_string, conv3d
 
 
 def _as_triple(value):
@@ -116,7 +116,12 @@ class Conv3d(nn.Module):
         # 非 zeros 模式先显式补边，卷积本身以 padding=0 执行；
         # 补边在计算图内，梯度经 F.pad 的 autograd 正确回传
         if self.padding_mode != "zeros":
-            x = F.pad(x, _fpad_order(self.padding), mode=self.padding_mode)
+            if isinstance(self.padding, str):
+                pad = _padding_for_string(self.padding, self.kernel_size, self.stride, self.dilation)
+            else:
+                pad = _fpad_order(self.padding)
+            if any(pad):
+                x = F.pad(x, pad, mode=self.padding_mode)
             conv_padding = 0
         else:
             conv_padding = self.padding
