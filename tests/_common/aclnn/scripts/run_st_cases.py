@@ -37,6 +37,9 @@ def main() -> int:
     cases_path = current / "cases.json"
     cfg = json.loads(cases_path.read_text())
     cases = cfg["cases"]
+    if not cases:
+        print("[ERROR]: cases must not be empty", file=sys.stderr)
+        return 1
     exe = current / "output" / exe_name
     if not exe.is_file():
         print(f"[ERROR]: missing {exe}", file=sys.stderr)
