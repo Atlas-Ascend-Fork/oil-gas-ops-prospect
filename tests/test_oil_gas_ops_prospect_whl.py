@@ -64,6 +64,7 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     assert importlib.metadata.version("oil-gas-ops-prospect")
 
     from oil_gas_ops_prospect.complex_mul import complex_mul, torch_complex_mul, torch_complex_mul_grad
+    from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
     from oil_gas_ops_prospect.conv3d_custom import Conv3d
     from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
     from oil_gas_ops_prospect.fused_bias_softmax import (
@@ -78,6 +79,7 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     assert callable(complex_mul)
     assert callable(torch_complex_mul)
     assert callable(torch_complex_mul_grad)
+    assert callable(complex_reciprocal)
     assert callable(Conv3d)
     assert callable(conv3d)
     assert callable(fused_bias_softmax)
@@ -204,6 +206,32 @@ def test_real_fft_whl_cpu_fallback_matches_torch_fft():
 
     y = real_irfft(xr, xi, n=x.shape[1], dim=1, norm="ortho")
     assert torch.allclose(y, x, rtol=1e-5, atol=1e-5)
+
+
+def test_complex_reciprocal_whl_cpu_fallback_matches_torch():
+    """CPU 上走 torch 回退，验证复数倒数算子的接线与 autograd。"""
+    from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
+
+    torch.manual_seed(13)
+    z = torch.randn(2, 7, 3) + 1j * torch.randn(2, 7, 3)
+    assert torch.equal(complex_reciprocal(z), 1 / z)
+
+    xr = torch.randn(2, 7, 3)
+    xi = torch.randn(2, 7, 3)
+    ref = 1 / torch.complex(xr, xi)
+    out = complex_reciprocal(xr, xi)
+    assert torch.allclose(out, ref, rtol=1e-6, atol=1e-6)
+    out2 = complex_reciprocal(xr, -0.25)
+    assert torch.allclose(out2, 1 / torch.complex(xr, torch.full_like(xr, -0.25)), rtol=1e-6, atol=1e-6)
+
+    z_g = z.clone().requires_grad_(True)
+    g = torch.randn_like(z_g.real) + 1j * torch.randn_like(z_g.real)
+    out_g = complex_reciprocal(z_g)
+    (out_g.real * g.real + out_g.imag * g.imag).sum().backward()
+    ref_z = z.detach().clone().requires_grad_(True)
+    ref_out = 1 / ref_z
+    (ref_out.real * g.real + ref_out.imag * g.imag).sum().backward()
+    assert torch.allclose(z_g.grad, ref_z.grad, rtol=1e-5, atol=1e-5)
 
 
 def test_conv3d_custom_whl_cpu_forward_backward():

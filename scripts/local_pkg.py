@@ -19,6 +19,7 @@ whl 由 ``setup.py`` 的 ``package_dir`` 按算子名组装：
 
 - ``oil_gas_ops_prospect`` → ``ascendc/pybind/``（``complex_mul.py``、``fused_bias_softmax.py``）
 - ``oil_gas_ops_prospect.real_fft`` → ``triton-ascend/real_fft/``
+- ``oil_gas_ops_prospect.complex_reciprocal`` → ``triton-ascend/complex_reciprocal/``
 - ``oil_gas_ops_prospect.<op>`` → ``composite-torch/<op>/``（``_composite_mapping()`` 自动发现）
 
 裸 checkout 没有物理包目录，本模块在 ``sys.meta_path`` 上挂一个 finder，
@@ -143,6 +144,7 @@ def activate(repo_root: Path | None = None) -> bool:
 
     mapping = {
         f"{_PKG}.real_fft": triton / "real_fft",
+        f"{_PKG}.complex_reciprocal": triton / "complex_reciprocal",
     }
     mapping.update(_composite_mapping(root / "composite-torch"))
     finder = _SourceTreeFinder(pybind, mapping)

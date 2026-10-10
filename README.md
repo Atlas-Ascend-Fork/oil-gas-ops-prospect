@@ -119,7 +119,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 
 ## 📖 接口支持清单
 
-当前交付 4 个 AscendC 算子、2 个 Triton-Ascend 算子和 1 个 Composite-Torch 算子：
+当前交付 4 个 AscendC 算子、3 个 Triton-Ascend 算子和 1 个 Composite-Torch 算子：
 
 | 名称 / OpType | 后端 / 交付物 | 功能 | dtype / format |
 |---------------|---------------|------|----------------|
@@ -129,6 +129,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 | [`FusedSoftmaxGrad`](ascendc/operators/fused_softmax_grad/) | AscendC / OPP `.run`（可走 MIX） | 注意力 softmax JVP：`g = go @ V^T` 后原地覆写 probs | `fp32` / `fp16` / `bf16`，`ND` |
 | [`real_rfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 实数正向 FFT：`x -> (xr, xi)`，频率轴长度 `n // 2 + 1` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
 | [`real_irfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 从实部、虚部半谱重建实数：`(xr, xi), n -> y` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
+| [`complex_reciprocal`](triton-ascend/complex_reciprocal/) | Triton-Ascend / Python whl | 复数倒数 `1/z`（`z` 或 `xr, xi` 两种形式、自定义反向） | NPU kernel 为 `complex64`，非 NPU 环境回退到 PyTorch |
 | [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | `nn.Conv3d` 等价替换（自定义前/反向，state_dict 互通） | 任意（同 `nn.Conv3d`） |
 
 数学定义、约束与支持范围见[算子列表](docs/zh/op_list.md)；完整接口签名、参数与环境变量见[接口列表](docs/zh/api_list.md)。
@@ -142,8 +143,9 @@ oil-gas-ops-prospect/
 │   ├── pybind/             #   Python API（打包为 oil_gas_ops_prospect）+ C++ 绑定
 │   ├── scripts/            #   msopgen 构建流程内部模块
 │   └── build.sh            #   AscendC 侧入口（--pkg 打包 / -u --ophost 跑 UT）
-├── triton-ascend/          # Triton-Ascend 算子（real_fft 打包为 oil_gas_ops_prospect.real_fft）
+├── triton-ascend/          # Triton-Ascend 算子（按算子名打包为 oil_gas_ops_prospect.<op>）
 │   ├── real_fft/           #   real_rfft / real_irfft
+│   ├── complex_reciprocal/ #   complex_reciprocal（多态：z 或 xr,xi）
 │   └── tools/              #   AOT 编译检查
 ├── composite-torch/        # Composite-Torch 算子（纯 PyTorch 组合，打包为 oil_gas_ops_prospect.<op>）
 │   └── conv3d_custom/      #   Conv3d（nn.Conv3d 等价替换）

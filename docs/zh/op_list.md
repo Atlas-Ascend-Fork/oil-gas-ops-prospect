@@ -1,6 +1,6 @@
 # 算子列表
 
-当前仓库交付 4 个 AscendC/CANN OPP 算子、2 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
+当前仓库交付 4 个 AscendC/CANN OPP 算子、3 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
 
@@ -275,6 +275,45 @@ y[t] = \sum_{k=0}^{n//2} \bigl( X_r[k]\,\mathrm{irfft\_cos}[t,k] + X_i[k]\,\math
 `make_basis(n, device, norm)` 是内部辅助，一般不必直接调用；签名见[接口列表](api_list.md#make_basis)。
 
 实现与调试用法详见 [`triton-ascend/real_fft/README.md`](../../triton-ascend/real_fft/README.md)。
+
+---
+
+### complex_reciprocal
+
+complex64 张量的倒数，地震反演等负载用它替代 NPU 上走 Ai_Cpu 的 `aclnnReciprocal`。
+
+#### 数学定义
+
+对 \(z = a + ib\)：
+
+\[
+w = \frac{1}{z} = \frac{\bar{z}}{|z|^2} = \frac{a - ib}{a^2 + b^2}
+\]
+
+- **stable 路径**（默认）：用 \(t = |a| + |b|\) 缩放，\(w = \frac{\mathrm{sign}(a) - i\,\mathrm{sign}(b)}{t \cdot (1 + (b/a)^2)}\) 等价变形，避免 \(a^2+b^2\) 上下溢；
+- **naive 路径**：直接计算 \(a^2+b^2\)，带宽更高（约 10%），但 \(|z|\) 超出约 \([10^{-19}, 1.8\times10^{19}]\) 时会错。
+
+反向：\(\partial(1/z)/\partial z = -1/z^2 = -w^2\)，kernel 支持交错与实虚分离两种梯度输出。
+
+双参形式 `complex_reciprocal(xr, xi)` 计算 \(1/(xr + i\,xi)\)，`xr`/`xi` 为可广播的 float32 张量或标量，省去先构造 complex64 的 Ai_Cpu 算子。
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `z` | 复数张量 | 任意 | `complex64` |
+| 输出 | `w` | 倒数 | 与 `z` 相同 | `complex64` |
+| 输入 | `xr`, `xi` | 实部 / 虚部（可广播，至少一个为张量） | 任意 | `float32` 或标量 |
+| 输出 | `w` | `1/(xr + i*xi)` | 广播结果 | `complex64` |
+
+#### 约束
+
+- NPU kernel 仅 `complex64` / `float32`；CPU 或其他 dtype 回退 torch 参考实现（含 autograd）。
+- 元素数超过 `2^31` 时走 int64 offset 分支（kernel 自动选择，AOT 已覆盖）。
+- `block_size` 每 tile 复数元素数（2 的幂，钳制 `[16, 2048]`），可由 `OIL_GAS_OPS_RECIP_BLOCK` 覆盖。
+- 支持 autograd（自定义 backward kernel）与双入口（交错 / 实虚分离）。
+
+实现与说明详见 [`triton-ascend/complex_reciprocal/README.md`](../../triton-ascend/complex_reciprocal/README.md)。
 
 ---
 

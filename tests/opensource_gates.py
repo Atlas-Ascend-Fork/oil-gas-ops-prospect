@@ -94,11 +94,12 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "FusedSoftmaxGrad",
             "real_rfft",
             "real_irfft",
+            "complex_reciprocal",
             "Conv3d",
             "conv3d",
             "数学定义",
         ),
-        "7 个已交付算子的数学定义、输入输出与约束",
+        "8 个已交付算子的数学定义、输入输出与约束",
     ),
     (
         "docs/zh/api_list.md",
@@ -110,6 +111,7 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "attention_core",
             "real_rfft",
             "real_irfft",
+            "complex_reciprocal",
             "Conv3d",
             "conv3d",
             "aclnnComplexMul",
@@ -231,7 +233,14 @@ def check_api() -> int:
     )
     from oil_gas_ops_prospect.conv3d_custom import Conv3d
     from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
+    from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
     from oil_gas_ops_prospect.real_fft import real_irfft, real_rfft
+
+    zc = torch.randn(2, 3) + 1j * torch.randn(2, 3)
+    if not torch.equal(complex_reciprocal(zc), 1 / zc):
+        return _fail("complex_reciprocal cpu fallback")
+    if complex_reciprocal(zc.real, -0.25).shape != zc.shape:
+        return _fail("complex_reciprocal parts shape")
 
     xc = torch.randn(1, 3, 6, 6, 6, requires_grad=True)
     wc = torch.randn(4, 3, 3, 3, 3, requires_grad=True)
@@ -273,7 +282,7 @@ def check_api() -> int:
         return _fail("real_irfft shape")
     print(
         "PASS public API CPU fallback: complex_mul fused_bias_softmax "
-        "fused_softmax_grad attention_core real_rfft real_irfft Conv3d conv3d"
+        "fused_softmax_grad attention_core real_rfft real_irfft complex_reciprocal Conv3d conv3d"
     )
     return 0
 

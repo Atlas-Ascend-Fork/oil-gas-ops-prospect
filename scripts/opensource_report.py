@@ -195,9 +195,11 @@ class Statuses:
     prec_cm: str = NA
     prec_fused: str = NA
     prec_conv3d: str = NA
+    prec_crecip: str = NA
     perf_cm: str = NA
     perf_fused: str = NA
     perf_conv3d: str = NA
+    perf_crecip: str = NA
     fft_v: str = NA
     fft_p: str = NA
     docs: str = NA
@@ -223,6 +225,8 @@ class PerfSummary:
     fft_reg: list[PerfRow] = field(default_factory=list)
     conv3d_fwd: list[PerfRow] = field(default_factory=list)
     conv3d_fwdbwd: list[PerfRow] = field(default_factory=list)
+    crecip_fwd: list[PerfRow] = field(default_factory=list)
+    crecip_e2e: list[PerfRow] = field(default_factory=list)
     gmean_txt: str = "未解析"
     fft_metric: str = ""
 
@@ -244,9 +248,11 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
         prec_cm=job_status(jobs, "complex_mul_precision"),
         prec_fused=job_status(jobs, "fused_bias_softmax_precision"),
         prec_conv3d=job_status(jobs, "conv3d_custom_precision"),
+        prec_crecip=job_status(jobs, "complex_reciprocal_precision"),
         perf_cm=job_status(jobs, "complex_mul_perf"),
         perf_fused=job_status(jobs, "fused_bias_softmax_perf"),
         perf_conv3d=job_status(jobs, "conv3d_custom_perf"),
+        perf_crecip=job_status(jobs, "complex_reciprocal_perf"),
         fft_v=combine(job_status(jobs, "fft_npu_verify"), job_status(jobs, "fft_npu_verify_5d")),
         fft_p=job_status(jobs, "fft_npu_perf"),
         docs=job_status(jobs, "docs_gate"),
@@ -271,6 +277,7 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
     fused_rows = parse_perf_rows(job_log(jobs, "fused_bias_softmax_perf"))
     fft_rows = parse_perf_rows(job_log(jobs, "fft_npu_perf"))
     conv3d_rows = parse_perf_rows(job_log(jobs, "conv3d_custom_perf"))
+    crecip_rows = parse_perf_rows(job_log(jobs, "complex_reciprocal_perf"))
     fused_fwd = [r for r in fused_rows if r[0].startswith("fwd ")]
     fused_bwd = [r for r in fused_rows if r[0].startswith("bwd ")]
     gmean = geo_mean(speedup_vals(fft_rows))
@@ -288,6 +295,8 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
         fft_reg=[r for r in fft_rows if not r[0].endswith(("5d W", "5d H", "5d D")) and "5d " not in r[0]],
         conv3d_fwd=[r for r in conv3d_rows if r[0].endswith(" fwd")],
         conv3d_fwdbwd=[r for r in conv3d_rows if r[0].endswith(" fwdbwd")],
+        crecip_fwd=[r for r in crecip_rows if r[0].startswith("recip fwd")],
+        crecip_e2e=[r for r in crecip_rows if r[0].startswith("e2e fused")],
         gmean_txt=f"{gmean:.2f}x" if gmean else "未解析",
         fft_metric=fft_metric_text(fft_rows),
     )
@@ -308,6 +317,8 @@ def build_features(st: Statuses) -> list[tuple[str, str, str, str, str, str, str
          combine(st.triton, st.aot, st.fft_v), st.triton, st.fft_p, st.triton, st.install),
         ("real_irfft", combine(st.triton, st.aot, st.fft_v, st.fft_p),
          combine(st.triton, st.aot, st.fft_v), st.triton, st.fft_p, st.triton, st.install),
+        ("complex_reciprocal", combine(st.triton, st.aot, st.prec_crecip, st.perf_crecip, st.install),
+         combine(st.triton, st.aot, st.prec_crecip), st.prec_crecip, st.perf_crecip, st.triton, st.install),
         ("Conv3d / conv3d", combine(st.composite, st.prec_conv3d, st.perf_conv3d, st.api, st.install),
          st.composite, st.prec_conv3d, st.perf_conv3d, st.composite, st.install),
     ]
@@ -341,6 +352,10 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
          "多 shape/dim 反向与 CPU `torch.fft` 对拍"),
         ("real_rfft / real_irfft 大形态", st.fft_v,
          "三维潜变量形态与 `128^3` 往返/反向；默认示例可运行"),
+        ("complex_reciprocal 前反向精度", combine(st.triton, st.aot, st.prec_crecip),
+         "CPU 回退与 torch `1/z` 逐位一致（含实虚分离入口、极端幅值、int64 offset 分支）；NPU 真机"
+         "五方法对拍（stable 全分布 max_rel<=1e-5，含 tiny/huge 极端幅值）与反向 vs float64；"
+         "kernel 三条 AOT 全分支可编译"),
         ("Conv3d / conv3d NPU 精度与性能", combine(st.prec_conv3d, st.perf_conv3d),
          "实际训练尺寸 11 模式真机对拍：自定义前/反向 vs 原生（float32 L2 相对误差阈值 `1e-5`；"
          "大 kernel depthwise 原生反向崩溃模式验证自定义侧可用）；fwd / fwd+bwd 计时"),
@@ -402,6 +417,8 @@ def section_overview(cmd: str, ok: bool, rate: str) -> list[str]:
         "| 6 | real_irfft | 由半谱实部、虚部重建实数：`(xr, xi), n → y`，`norm=\"ortho\"` |",
         "| 7 | Conv3d / conv3d | `torch.nn.Conv3d` / `F.conv3d` 的等价替换（纯 PyTorch 组合实现）："
         "NPU 自定义前/反向，支持任意 stride / dilation / groups / padding_mode，state_dict 互通 |",
+        "| 8 | complex_reciprocal | complex64 倒数 `1/z`（stable / naive 双路径、实虚分离入口、"
+        "自定义反向），替代 NPU 上走 Ai_Cpu 的 `aclnnReciprocal` |",
         "",
         "`attention_core(q, k, v, bias1, bias2)` 为 FusedBiasSoftmax 与 FusedSoftmaxGrad 按 openfold "
         "注意力语义的组合封装，随上述融合算子一并验证。",
@@ -574,6 +591,9 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_fused)} | 无 |",
         "| 算子微基准 | 不涉及 | real_rfft / real_irfft | 同设备 `torch.fft.rfft` / `irfft`，"
         f"`norm=\"ortho\"` | {perf.fft_metric} | Atlas A2 + CANN 9.0.0 | {cell(st.fft_p)} | 无 |",
+        "| 算子微基准 | 不涉及 | complex_reciprocal | 同设备 torch `1/z`（aclnnReciprocal）与先构造 complex64 的原始写法 | "
+        f"前向 {speedup_span(perf.crecip_fwd)}；端到端融合 {speedup_span(perf.crecip_e2e)} | "
+        f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_crecip)} | 无 |",
         "| 算子微基准 | 不涉及 | Conv3d / conv3d | 同设备 `nn.Conv3d` / `F.conv3d`（实际训练尺寸 11 模式） | "
         f"前向 {speedup_span(perf.conv3d_fwd)}，fwd+bwd {speedup_span(perf.conv3d_fwdbwd)}（大 kernel depthwise "
         "原生反向崩溃模式仅自定义侧可跑） | "
@@ -586,7 +606,9 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
 
 
 def section_perf_tables(perf: PerfSummary) -> list[str]:
-    lines = perf_md_table("Conv3d / conv3d 前向（相对同设备 nn.Conv3d，实际训练尺寸）", perf.conv3d_fwd)
+    lines = perf_md_table("complex_reciprocal 前向（相对同设备 torch 1/z）", perf.crecip_fwd)
+    lines += perf_md_table("complex_reciprocal 端到端融合（相对先构造 complex64 的原始写法）", perf.crecip_e2e)
+    lines += perf_md_table("Conv3d / conv3d 前向（相对同设备 nn.Conv3d，实际训练尺寸）", perf.conv3d_fwd)
     lines += perf_md_table("Conv3d / conv3d fwd+bwd（相对同设备 nn.Conv3d autograd）", perf.conv3d_fwdbwd)
     lines += perf_md_table("ComplexMul / ComplexMulGrad（相对同设备逐元素公式）", perf.cm_rows)
     lines += perf_md_table("FusedBiasSoftmax（相对同设备 fp32 `softmax`）", perf.fused_fwd)

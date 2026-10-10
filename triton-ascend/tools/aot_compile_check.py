@@ -58,7 +58,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRITON_ROOT = REPO_ROOT / "triton-ascend"
-for _p in (TRITON_ROOT / "real_fft",):
+for _p in (TRITON_ROOT / "real_fft", TRITON_ROOT / "complex_reciprocal"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
@@ -190,11 +190,59 @@ def _real_fft_cases(fft) -> list[tuple[str, object, list[str], dict]]:
     return out
 
 
+def _complex_reciprocal_cases(cr) -> list[tuple[str, object, list[str], dict]]:
+    """complex_reciprocal 的三条 kernel：交错前向、实虚分离前向、反向。"""
+    out: list[tuple[str, object, list[str], dict]] = []
+
+    fwd_ptrs = p(2) + ["i32"]
+    out += [
+        ("complex_reciprocal/recip.fwd [stable]",
+         kernel_of(cr, "_complex_reciprocal_kernel"), fwd_ptrs,
+         dict(block_size=2048, index64=False, stable=True)),
+        ("complex_reciprocal/recip.fwd [stable, index64]",
+         kernel_of(cr, "_complex_reciprocal_kernel"), fwd_ptrs,
+         dict(block_size=2048, index64=True, stable=True)),
+        ("complex_reciprocal/recip.fwd [naive]",
+         kernel_of(cr, "_complex_reciprocal_kernel"), fwd_ptrs,
+         dict(block_size=2048, index64=False, stable=False)),
+    ]
+
+    of_ptrs = p(3) + ["i32", "fp32", "fp32"]
+    for xr_t, xi_t in ((True, True), (True, False), (False, True)):
+        tag = f"xr={'tensor' if xr_t else 'scalar'},xi={'tensor' if xi_t else 'scalar'}"
+        out.append((
+            f"complex_reciprocal/of.fwd   [{tag}]",
+            kernel_of(cr, "_complex_reciprocal_of_kernel"), of_ptrs,
+            dict(block_size=2048, index64=False, stable=True, xr_is_tensor=xr_t, xi_is_tensor=xi_t),
+        ))
+    out.append((
+        "complex_reciprocal/of.fwd   [tensor,tensor naive index64]",
+        kernel_of(cr, "_complex_reciprocal_of_kernel"), of_ptrs,
+        dict(block_size=2048, index64=True, stable=False, xr_is_tensor=True, xi_is_tensor=True),
+    ))
+
+    grad_ptrs = p(5) + ["i32"]
+    out += [
+        ("complex_reciprocal/grad    [interleaved]",
+         kernel_of(cr, "_complex_reciprocal_grad_kernel"), grad_ptrs,
+         dict(block_size=2048, index64=False, interleaved_output=True, write_gxi=False)),
+        ("complex_reciprocal/grad    [planar gxr+gxi]",
+         kernel_of(cr, "_complex_reciprocal_grad_kernel"), grad_ptrs,
+         dict(block_size=2048, index64=False, interleaved_output=False, write_gxi=True)),
+        ("complex_reciprocal/grad    [planar gxr, index64]",
+         kernel_of(cr, "_complex_reciprocal_grad_kernel"), grad_ptrs,
+         dict(block_size=2048, index64=True, interleaved_output=False, write_gxi=False)),
+    ]
+
+    return out
+
+
 def cases() -> list[tuple[str, object, list[str], dict]]:
     """(用例名, kernel, 指针类型列表, constexpr 字典)，覆盖各算子的主要 IR 分支。"""
+    import triton_complex_reciprocal as cr
     import triton_fft_real as fft
 
-    return _real_fft_cases(fft)
+    return _real_fft_cases(fft) + _complex_reciprocal_cases(cr)
 
 
 def _slugify(name: str) -> str:

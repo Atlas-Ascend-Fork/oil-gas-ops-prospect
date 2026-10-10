@@ -7,6 +7,7 @@ oil_gas_ops_prospect
 ├── complex_mul           # complex_mul, torch_complex_mul, torch_complex_mul_grad
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
 ├── real_fft              # real_rfft, real_irfft, make_basis
+├── complex_reciprocal   # complex_reciprocal（z 或 xr, xi 两种形式）
 └── conv3d_custom         # Conv3d；functional 子模块： conv3d
 ```
 
@@ -235,6 +236,36 @@ def make_basis(
 
 ---
 
+## `oil_gas_ops_prospect.complex_reciprocal`
+
+### `complex_reciprocal`
+
+```python
+from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
+
+def complex_reciprocal(
+    z: torch.Tensor,
+    xi: torch.Tensor | float | None = None,
+    *,
+    stable: bool = True,
+    block_size: int | None = None,
+) -> torch.Tensor
+```
+
+complex64 倒数，按输入形式自动分发：
+
+- `complex_reciprocal(z)`：`1/z`，`z` 为 complex64 张量。NPU 上由单个 Triton kernel（Vector Core）完成；CPU 或无 triton 环境回退 `torch` 的 `1 / z`（含 autograd）。
+- `complex_reciprocal(xr, xi)`：`1 / (xr + i*xi)`，实虚部分开给出，省去先构造 complex64 的 Ai_Cpu 算子；分母常见形态为「实张量 + 常数虚部」（如 `1/(a - i*c)`）。`xr` / `xi` 至少一个为 float32 张量（可互相广播），另一个可为张量或标量；输出 complex64。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `z` | `torch.Tensor` | 单参形式：complex64 张量；双参形式：float32 实部张量/标量 |
+| `xi` | `torch.Tensor` / `float` / `None` | 双参形式的虚部（可广播）；单参形式不传 |
+| `stable` | `bool` | `True`（默认）用 `t=\|a\|+\|b\|` 缩放避免 `a^2+b^2` 上下溢；`False` 朴素公式（带宽高约 10%，`\|z\|` 超出 ~[1e-19, 1.8e19] 会错） |
+| `block_size` | `int` 或 `None` | 每 tile 复数元素数（2 的幂，钳制 `[16, 2048]`）；`None` 由实现按核数选择，可由 `OIL_GAS_OPS_RECIP_BLOCK` 覆盖 |
+
+---
+
 ## `oil_gas_ops_prospect.conv3d_custom`
 
 ### `Conv3d`
@@ -314,6 +345,7 @@ Triton 算子没有 aclnn 入口。
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_COMPLEX_MUL` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch，AscendC 调用失败直接抛异常 |
 | `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` | `torch` / `ascendc` / `auto` | `torch` | `fused_bias_softmax` / `fused_softmax_grad` / `attention_core` 的实现选择 |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch，AscendC 调用失败直接抛异常 |
+| `OIL_GAS_OPS_RECIP_BLOCK` | 正整数（2 的幂） | `None` | `complex_reciprocal` 的 tile 覆盖（钳制 `[16, 2048]`，默认由实现选择） |
 | `OIL_GAS_OPS_FFT_BLOCK_M` | 正整数 | `512` | `real_rfft` / `real_irfft` 的 DFT-matmul 行分块大小，用于性能调优（可扫 128 / 256 / 512） |
 
 ### 构建与产物

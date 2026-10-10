@@ -100,7 +100,7 @@ jobs:
               ln -s /home/jenkins/opensource/ubuntu20/lib_cache /home/jenkins/opensource/lib_cache
           fi
           source /home/jenkins/Ascend/cann/bin/setenv.bash
-          python3 -m pytest tests/triton/real_fft -v
+          python3 -m pytest tests/triton -v
       -
         name: composite_cpu_ut
         run: |

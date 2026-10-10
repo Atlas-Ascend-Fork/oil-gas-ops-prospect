@@ -205,7 +205,7 @@ def run_triton(cov: bool, noexec: bool) -> JobResult:
     t0 = time.perf_counter()
     if noexec:
         return make_result("triton_cpu", "ut", SKIP, 0.0, "--noexec")
-    args = [sys.executable, "-m", "pytest", str(REPO_ROOT / "tests" / "triton" / "real_fft"), "-q"]
+    args = [sys.executable, "-m", "pytest", str(REPO_ROOT / "tests" / "triton"), "-q"]
     if cov:
         probe = subprocess.run([sys.executable, "-c", "import pytest_cov"], capture_output=True)
         if probe.returncode == 0:

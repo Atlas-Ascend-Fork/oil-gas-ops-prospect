@@ -1,19 +1,60 @@
 {
   "st": [
-    {"op": "complex_mul", "name": "aclnnComplexMul", "run": "tests/st/aclnnComplexMul/run.sh"},
-    {"op": "complex_mul_grad", "name": "aclnnComplexMulGrad", "run": "tests/st/aclnnComplexMulGrad/run.sh"},
-    {"op": "fused_bias_softmax", "name": "aclnnFusedBiasSoftmax", "run": "tests/st/aclnnFusedBiasSoftmax/run.sh"},
-    {"op": "fused_softmax_grad", "name": "aclnnFusedSoftmaxGrad", "run": "tests/st/aclnnFusedSoftmaxGrad/run.sh"}
+    {
+      "op": "complex_mul",
+      "name": "aclnnComplexMul",
+      "run": "tests/st/aclnnComplexMul/run.sh"
+    },
+    {
+      "op": "complex_mul_grad",
+      "name": "aclnnComplexMulGrad",
+      "run": "tests/st/aclnnComplexMulGrad/run.sh"
+    },
+    {
+      "op": "fused_bias_softmax",
+      "name": "aclnnFusedBiasSoftmax",
+      "run": "tests/st/aclnnFusedBiasSoftmax/run.sh"
+    },
+    {
+      "op": "fused_softmax_grad",
+      "name": "aclnnFusedSoftmaxGrad",
+      "run": "tests/st/aclnnFusedSoftmaxGrad/run.sh"
+    }
   ],
   "npu_python": [
-    {"op": "complex_mul", "script": "tests/ascendc/complex_mul/test_complex_mul_npu.py"},
-    {"op": "fused_bias_softmax", "script": "tests/ascendc/fused_bias_softmax/test_fused_bias_softmax_npu.py"},
-    {"op": "conv3d_custom", "script": "tests/composite/conv3d_custom/bench_conv3d_custom_perf.py"}
+    {
+      "op": "complex_mul",
+      "script": "tests/ascendc/complex_mul/test_complex_mul_npu.py"
+    },
+    {
+      "op": "fused_bias_softmax",
+      "script": "tests/ascendc/fused_bias_softmax/test_fused_bias_softmax_npu.py"
+    },
+    {
+      "op": "conv3d_custom",
+      "script": "tests/composite/conv3d_custom/bench_conv3d_custom_perf.py"
+    },
+    {
+      "op": "complex_reciprocal",
+      "script": "tests/triton/complex_reciprocal/verify_complex_reciprocal.py"
+    }
   ],
   "examples": [
-    {"op": "complex_mul", "run": "examples/aclnn/complex_mul/run.sh"},
-    {"op": "complex_mul_grad", "run": "examples/aclnn/complex_mul_grad/run.sh"},
-    {"op": "fused_bias_softmax", "run": "examples/aclnn/fused_bias_softmax/run.sh"},
-    {"op": "fused_softmax_grad", "run": "examples/aclnn/fused_softmax_grad/run.sh"}
+    {
+      "op": "complex_mul",
+      "run": "examples/aclnn/complex_mul/run.sh"
+    },
+    {
+      "op": "complex_mul_grad",
+      "run": "examples/aclnn/complex_mul_grad/run.sh"
+    },
+    {
+      "op": "fused_bias_softmax",
+      "run": "examples/aclnn/fused_bias_softmax/run.sh"
+    },
+    {
+      "op": "fused_softmax_grad",
+      "run": "examples/aclnn/fused_softmax_grad/run.sh"
+    }
   ]
 }

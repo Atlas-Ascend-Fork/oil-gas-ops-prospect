@@ -55,10 +55,13 @@ oil-gas-ops-prospect/
 │   ├── scripts/                                #   构建流程内部模块（被 build.py 导入）
 │   └── _work/                                  #   msopgen 临时工程（构建产生，不纳入版本管理）
 │
-├── triton-ascend/                              # ★ Triton-Ascend 算子（real_fft 打包为 oil_gas_ops_prospect.real_fft）
+├── triton-ascend/                              # ★ Triton-Ascend 算子（按算子名打包为 oil_gas_ops_prospect.<op>）
 │   ├── real_fft/                               #   real_rfft / real_irfft
 │   │   ├── triton_fft_real.py                  #     Triton kernel 与 autograd 封装
 │   │   └── README.md
+│   ├── complex_reciprocal/                     #   complex_reciprocal（z 或 xr, xi 两种形式）
+│   │   ├── triton_complex_reciprocal.py        #     Triton kernel 与 autograd 封装
+│   │   └── README.md                           #     算子说明
 │   └── tools/
 │       └── aot_compile_check.py                #   AOT 编译检查
 │
@@ -84,7 +87,8 @@ oil-gas-ops-prospect/
 │   │   └── fused_bias_softmax/                 #   融合注意力 NPU 精度/性能对比
 │   ├── composite/conv3d_custom/                #   Conv3d / conv3d CPU 精度与性能基准
 │   └── triton/
-│       └── real_fft/                           #   rFFT / iRFFT 精度（含 CPU 回退路径）
+│       ├── real_fft/                           #   rFFT / iRFFT 精度（含 CPU 回退路径）
+│       └── complex_reciprocal/                 #   复数倒数精度（CPU 回退 + NPU verify）
 │
 ├── examples/                                   # Python 示例 + C++ 两段式样例
 │   ├── _common/                                #   aclnn 样例脚手架
@@ -128,6 +132,7 @@ oil-gas-ops-prospect/
 - `oil_gas_ops_prospect.complex_mul` → `ascendc/pybind/complex_mul.py`
 - `oil_gas_ops_prospect.fused_bias_softmax` → `ascendc/pybind/fused_bias_softmax.py`
 - `oil_gas_ops_prospect.real_fft` → `triton-ascend/real_fft/`
+- `oil_gas_ops_prospect.complex_reciprocal` → `triton-ascend/complex_reciprocal/`
 - `oil_gas_ops_prospect.conv3d_custom` → `composite-torch/conv3d_custom/`
 
 裸 checkout 通过 `scripts/local_pkg.py`（examples / pytest `conftest.py` 会自动激活）把上述目录挂到同一导入名下，因此装包与不装包时调用方式一致；`composite-torch/` 下的算子由该脚本自动发现，无需手工登记。验证已安装 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`（`tests/run_whl_tests.sh` 已处理），避免测到仓内源码。
