@@ -58,7 +58,6 @@ usage() {
         echo "    --perf               Python performance (needs NPU)"
         echo "    --examples           UT-device only: C++ small aclnn launch (needs NPU)"
         echo "    --triton             Triton CPU-fallback pytest"
-  echo "    --composite          Composite (pure PyTorch) CPU pytest"
         echo "    --composite          Composite (pure PyTorch) CPU pytest"
         echo "    --aot                Triton AOT compile check"
         echo "    --ops=op1,op2        Filter UT-device / ST / precision / perf by operator"
