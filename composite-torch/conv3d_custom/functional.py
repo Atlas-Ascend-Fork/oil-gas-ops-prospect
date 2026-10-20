@@ -32,6 +32,7 @@ float32 正常范围内）；固化用例见 tests/composite/conv3d_custom/。
 import torch
 import torch.nn.functional as F
 from torch.autograd import Function
+from torch.nn.modules.utils import _triple
 
 
 class _Conv3dFunction(Function):
@@ -40,9 +41,9 @@ class _Conv3dFunction(Function):
     @staticmethod
     def forward(ctx, x, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
         # 保存参数用于反向传播
-        ctx.stride = stride if isinstance(stride, tuple) else (stride, stride, stride)
-        ctx.padding = padding if isinstance(padding, tuple) else (padding, padding, padding)
-        ctx.dilation = dilation if isinstance(dilation, tuple) else (dilation, dilation, dilation)
+        ctx.stride = _triple(stride)
+        ctx.padding = _triple(padding)
+        ctx.dilation = _triple(dilation)
         ctx.groups = groups
 
         # 保存输入、权重和偏置
