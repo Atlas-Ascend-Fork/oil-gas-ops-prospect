@@ -249,7 +249,7 @@ w[0] &= 1,\quad w[k] = 2\ (1 \le k < (n+1)//2),\quad \text{Nyquist（}n\text{ �
 \]
 
 \[
-y[t] = \sum_{k=0}^{n//2} \bigl( X_r[k]\,\mathrm{irfft\_cos}[t,k] + X_i[k]\,\mathrm{irfft\_sin}[t,k] \bigr)
+y[t] = \sum_{k=0}^{n//2} \bigl( X_r[k]\,\mathrm{irfft\_cos}[t,k] - X_i[k]\,\mathrm{irfft\_sin}[t,k] \bigr)
 \]
 
 #### 输入输出
