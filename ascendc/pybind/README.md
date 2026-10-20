@@ -29,7 +29,7 @@ ascendc/pybind/
 
 `ascendc/pybind/csrc/<op_family>/` 下的 `*.cpp` 编译成扩展模块 **`<op_family>_npu`**。
 Python API 放在 `ascendc/pybind/<op_family>.py`（与 `csrc/<op_family>/` 并存，互不冲突）。
-新增算子：建 `csrc/<op_family>/`、写 `*.cpp` 与 `<op_family>.py`，两个构建入口都会自动带上 C++ 扩展。
+新增算子：建 `csrc/<op_family>/`、写 `*.cpp` 与 `<op_family>.py`，两个构建入口都会自动发现 C++ 扩展。若扩展依赖多个 AscendC 算子，在 `pybind_extensions.py` 中登记完整依赖；根目录以 `--ops` 构建时，wheel 只打入依赖均已选择的扩展家族。未指定筛选的独立 wheel 构建和就地测试仍会构建全部扩展。
 
 ## 编译
 

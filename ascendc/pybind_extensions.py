@@ -41,12 +41,20 @@ from pathlib import Path
 import torch
 from torch.utils.cpp_extension import CppExtension
 
+from scripts.manifest import list_operator_names
+
 ASCENDC_DIR = Path(__file__).resolve().parent
 PYBIND_DIR = ASCENDC_DIR / "pybind"
 CSRC_DIR = PYBIND_DIR / "csrc"
 
 # 置 1 可在无 CANN / 无 torch_npu 的环境下跳过扩展编译（仅构建纯 Python 部分）。
 SKIP_ENV = "OIL_GAS_OPS_SKIP_EXT"
+OP_FILTER_ENV = "OIL_GAS_OPS_ASCENDC_OPS"
+
+_PYBIND_FAMILY_OPERATORS = {
+    "complex_mul": {"complex_mul", "complex_mul_grad"},
+    "fused_bias_softmax": {"fused_bias_softmax", "fused_softmax_grad"},
+}
 
 ASCEND_DIR = os.environ.get("ASCEND_HOME_PATH", "/usr/local/Ascend/cann-9.0.0")
 
@@ -94,6 +102,38 @@ def discover() -> list[Path]:
     )
 
 
+def _selected_ops_from_env() -> set[str] | None:
+    raw = os.environ.get(OP_FILTER_ENV)
+    if raw is None:
+        return None
+
+    selected = set(raw.replace(",", " ").split())
+    return None if not selected or selected == {"all"} else selected
+
+
+def _filter_extension_dirs(
+    extension_dirs: list[Path], selected_ops: set[str] | None
+) -> list[Path]:
+    if selected_ops is None:
+        return extension_dirs
+
+    unknown = selected_ops - set(list_operator_names())
+    if unknown:
+        raise ValueError(f"operators not present in manifest: {', '.join(sorted(unknown))}")
+
+    selected_families = {
+        family
+        for family, required_ops in _PYBIND_FAMILY_OPERATORS.items()
+        if required_ops <= selected_ops
+    }
+    selected_families.update(
+        family
+        for family in selected_ops
+        if family not in _PYBIND_FAMILY_OPERATORS
+    )
+    return [op_dir for op_dir in extension_dirs if op_dir.name in selected_families]
+
+
 def build_extensions(relative_to: Path | None = None) -> list[CppExtension]:
     """构造全部 AscendC pybind 扩展。
 
@@ -123,7 +163,8 @@ def build_extensions(relative_to: Path | None = None) -> list[CppExtension]:
     libraries = ["cust_opapi", "ascendcl", "nnopbase", "opapi", "torch_npu"]
 
     extensions = []
-    for op_dir in discover():
+    extension_dirs = _filter_extension_dirs(discover(), _selected_ops_from_env())
+    for op_dir in extension_dirs:
         sources = sorted(op_dir.glob("*.cpp"))
         extensions.append(
             CppExtension(

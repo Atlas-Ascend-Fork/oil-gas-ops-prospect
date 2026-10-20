@@ -148,7 +148,7 @@ build_python_wheel() {
   fi
   rm -rf "${SCRIPT_DIR}/build" "${SCRIPT_DIR}"/*.egg-info
   mkdir -p "${WHEEL_DIR}"
-  (cd "${SCRIPT_DIR}" && python3 setup.py bdist_wheel --dist-dir "${WHEEL_DIR}")
+  (cd "${SCRIPT_DIR}" && OIL_GAS_OPS_ASCENDC_OPS="${OPS_LIST}" python3 setup.py bdist_wheel --dist-dir "${WHEEL_DIR}")
   WHEEL_PATH="$(latest_artifact "${WHEEL_DIR}" "oil_gas_ops_prospect-*.whl")"
   rm -rf "${SCRIPT_DIR}/build" "${SCRIPT_DIR}"/*.egg-info
 }
