@@ -23,6 +23,8 @@ from oil_gas_ops_prospect.conv3d_custom.functional import conv3d  # 本仓替换
 - 前向与 `F.conv3d` 完全一致；反向三梯度与原生 autograd 数学等价（float64 实测 <= 1.78e-14），支持双阶反向；
 - 反向构造：grad_input = `F.conv3d(grad_output, flip(W)^T, ...)`（stride>1 时零膨胀 + output_padding，
   负 padding 裁剪），grad_weight = `torch.nn.grad.conv3d_weight`，grad_bias = 求和。
+- 复数输入的反向对权重取共轭，权重梯度由实部/虚部的实数卷积梯度组合；
+  复数精度回归在 NPU 上暂时关闭 HF32，完成后恢复原设置。默认 HF32 下的累加误差不按完整 FP32 阈值验收。
 
 ## 验证
 

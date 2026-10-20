@@ -23,6 +23,7 @@ stride / dilation / groups 与双阶反向），NPU 上可绕开原生 backward 
 反向构造：grad_input 用 flip+转置 channel 后的 ``F.conv3d``（stride>1 时先对
 grad_output 做零膨胀 + output_padding 补齐；padding 为负时裁剪），
 grad_weight 调 ``torch.nn.grad.conv3d_weight``，grad_bias 对 grad_output 求和。
+复数反向对 weight 取共轭，权重梯度拆成实数卷积后重组，以遵循复数 autograd 语义。
 
 精度验证：float64 下三梯度与原生 autograd 数学等价（阈值 1e-12 内）；
 NPU float32 实际训练尺寸全模式对比通过（grad_weight 因内核累加顺序差异在
@@ -82,8 +83,8 @@ class _Conv3dFunction(Function):
             kd, kh, kw = weight.shape[2], weight.shape[3], weight.shape[4]
             k = (kd, kh, kw)
 
-            # 翻转 weight 的空间维度 (cross-correlation -> convolution)
-            weight_flip = torch.flip(weight, dims=[2, 3, 4])
+            # 翻转 weight 的空间维度并取共轭 (complex autograd cross-correlation)
+            weight_flip = torch.flip(weight.conj(), dims=[2, 3, 4])
 
             # 转置 in/out channel 维度
             if groups == 1:
@@ -116,10 +117,22 @@ class _Conv3dFunction(Function):
 
         # 2. 计算权重梯度
         if ctx.needs_input_grad[1]:
-            # 使用torch.nn.grad.conv3d_weight来计算权重梯度
-            grad_weight = torch.nn.grad.conv3d_weight(
-                x, weight.shape, grad_output, stride, padding, dilation, groups
-            )
+            # Complex autograd uses conjugated inputs; conv3d_weight only accepts real tensors.
+            if weight.is_complex():
+                def real_weight_gradient(input_part, output_part):
+                    return torch.nn.grad.conv3d_weight(
+                        input_part, weight.shape, output_part, stride, padding, dilation, groups
+                    )
+
+                real = (real_weight_gradient(x.real, grad_output.real)
+                        + real_weight_gradient(x.imag, grad_output.imag))
+                imag = (real_weight_gradient(x.real, grad_output.imag)
+                        - real_weight_gradient(x.imag, grad_output.real))
+                grad_weight = torch.complex(real, imag)
+            else:
+                grad_weight = torch.nn.grad.conv3d_weight(
+                    x, weight.shape, grad_output, stride, padding, dilation, groups
+                )
 
         # 3. 计算偏置梯度
         if bias is not None and ctx.needs_input_grad[2]:
