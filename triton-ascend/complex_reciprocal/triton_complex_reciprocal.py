@@ -525,7 +525,7 @@ def _reciprocal_of_torch(xr: torch.Tensor | Number, xi: torch.Tensor | Number) -
     """``complex_reciprocal(xr, xi)`` 双参形式的 torch 参考实现（CPU / 非 NPU / 非 float32）。"""
 
     def as_full(t):
-        return t if isinstance(t, torch.Tensor) and t.numel() > 1 else None
+        return t if isinstance(t, torch.Tensor) and t.numel() != 1 else None
 
     def as_scalar_tensor(t, ref: torch.Tensor) -> torch.Tensor:
         if isinstance(t, torch.Tensor):
@@ -540,21 +540,15 @@ def _reciprocal_of_torch(xr: torch.Tensor | Number, xi: torch.Tensor | Number) -
     if xr_t is None and xi_t is None:
         # 两个标量/单元素张量：直接按复标量计算
         ref = xr if isinstance(xr, torch.Tensor) else xi
-        vals = [float(t.reshape(-1)[0].item()) if isinstance(t, torch.Tensor) else float(t)
-                for t in (xr, xi)]
-        value = 1 / complex(vals[0], vals[1])
-        return torch.tensor(value, dtype=torch.complex64, device=ref.device)
+        vals = [as_scalar_tensor(t, ref).to(ref.device) for t in (xr, xi)]
+        return _reciprocal_of_torch_full(vals[0], vals[1])
     full = xr_t if xr_t is not None else xi_t
     other = xi if xr_t is not None else xr
     other_t = as_scalar_tensor(other, full).to(full.device)
-    if full.numel() == 0:
-        return torch.empty(full.shape, dtype=torch.complex64, device=full.device)
     if xr_t is not None:
         return _reciprocal_of_torch_full(xr_t, other_t.expand(full.shape))
     return _reciprocal_of_torch_full(other_t.expand(full.shape), xi_t)
 
 
 def _reciprocal_of_torch_full(xr: torch.Tensor, xi: torch.Tensor) -> torch.Tensor:
-    if xr.numel() == 0:
-        return torch.empty(xr.shape, dtype=torch.complex64, device=xr.device)
     return 1 / torch.complex(xr, xi)
