@@ -146,16 +146,15 @@ bash tests/run_whl_tests.sh
 
 ### 其它入口
 
-日常使用根目录 `build.sh` 即可。下面两个入口给需要分步调试或只编 ophost tiling 单元测试的场景。
+日常使用根目录 `build.sh` 即可。下面两个入口给需要分步调试或只编 ophost tiling 单元测试的场景。以下命令均从仓库根目录执行。
 
 **`ascendc/build.sh`**：AscendC 侧分步入口，只打包 OPP `.run`，或只跑 ophost UT。
 
 ```bash
-cd ascendc
-bash build.sh --pkg [options]        # 编译并打包 OPP .run
-bash build.sh -u --ophost [options]  # 编译并运行 ophost 单元测试
-bash build.sh clean                  # 清理 ascendc/_work 与 output/
-bash build.sh list-ops               # 列出 manifest 中的算子
+bash ascendc/build.sh --pkg [options]        # 编译并打包 OPP .run
+bash ascendc/build.sh -u --ophost [options]  # 编译并运行 ophost 单元测试
+bash ascendc/build.sh clean                  # 清理 ascendc/_work 与 output/
+bash ascendc/build.sh list-ops               # 列出 manifest 中的算子
 ```
 
 | 参数名 | 可选/必选 | 参数说明 |
@@ -168,8 +167,8 @@ bash build.sh list-ops               # 列出 manifest 中的算子
 | `--package-name <name>` | 可选 | 替换 `.run` 名中的 `custom` 前缀，默认 `oil_gas_ops_prospect` |
 
 ```bash
-bash build.sh --pkg -v Ascend910B1 --ops complex_mul complex_mul_grad -j 16
-python3 build.py -v Ascend910B1 --ops complex_mul complex_mul_grad   # 等价 Python 入口
+bash ascendc/build.sh --pkg -v Ascend910B1 --ops complex_mul complex_mul_grad -j 16
+python3 ascendc/build.py -v Ascend910B1 --ops complex_mul complex_mul_grad   # 等价 Python 入口
 ```
 
 **顶层 CMake**：只覆盖 ophost 侧 tiling 单元测试。AscendC 算子本身不由顶层 CMake 编译，必须经 msopgen 生成工程后再由 `bash build.sh --pkg` 或 `bash ascendc/build.sh --pkg` 编译。
