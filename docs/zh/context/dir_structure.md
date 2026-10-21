@@ -1,5 +1,7 @@
 # 目录结构
 
+简体中文 | [English](../../en/context/dir_structure.md)
+
 ```text
 oil-gas-ops-prospect/
 ├── LICENSE                                     # 许可证（Apache License 2.0）
@@ -67,14 +69,16 @@ oil-gas-ops-prospect/
 │
 ├── composite-torch/                            # ★ Composite-Torch 算子（纯 PyTorch 组合，打包为 oil_gas_ops_prospect.<op>）
 │   ├── README.md                               #   轨道说明与接入约定
-│   └── conv3d_custom/                          #   Conv3d / conv3d（nn.Conv3d / F.conv3d 等价替换）
+│   └── conv3d_custom/                          #   Conv3d / conv3d（支持参数域内兼容 nn.Conv3d / F.conv3d）
 │       ├── __init__.py                         #     对外导出 Conv3d
 │       ├── conv3d.py                           #     Conv3d 模块（nn.Module 形态，NPU 回退）
 │       ├── functional.py                       #     conv3d 函数式入口 + autograd 实现
 │       └── README.md                           #     算子说明
 │
 ├── tests/                                       # ★ 全部测试（operators/ 不再放 tests）
+│   ├── README.md                               #   测试分类、套件目录与新算子必备用例
 │   ├── suites.json                             #   build.sh -u 套件清单
+│   ├── opensource_gates.py                     #   开源报告轻量门禁（文档 / 出包入口 / 安装痕迹 / 接口冒烟）
 │   ├── _common/aclnn/                          #   ST 共用脚手架
 │   ├── ut/op_host/<op>/                        #   tiling googletest
 │   ├── st/aclnn<OpType>/                       #   多 case 两段式 aclnn
@@ -94,24 +98,29 @@ oil-gas-ops-prospect/
 │   ├── _common/                                #   aclnn 样例脚手架
 │   ├── aclnn/<op>/                             #   test_aclnn_*.cpp
 │   └── *.py
+├── SKILLS/                                     # 可复用的算子开发技能（优化 / 定位 / 修复），按后端拆开
 ├── scripts/                                    # 辅助脚本
 │   ├── build_options.sh                        #   根目录 build.sh 的选项解析与分节帮助
+│   ├── cann_env.sh                             #   CANN 安装目录解析与 aclnn 工程编译环境（由 aclnn 运行脚本 source）
 │   ├── run_tests.py                            #   统一编排 UT/ST/精度/性能并写 Markdown 报告
 │   ├── opensource_report.py                    #   按 -u JSON 生成开源测试报告
 │   ├── check_license_header.sh                 #   许可证头检查
-│   └── local_pkg.py                            #   裸 checkout 下解析 oil_gas_ops_prospect 导入名
+│   └── local_pkg.py                            #   没装 whl、直接跑仓内源码时解析 oil_gas_ops_prospect 导入名
 ├── docs/                                       # 文档
-│   ├── README.md                               #   文档导航
-│   ├── QUICKSTART.md                           #   快速入门
-│   └── zh/                                     #   中文文档
-│       ├── op_list.md                          #     算子列表
-│       ├── api_list.md                         #     接口列表
-│       ├── context/                            #     背景与环境
-│       ├── develop/                            #     开发指南
-│       │   ├── operator_development_guide.md   #       新增算子步骤、约定与验收
-│       │   └── precision_acceptance_template.md
-│       ├── debug/                              #     调试与性能
-│       └── invocation/                         #     调用示例
+│   ├── README.md                               #   文档导航（中文）
+│   ├── README_en.md                            #   文档导航（英文）
+│   ├── QUICKSTART.md                           #   快速入门（中文）
+│   ├── QUICKSTART_en.md                        #   快速入门（英文）
+│   ├── zh/                                     #   中文文档
+│   │   ├── op_list.md                          #     算子列表
+│   │   ├── api_list.md                         #     接口列表
+│   │   ├── context/                            #     背景与环境
+│   │   ├── develop/                            #     开发指南
+│   │   │   ├── operator_development_guide.md   #       新增算子步骤、约定与验收
+│   │   │   └── precision_acceptance_template.md
+│   │   ├── debug/                              #     调试与性能
+│   │   └── invocation/                         #     调用示例
+│   └── en/                                     #   英文文档（逐文件镜像 zh/）
 └── output/                                     # 统一产物目录（构建产生，不纳入版本管理）
     ├── <SOC>/oil_gas_ops_prospect_opp_<os>_<arch>.run
     └── wheels/oil_gas_ops_prospect-*.whl
@@ -135,7 +144,7 @@ oil-gas-ops-prospect/
 - `oil_gas_ops_prospect.complex_reciprocal` → `triton-ascend/complex_reciprocal/`
 - `oil_gas_ops_prospect.conv3d_custom` → `composite-torch/conv3d_custom/`
 
-裸 checkout 通过 `scripts/local_pkg.py`（examples / pytest `conftest.py` 会自动激活）把上述目录挂到同一导入名下，因此装包与不装包时调用方式一致；`composite-torch/` 下的算子由该脚本自动发现，无需手工登记。验证已安装 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`（`tests/run_whl_tests.sh` 已处理），避免测到仓内源码。
+直接用仓内源码跑、没装 whl 时，`scripts/local_pkg.py`（examples / pytest `conftest.py` 会自动激活）把上述目录挂到同一导入名下，因此装包与不装包时调用方式一致；`composite-torch/` 下的算子由该脚本自动发现，无需手工登记。验证已安装 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`（`tests/run_whl_tests.sh` 已处理），避免测到仓内源码。
 
 ## 产物与临时目录
 

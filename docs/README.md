@@ -1,5 +1,7 @@
 # 文档导航
 
+简体中文 | [English](./README_en.md)
+
 oil-gas-ops-prospect 的完整文档索引。
 
 ## 入门
@@ -23,7 +25,7 @@ oil-gas-ops-prospect 的完整文档索引。
 | 文档 | 说明 |
 |------|------|
 | [编译参数说明](zh/context/build.md) | `build.sh` 的编译构建与测试报告 |
-| [算子开发指南](zh/develop/operator_development_guide.md) | 新增 AscendC / Triton 算子的步骤、约定与验收 |
+| [算子开发指南](zh/develop/operator_development_guide.md) | 新增 AscendC / Triton-Ascend / Composite-Torch 算子的步骤、约定与验收 |
 | [精度验收报告模板](zh/develop/precision_acceptance_template.md) | PR 中附带的精度报告格式 |
 | [调试与性能分析](zh/debug/op_debug_prof.md) | Host / Kernel 调试与 msProf 性能采集 |
 

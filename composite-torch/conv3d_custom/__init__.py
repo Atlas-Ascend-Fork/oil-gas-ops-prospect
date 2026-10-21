@@ -13,15 +13,16 @@
 # limitations under the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Conv3d / conv3d：torch.nn.Conv3d / F.conv3d 的等价替换（纯 PyTorch 组合实现）。
+"""Conv3d / conv3d：支持参数域内兼容 torch.nn.Conv3d / F.conv3d 的纯 PyTorch 组合实现。
 
-用法（与 torch 原生一一对应，仅引用的包不同）::
+用法::
 
     from oil_gas_ops_prospect.conv3d_custom import Conv3d
     from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
 
-语义、约束与精度验证见本目录 ``conv3d.py`` / ``functional.py`` 与
-``docs/zh/op_list.md``。
+数值 padding 仅支持 int 或 3 元组，不支持 ``"same"`` / ``"valid"``；
+``Conv3d`` 构造器不提供原生模块的 ``device`` / ``dtype`` 关键字。语义、约束与
+精度验证见本目录 ``conv3d.py`` / ``functional.py`` 与 ``docs/zh/op_list.md``。
 """
 
 __all__ = ["Conv3d"]

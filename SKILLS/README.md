@@ -1,6 +1,6 @@
 # SKILLS
 
-本仓库可用的优化技能，按后端拆开。都不收录 OpenCode / MCP 宿主、从零新建算子、A5 / DAV_3510、TileLang / Catlass / PyPTO。
+本仓库可复用的算子开发技能，按后端拆开，每个后端配套优化（`*-optimize`）、症状定位（`*-optimize-knowledge`）与修复（`*-repair-guide`）三类。都不收录 OpenCode / MCP 宿主、从零新建算子、A5 / DAV_3510、TileLang / Catlass / PyPTO。
 
 ## Triton-Ascend（Helix）
 

@@ -336,12 +336,12 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
         ("FusedBiasSoftmax 切分与约束", st.ophost,
          "双 bias 广播、无 bias、非对齐宽、满尺寸 bias1、非法输入拒绝、dtype 对应 tiling key"),
         ("FusedBiasSoftmax 前向精度", st.prec_fused,
-         "`softmax(x+bias1+bias2,-1)`：bf16 广播/全尺寸/尖峰分布、fp32 无 bias；原地语义；"
+         "`softmax(x+bias1+bias2,-1)`：bf16 广播/全尺寸/尖峰分布、fp32 无 bias；连续输入成功进入融合路径时的原地语义；"
          "同 shape 不同缓冲互不污染；与 fp32 标杆对拍"),
         ("FusedSoftmaxGrad 切分与路径", st.ophost,
          "对齐 MIX、非对齐 VEC、fp32/fp16 走向量、超 UB 拒绝、`Q≠S` 合法、非法输入拒绝"),
         ("FusedSoftmaxGrad 反向精度", st.prec_fused,
-         "`g=go@V^T` 后 JVP 原地覆写：典型 / 超核 / 非对齐 D / fp32 / `Q≠S`；与 fp32 标杆对拍"),
+         "`g=go@V^T` 后 JVP：连续 probs 成功进入融合路径时原地覆写；典型 / 超核 / 非对齐 D / fp32 / `Q≠S`；与 fp32 标杆对拍"),
         ("融合注意力链路", st.prec_fused,
          "`attention_core` 前向输出与 `dL/dlogits`、`dL/dq`、`dL/dv` 对拍，容差 `max_diff<0.6`"),
         ("real_rfft 基函数与前向", st.triton,
@@ -357,11 +357,11 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
          "五方法对拍（stable 全分布 max_rel<=1e-5，含 tiny/huge 极端幅值）与反向 vs float64；"
          "kernel 三条 AOT 全分支可编译"),
         ("Conv3d / conv3d NPU 精度与性能", combine(st.prec_conv3d, st.perf_conv3d),
-         "实际训练尺寸 11 模式真机对拍：自定义前/反向 vs 原生（float32 L2 相对误差阈值 `1e-5`；"
-         "大 kernel depthwise 原生反向崩溃模式验证自定义侧可用）；fwd / fwd+bwd 计时"),
+         "测试脚本列出的 NPU float32 形态对拍：支持参数域内的自定义前/反向 vs 原生（L2 相对误差阈值 `1e-5`；"
+         "特定大 kernel depthwise case 验证分步反向可避开已观察到的原生 L1 限制）；fwd / fwd+bwd 计时"),
         ("Conv3d / conv3d 前反向精度", st.composite,
-         "主要取值场景组合（含 stride/dilation/非立方 kernel/负 padding）、11 种实际训练调用模式；"
-         "与 `nn.Conv3d` / `F.conv3d` 原生前反向对拍（float64 阈值 `1e-12`）"),
+         "仓内列出的 stride/dilation/非立方 kernel/数值 padding 组合与训练调用形态；"
+         "在支持参数域内和 `nn.Conv3d` / `F.conv3d` 前反向对拍（测试脚本规定的 dtype 与阈值）"),
         ("算子文档", st.docs,
          "交付文档齐全（README、LICENSE、SECURITY、文档导航及入门/使用/开发文档共 "
          f"{len(load_doc_checks())} 份）；核对应子清单、公开接口与 `--pkg` / `--install` / `-u` 入口。"
@@ -374,7 +374,7 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
          "`complex_mul` / `fused_bias_softmax` / `fused_softmax_grad` / `real_rfft` / `real_irfft` 可导入；"
          "CPU 回退前反向可跑通"),
         ("可靠性", combine(st.ophost, st.prec_fused, st.api),
-         "非法输入被切分侧拒绝；融合算子保持原地写回；非 NPU 自动回退且接口语义不变"),
+         "非法输入被切分侧拒绝；融合算子仅在连续输入成功进入融合路径时原地写回；非连续输入副本与非 NPU 回退不覆写调用者原张量"),
         ("配套兼容", combine(st.install, st.api),
          "CANN 9.0.0 + 配套 PyTorch / torch_npu 可完成编译、安装与算子验证"),
     ]
@@ -410,13 +410,14 @@ def section_overview(cmd: str, ok: bool, rate: str) -> list[str]:
         "| 2 | ComplexMulGrad | `ComplexMul` 的反向：由 `gwr, gwi` 与前向输入得到 `gur, gui, gvr, gvi`，"
         "`float32` / `ND` |",
         "| 3 | FusedBiasSoftmax | `y = softmax(x + bias1 + bias2, -1)`，`bias1`/`bias2` 可选，"
-        "NPU 路径原地写回 `x`，支持 `fp32` / `fp16` / `bf16` |",
-        "| 4 | FusedSoftmaxGrad | 注意力 softmax JVP：`g = go @ V^T` 后原地覆写 `probs`，支持 `Q≠S`，"
+        "连续输入成功进入 NPU 融合路径时原地写回 `x`，支持 `fp32` / `fp16` / `bf16` |",
+        "| 4 | FusedSoftmaxGrad | 注意力 softmax JVP：`g = go @ V^T`，连续 `probs` 成功进入 NPU 融合路径时原地覆写，支持 `Q≠S`，"
         "`fp32` / `fp16` / `bf16` |",
         "| 5 | real_rfft | 实数正向 FFT：`x → (xr, xi)`，`norm=\"ortho\"`，频率轴长度为 `n//2+1` |",
         "| 6 | real_irfft | 由半谱实部、虚部重建实数：`(xr, xi), n → y`，`norm=\"ortho\"` |",
-        "| 7 | Conv3d / conv3d | `torch.nn.Conv3d` / `F.conv3d` 的等价替换（纯 PyTorch 组合实现）："
-        "NPU 自定义前/反向，支持任意 stride / dilation / groups / padding_mode，state_dict 互通 |",
+        "| 7 | Conv3d / conv3d | 纯 PyTorch 组合兼容实现：数值 padding、stride、dilation 支持 int / 3 元组，"
+        "groups 为 int，字符串 padding 不受支持；模块支持 zeros / reflect / replicate / circular，构造器无 device/dtype 关键字；"
+        "dtype 以底层 PyTorch 后端支持且本仓实测为准，state_dict key 互通 |",
         "| 8 | complex_reciprocal | complex64 倒数 `1/z`（stable / naive 双路径、实虚分离入口、"
         "自定义反向），替代 NPU 上走 Ai_Cpu 的 `aclnnReciprocal` |",
         "",
@@ -564,7 +565,7 @@ def section_reliability(st: Statuses) -> list[str]:
         "| 序号 | 可靠性特性 | 测试结论 | 遗留风险 |",
         "| --- | --- | --- | --- |",
         f"| 1 | 非法或退化输入被拒绝或收缩为合法切分 | {verdict(st.ophost)} | 无 |",
-        f"| 2 | 融合算子原地写回（输出与输入共享 device 指针） | {verdict(st.prec_fused)} | 无 |",
+        f"| 2 | 融合算子仅在连续输入成功进入融合路径时原地写回（输出与调用者原输入共享 device 指针） | {verdict(st.prec_fused)} | 无 |",
         f"| 3 | 非 NPU 或扩展不可用时回退 PyTorch，接口不变 | {verdict(st.api)} | 无 |",
         f"| 4 | 同 shape 重复调用精度稳定（含不同缓冲、融合注意力链路） | {verdict(st.prec_fused)} | 无 |",
         "",
@@ -594,9 +595,9 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
         "| 算子微基准 | 不涉及 | complex_reciprocal | 同设备 torch `1/z`（aclnnReciprocal）与先构造 complex64 的原始写法 | "
         f"前向 {speedup_span(perf.crecip_fwd)}；端到端融合 {speedup_span(perf.crecip_e2e)} | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_crecip)} | 无 |",
-        "| 算子微基准 | 不涉及 | Conv3d / conv3d | 同设备 `nn.Conv3d` / `F.conv3d`（实际训练尺寸 11 模式） | "
-        f"前向 {speedup_span(perf.conv3d_fwd)}，fwd+bwd {speedup_span(perf.conv3d_fwdbwd)}（大 kernel depthwise "
-        "原生反向崩溃模式仅自定义侧可跑） | "
+        "| 算子微基准 | 不涉及 | Conv3d / conv3d | 同设备 `nn.Conv3d` / `F.conv3d`（测试脚本列出的形态） | "
+        f"前向 {speedup_span(perf.conv3d_fwd)}，fwd+bwd {speedup_span(perf.conv3d_fwdbwd)}（特定大 kernel depthwise "
+        "case 仅验证分步反向可避开已观察到的原生 L1 限制） | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_conv3d)} | 无 |",
         "",
         "代表形态实测如下（精度见本次 `-u` 精度 job）。",
@@ -608,7 +609,7 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
 def section_perf_tables(perf: PerfSummary) -> list[str]:
     lines = perf_md_table("complex_reciprocal 前向（相对同设备 torch 1/z）", perf.crecip_fwd)
     lines += perf_md_table("complex_reciprocal 端到端融合（相对先构造 complex64 的原始写法）", perf.crecip_e2e)
-    lines += perf_md_table("Conv3d / conv3d 前向（相对同设备 nn.Conv3d，实际训练尺寸）", perf.conv3d_fwd)
+    lines += perf_md_table("Conv3d / conv3d 前向（相对同设备 nn.Conv3d，测试脚本列出的形态）", perf.conv3d_fwd)
     lines += perf_md_table("Conv3d / conv3d fwd+bwd（相对同设备 nn.Conv3d autograd）", perf.conv3d_fwdbwd)
     lines += perf_md_table("ComplexMul / ComplexMulGrad（相对同设备逐元素公式）", perf.cm_rows)
     lines += perf_md_table("FusedBiasSoftmax（相对同设备 fp32 `softmax`）", perf.fused_fwd)

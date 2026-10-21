@@ -1,5 +1,7 @@
 # 快速入门
 
+简体中文 | [English](./QUICKSTART_en.md)
+
 本文给出从环境准备到跑通算子的最短路径。更完整的安装说明见[环境部署](zh/context/quick_install.md)。
 
 ## 1. 前置条件
@@ -36,6 +38,8 @@ bash build.sh --pkg      # 只出 OPP .run
 bash build.sh            # 出 .run 与 Python whl 到 output/，不安装
 bash build.sh --install  # 编译并安装，然后跑 whl 冒烟
 ```
+
+顶层流程先构建 OPP，再使用工作区产物构建 whl，无需预装本次 OPP。
 
 `--install` 依次完成：
 

@@ -13,7 +13,7 @@
 
 ## 一、贡献新算子
 
-本仓有两类算子后端，交付件不同，请按实际后端选择。
+本仓有三类算子后端，交付件不同，请按实际后端选择。
 
 ### 1. 创建 Issue 需求
 
@@ -89,6 +89,14 @@ tests/triton/${op_family}/
 - kernel 需提供 **PyTorch 回退实现**，接口语义与 NPU 路径一致。
 - 新增 kernel 分支需能被 `triton-ascend/tools/aot_compile_check.py` 覆盖到。
 
+#### Composite-Torch 算子（Python whl）
+
+提交至 `composite-torch/<op_family>/`，测试放在 `tests/composite/<op_family>/`。该后端仅使用现有 PyTorch 算子组合（可用 `torch.autograd.Function` 组织前/反向），**不得依赖自定义 kernel 或自定义扩展**；需要自定义 kernel 时应选择 AscendC 或 Triton-Ascend。
+
+同时需在 `setup.py` 的 `packages` / `package_dir` 中注册 `oil_gas_ops_prospect.<op_family>` 到 `composite-torch/<op_family>/`，使其进入 whl；直接用仓内源码跑、没装 whl 时，`scripts/local_pkg.py` 会自动发现对应目录。
+
+提交时必须在 `docs/zh/op_list.md` 与 `docs/en/op_list.md` 中成对写明已验证的设备、dtype、shape 与参数支持矩阵，不能把 PyTorch 后端可接受的全集当作本仓已验证范围。CPU 语义/精度用例由 `bash build.sh -u --composite` 运行；涉及 NPU 的精度、性能与显存结论仍须在真实 910B 上按支持矩阵验证，并在 PR 中提供与 PyTorch 标杆的精度和性能结果。
+
 ### 4. 精度要求
 
 新贡献算子需满足精度标准，具体参见[生态算子开源精度标准](https://gitcode.com/cann/opbase/blob/master/docs/zh/ops_precision_standard/experimental_standard.md)。目录、命名、切分可测与 PR 交付件见[算子开发指南](docs/zh/develop/operator_development_guide.md)。请在 PR 描述中附上精度测试报告，报告格式参考 [`docs/zh/develop/precision_acceptance_template.md`](docs/zh/develop/precision_acceptance_template.md)。
@@ -100,6 +108,7 @@ tests/triton/${op_family}/
 ```bash
 bash build.sh --install
 bash build.sh -u --ut --st --precision --perf
+bash build.sh -u --composite
 bash scripts/check_license_header.sh
 ```
 
@@ -108,7 +117,7 @@ bash scripts/check_license_header.sh
 - **合规检查**
   - C++ 代码符合《[C++ 编程规范](https://gitcode.com/cann/community/blob/master/contributor/coding-standards/C++%20Coding%20standards.md)》，可用仓内 `.clang-format` 格式化。
   - 所有新增源文件带 Apache License 2.0 许可证头（参考现有文件）。
-  - Markdown 文档语法符合规范。
+  - Markdown 文档语法符合规范；涉及对外语义、约束或支持矩阵时，`docs/zh/` 与 `docs/en/` 对应页面必须成对更新。
   - 本地自检全部通过（含 910B 上板）。
 - **PR 提交**：通过 `git` 命令向目标分支提 PR，检查 PR 标题是否清晰、PR 描述是否规范（说明更改内容和原因、关联对应 Issue）、是否已签署 CLA。
 

@@ -1,5 +1,7 @@
 # 调试与性能分析
 
+简体中文 | [English](../../en/debug/op_debug_prof.md)
+
 本仓 AscendC 算子跑在 **AI Core**（`ComplexMul` / `ComplexMulGrad` 为 AIV，`FusedSoftmaxGrad` 的 bf16 路径为 MIX）。文档说明本仓能用来定位问题、核对精度和采集性能的入口。
 
 精度、性能与显存必须在真实 **910B（NPU）** 上验证通过：
@@ -146,7 +148,7 @@ bash output/Ascend910B1/oil_gas_ops_prospect_opp_*.run --quiet
 
 ### Triton 算子在 CPU 上跑但没报错
 
-`real_rfft` / `real_irfft` 在非 NPU 或 Triton 不可用时回退到 `torch.fft`。要确认走了 NPU kernel，检查张量 device 以及 `triton-ascend` 是否已安装。
+非 NPU 或 Triton 不可用时，`real_rfft` / `real_irfft` 回退到 `torch.fft`，`complex_reciprocal` 回退到 torch 的 `1 / z`。要确认走了 NPU kernel，检查张量 device 以及 `triton-ascend` 是否已安装。`complex_reciprocal` 在 `complex64` / `float32` 以外的 dtype 上同样走回退。
 
 ---
 
@@ -258,6 +260,14 @@ done
 ```
 
 `verify_triton_fft_real_128_3d.py` 的 `--block-m` 会覆盖该环境变量。
+
+### Triton 复数倒数分块
+
+`OIL_GAS_OPS_RECIP_BLOCK` 控制 `complex_reciprocal` 每 tile 的复数元素数（默认 2048，向下取整到 2 的幂并钳制到 `[16, 2048]`；更大的 tile 会溢出 Vector Core UB）。`verify_complex_reciprocal.py --block-sweep` 可扫候选值：
+
+```bash
+OIL_GAS_OPS_RECIP_BLOCK=1024 python3 tests/triton/complex_reciprocal/verify_complex_reciprocal.py
+```
 
 ### AscendC 切分
 

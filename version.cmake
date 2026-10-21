@@ -31,5 +31,5 @@ set(OIL_GAS_OPS_PROSPECT_BUILD_DEPENDENCIES "toolkit>=9.0.0;googletest>=1.14.0")
 # 运行期依赖。
 #   runtime / opbase   —  aclnn 接口调用
 #   torch / torch_npu  —  Python 侧算子封装与 autograd
-#   triton             —  Triton-Ascend 算子
-set(OIL_GAS_OPS_PROSPECT_RUN_DEPENDENCIES "toolkit>=9.0.0;torch;torch-npu;triton")
+#   triton-ascend      —  Triton-Ascend 算子；由用户从 Ascend 软件源预装
+set(OIL_GAS_OPS_PROSPECT_RUN_DEPENDENCIES "toolkit>=9.0.0;torch;torch-npu;triton-ascend==3.2.1")

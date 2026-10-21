@@ -12,8 +12,9 @@ version = "0.1.0"
 description = "AscendC and Triton-Ascend custom operators for oil & gas exploration"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
+# Triton-Ascend 仅由 Ascend 软件源提供，须按 docs/zh/context/quick_install.md 预装；
+# 不能在此声明成公共 PyPI 上不含 Ascend 后端的社区 triton。
 dependencies = [
     "torch",
     "torch-npu",
-    "triton",
 ]

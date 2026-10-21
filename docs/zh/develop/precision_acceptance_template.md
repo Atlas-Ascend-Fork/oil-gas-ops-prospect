@@ -1,5 +1,7 @@
 # 精度验收报告模板
 
+简体中文 | [English](../../en/develop/precision_acceptance_template.md)
+
 新增或修改算子的 PR 需在描述中附上本报告。请复制下面的模板并逐项填写，删除不适用的小节并说明原因。
 
 精度标准参见[生态算子开源精度标准](https://gitcode.com/cann/opbase/blob/master/docs/zh/ops_precision_standard/experimental_standard.md)。
@@ -11,7 +13,7 @@
 | 项 | 内容 |
 |----|------|
 | 算子名 / OpType | |
-| 后端 | AscendC / Triton-Ascend |
+| 后端 | AscendC / Triton-Ascend / Composite-Torch |
 | 关联 Issue | #  |
 | CANN 版本 | |
 | SoC 型号 | |
@@ -82,6 +84,8 @@
 | 精度 / 性能 | `bash build.sh -u --precision --perf --ops=<op>` | | | |
 | Triton CPU 回退精度 | `python3 -m pytest tests/triton/real_fft -q` | | | |
 | Triton AOT 编译检查 | `python3 triton-ascend/tools/aot_compile_check.py` | | | |
+| Composite-Torch CPU 精度 | `bash build.sh -u --composite` | | | |
+| Composite-Torch NPU 精度 / 性能 | `python3 tests/composite/conv3d_custom/bench_conv3d_custom_perf.py --mode all` | | | |
 
 要求：全量 UT 通过且日志无 ERROR。
 

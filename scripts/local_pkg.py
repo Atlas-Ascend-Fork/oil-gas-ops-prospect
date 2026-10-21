@@ -22,7 +22,7 @@ whl 由 ``setup.py`` 的 ``package_dir`` 按算子名组装：
 - ``oil_gas_ops_prospect.complex_reciprocal`` → ``triton-ascend/complex_reciprocal/``
 - ``oil_gas_ops_prospect.<op>`` → ``composite-torch/<op>/``（``_composite_mapping()`` 自动发现）
 
-裸 checkout 没有物理包目录，本模块在 ``sys.meta_path`` 上挂一个 finder，
+没装 whl 时仓内没有物理包目录，本模块在 ``sys.meta_path`` 上挂一个 finder，
 让 ``from oil_gas_ops_prospect.complex_mul import complex_mul`` 等导入与装包后一致。
 
 置 ``OIL_GAS_OPS_WHL_TEST=1`` 时不激活，避免挡住「验证已安装 whl」的用例。

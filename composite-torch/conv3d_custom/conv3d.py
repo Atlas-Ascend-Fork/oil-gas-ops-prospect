@@ -13,18 +13,21 @@
 # limitations under the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Conv3d：torch.nn.Conv3d 的等价替换（nn.Module 形态）。
+"""Conv3d：支持参数域内兼容 torch.nn.Conv3d 的 nn.Module 形态。
 
-- NPU 可用（torch_npu 已导入）时 ``use_custom`` 开启，前/反向走
-  ``functional.conv3d``（自定义 autograd，支持任意 stride / dilation /
-  groups / padding_mode）；否则回退 ``F.conv3d``。
-- weight/bias 为顶层参数，state_dict 的 key 与 nn.Conv3d 完全一致。
+- 检测到 ``torch.npu`` 接口时 ``use_custom`` 开启，前/反向走
+  ``functional.conv3d``；否则回退 ``F.conv3d``。
+- ``kernel_size``、``stride``、数值 ``padding``、``dilation`` 支持 int 或
+  3 元组，``groups`` 为 int；``padding_mode`` 支持 zeros / reflect /
+  replicate / circular。字符串 padding 不受支持。
+- 构造器不提供原生模块的 ``device`` / ``dtype`` 关键字；weight/bias 为顶层
+  参数，state_dict key 与 nn.Conv3d 互通。
 
 用法::
 
     from oil_gas_ops_prospect.conv3d_custom import Conv3d
 
-函数式入口见 ``functional.py``；反向构造与精度验证说明亦在 ``functional.py``。
+函数式入口、反向构造与精度验证说明见 ``functional.py``。
 """
 
 import math
@@ -52,7 +55,7 @@ def _fpad_order(padding):
 
 
 class Conv3d(nn.Module):
-    """nn.Conv3d 等价替换：NPU 可用时走 conv3d 自定义前/反向，否则回退 F.conv3d；state_dict 互通。"""
+    """支持参数域内兼容 nn.Conv3d；检测到 torch.npu 时默认走自定义前/反向，state_dict key 互通。"""
 
     def __init__(
         self,

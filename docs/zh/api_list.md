@@ -1,6 +1,8 @@
 # 接口列表
 
-对外接口统一由 Python 包 `oil_gas_ops_prospect` 暴露。源码树里没有这个目录：`setup.py` 在打包时把 `ascendc/pybind/` 与 `triton-ascend/real_fft/` 组装到同一包名下；裸 checkout 由 `scripts/local_pkg.py` 提供同一导入路径。
+简体中文 | [English](../en/api_list.md)
+
+对外接口统一由 Python 包 `oil_gas_ops_prospect` 暴露。源码树里没有这个目录：`setup.py` 在打包时把 `ascendc/pybind/`、`triton-ascend/real_fft/`、`triton-ascend/complex_reciprocal/` 与 `composite-torch/conv3d_custom/` 显式映射到同一包名下；直接用仓内源码跑、没装 whl 时，由 `scripts/local_pkg.py` 自动发现并提供同一导入路径。
 
 ```text
 oil_gas_ops_prospect
@@ -82,7 +84,7 @@ def fused_bias_softmax(
 | `bias1` | `torch.Tensor` 或 `None` | `[B, H, 1, S]` 广播或 `[B, H, Q, S]` 全尺寸；`None` 表示不加 |
 | `bias2` | `torch.Tensor` 或 `None` | `[B, H, Q, S]`；`None` 表示不加 |
 
-返回与 `x` 同 shape / dtype 的 softmax 概率。NPU 融合路径**原地写回 `x`**（返回张量与 `x` 共享 storage）；参考实现非原地。
+返回与 `x` 同 shape / dtype 的 softmax 概率。成功进入 NPU 融合路径时，仅当传入张量连续，返回值才与调用者原始 `x` 共享 storage 并原地写回；非连续输入会由包装层 `contiguous()` 复制，输出与该副本别名，不会覆写调用者原始非连续张量。参考实现非原地。
 
 **实现选择**：默认走 PyTorch。张量在 NPU 且 `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` 为 `ascendc` / `auto` 时走 AscendC。失败默认静默回退，除非 `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX=1`。
 
@@ -106,7 +108,7 @@ def fused_softmax_grad(
 | `grad_output` | `torch.Tensor` | \(\partial L / \partial o\)，`[B, H, Q, D]` |
 | `values` | `torch.Tensor` | \(V\)，`[B, H, S, D]` |
 
-三输入同 dtype（`fp32` / `fp16` / `bf16`）。返回与 `probs` 同 shape。NPU 融合路径**原地覆写 `probs`**；参考实现非原地。实现开关与 `fused_bias_softmax` 共用。
+三输入同 dtype（`fp32` / `fp16` / `bf16`）。返回与 `probs` 同 shape。成功进入 NPU 融合路径时，仅当传入张量连续，返回值才与调用者原始 `probs` 共享 storage 并原地覆写；非连续输入会由包装层 `contiguous()` 复制，输出与该副本别名，不会覆写调用者原始非连续张量。参考实现非原地。实现开关与 `fused_bias_softmax` 共用。
 
 ### `attention_core`
 
@@ -129,7 +131,7 @@ forward:   logits = q @ k^T
            probs  = softmax(logits + bias1 + bias2, -1)   # fused_bias_softmax
            o      = probs @ v
 backward:  grad_v = probs^T @ go                          # 先于 probs 覆写，与原版 CUDA 时序一致
-           g_logits = softmax_jvp(probs, go, v)           # fused_softmax_grad，原地覆写 probs
+           g_logits = softmax_jvp(probs, go, v)           # AscendC 融合分支原地覆写传入扩展的连续内部 probs
            grad_bias* = 按 bias 广播维对 g_logits 求和
            grad_q = g_logits @ k
            grad_k = (q^T @ g_logits)^T
@@ -262,7 +264,7 @@ complex64 倒数，按输入形式自动分发：
 | `z` | `torch.Tensor` | 单参形式：complex64 张量；双参形式：float32 实部张量/标量 |
 | `xi` | `torch.Tensor` / `float` / `None` | 双参形式的虚部（可广播）；单参形式不传 |
 | `stable` | `bool` | `True`（默认）用 `t=\|a\|+\|b\|` 缩放避免 `a^2+b^2` 上下溢；`False` 朴素公式（带宽高约 10%，`\|z\|` 超出 ~[1e-19, 1.8e19] 会错） |
-| `block_size` | `int` 或 `None` | 每 tile 复数元素数（2 的幂，钳制 `[16, 2048]`）；`None` 由实现按核数选择，可由 `OIL_GAS_OPS_RECIP_BLOCK` 覆盖 |
+| `block_size` | `int` 或 `None` | 每 tile 复数元素数，向下取整到 2 的幂并钳制到 `[16, 2048]`；`None` 时取 `OIL_GAS_OPS_RECIP_BLOCK`，未设置则用默认值 `2048` |
 
 ---
 
@@ -289,12 +291,13 @@ class Conv3d(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor
 ```
 
-`torch.nn.Conv3d` 的等价替换（纯 PyTorch 组合实现）。构造参数与 `nn.Conv3d` 一致；`forward(x)` 返回 \((N, C_{out}, D_{out}, H_{out}, W_{out})\)。
+纯 PyTorch 组合实现，在下述支持参数域内与 `torch.nn.Conv3d` 数学一致；`forward(x)` 返回 \((N, C_{out}, D_{out}, H_{out}, W_{out})\)。当前构造器不提供 `nn.Conv3d` 的 `device` / `dtype` 关键字。
 
-- **state_dict 互通**：key 与 `nn.Conv3d` 完全一致，可双向 `load_state_dict`（strict）。
-- **路径选择**：`use_custom` 跟随 NPU 可用性（`torch_npu` 已导入即开启），不限制 stride / dilation；否则回退 `F.conv3d`。测试可强制 `module.use_custom = True` 在 CPU 上驱动自定义路径。
-- **反向**：前/反向封装在内部 `_Conv3dFunction`（`torch.autograd.Function`）；支持双阶反向；与原生 autograd 数学等价（float64 ≤ 1.78e-14）。
-- **`padding_mode != 'zeros'`**：`replicate` / `reflect` / `circular` 语义同 `nn.Conv3d`（先 `F.pad` 再卷积）。
+- **参数范围**：`kernel_size`、`stride`、数值 `padding`、`dilation` 支持 `int` 或 3 元素序列（元组或列表）；`groups` 为 `int`。字符串 `padding="same"` / `"valid"` 受支持，会在卷积前换算为显式补边；`"same"` 要求 stride 为 1，否则抛 `ValueError`。
+- **state_dict 互通**：key 与 `nn.Conv3d` 一致，可双向 `load_state_dict`（strict）。
+- **路径选择**：检测到 `torch.npu` 接口时 `use_custom` 默认开启，否则回退 `F.conv3d`；测试可强制 `module.use_custom = True` 在 CPU 上驱动自定义路径。
+- **反向与 dtype**：前/反向由内部 `_Conv3dFunction` 组织；数学等价性仅针对上述支持参数域及仓内覆盖的组合。dtype 范围为底层 PyTorch 后端支持且经本仓测试的 dtype，含复数输入（CPU complex128/complex64 与 NPU complex64）——复数反向对 weight 取共轭，权重梯度由实数卷积梯度重组。
+- **`padding_mode`**：模块支持 `zeros` / `reflect` / `replicate` / `circular`；非 `zeros` 模式先 `F.pad` 再卷积。
 
 ### `conv3d`
 
@@ -312,7 +315,7 @@ def conv3d(
 ) -> torch.Tensor
 ```
 
-`torch.nn.functional.conv3d` 的等价替换（函数式入口，仅引用的包不同）。签名与 `F.conv3d` 一致；始终经内部 `_Conv3dFunction`（`torch.autograd.Function`）组织前/反向 —— 与原生数学等价（支持任意 stride / dilation 与双阶反向），NPU 上可绕开原生 backward 对大 kernel depthwise 的 L1 限制。nn.Module 形态与 NPU 回退逻辑见 `Conv3d`。
+纯 PyTorch 函数式兼容实现，始终经内部 `_Conv3dFunction`（`torch.autograd.Function`）组织前/反向。`stride`、数值 `padding`、`dilation` 支持 `int` 或 3 元素序列（元组或列表），`groups` 为 `int`；字符串 `padding="same"` / `"valid"` 会在卷积前换算为显式补边（`"same"` 要求 stride 为 1）。在这些受支持参数及底层 PyTorch 后端支持且经本仓测试的 dtype 范围内，与 `F.conv3d` 数学一致。nn.Module 形态与 NPU 回退逻辑见 `Conv3d`。
 
 ---
 
@@ -345,8 +348,8 @@ Triton 算子没有 aclnn 入口。
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_COMPLEX_MUL` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch，AscendC 调用失败直接抛异常 |
 | `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` | `torch` / `ascendc` / `auto` | `torch` | `fused_bias_softmax` / `fused_softmax_grad` / `attention_core` 的实现选择 |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch，AscendC 调用失败直接抛异常 |
-| `OIL_GAS_OPS_RECIP_BLOCK` | 正整数（2 的幂） | `None` | `complex_reciprocal` 的 tile 覆盖（钳制 `[16, 2048]`，默认由实现选择） |
-| `OIL_GAS_OPS_FFT_BLOCK_M` | 正整数 | `512` | `real_rfft` / `real_irfft` 的 DFT-matmul 行分块大小，用于性能调优（可扫 128 / 256 / 512） |
+| `OIL_GAS_OPS_RECIP_BLOCK` | 正整数（2 的幂） | `2048` | `complex_reciprocal` 的 tile 大小（向下取整到 2 的幂，钳制 `[16, 2048]`）；显式传入的 `block_size` 参数优先 |
+| `OIL_GAS_OPS_FFT_BLOCK_M` | 正整数 | `512` | `real_rfft` / `real_irfft` 的 DFT-matmul 行分块大小，用于性能调优（可扫 128 / 256 / 512）。每进程首次使用时读取一次并缓存，需在启动 Python 前设置 |
 
 ### 构建与产物
 

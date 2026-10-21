@@ -193,8 +193,8 @@ CANN 内部框架头（`op_host/tiling_base.h`、`op_host/tiling_templates_regis
 |--------|--------|-----------|--------|------|
 | `complex_mul` | `ComplexMul` | `aclnnComplexMul` | `oil_gas_ops_prospect.complex_mul.complex_mul` | 四路 float 复数逐点乘（AIV-only） |
 | `complex_mul_grad` | `ComplexMulGrad` | `aclnnComplexMulGrad` | 由 `complex_mul` 的 autograd 调用 | 上者的反向（AIV-only） |
-| `fused_bias_softmax` | `FusedBiasSoftmax` | `aclnnFusedBiasSoftmax` | `oil_gas_ops_prospect.fused_bias_softmax.fused_bias_softmax` | `softmax(x+bias1+bias2,-1)`，原地写回 |
-| `fused_softmax_grad` | `FusedSoftmaxGrad` | `aclnnFusedSoftmaxGrad` | `oil_gas_ops_prospect.fused_bias_softmax.fused_softmax_grad` | 注意力 softmax JVP，原地覆写 probs |
+| `fused_bias_softmax` | `FusedBiasSoftmax` | `aclnnFusedBiasSoftmax` | `oil_gas_ops_prospect.fused_bias_softmax.fused_bias_softmax` | `softmax(x+bias1+bias2,-1)`；底层 aclnn 可原地写回传入扩展的连续 `x` |
+| `fused_softmax_grad` | `FusedSoftmaxGrad` | `aclnnFusedSoftmaxGrad` | `oil_gas_ops_prospect.fused_bias_softmax.fused_softmax_grad` | 注意力 softmax JVP；底层 aclnn 可原地覆写传入扩展的连续 `probs` |
 
 更完整的数学定义、输入输出与约束见 [`docs/zh/op_list.md`](../docs/zh/op_list.md)；Python / aclnn 签名见 [`docs/zh/api_list.md`](../docs/zh/api_list.md)。下面按算子列出本目录实现侧必须守住的规格。
 
@@ -220,12 +220,12 @@ NPU 精度/性能对比：[`tests/ascendc/complex_mul/`](../tests/ascendc/comple
 ### FusedBiasSoftmax
 
 ```text
-y = softmax(x + bias1(广播或全尺寸) + bias2, -1)   # 原地写回 x
+y = softmax(x + bias1(广播或全尺寸) + bias2, -1)   # 底层 aclnn 原地写回传入扩展的连续 x
 ```
 
 | 项 | 内容 |
 |----|------|
-| 输入 / 输出 | `x [B,H,Q,S]`；可选 `bias1 [B,H,1,S]` 或 `[B,H,Q,S]`；可选 `bias2 [B,H,Q,S]`；输出 `y` 与 `x` 别名 |
+| 输入 / 输出 | `x [B,H,Q,S]`；可选 `bias1 [B,H,1,S]` 或 `[B,H,Q,S]`；可选 `bias2 [B,H,Q,S]`；输出 `y` 与传入扩展的连续 `x` 别名 |
 | dtype / format | `fp32` / `fp16` / `bf16`，`ND`，存在的 bias 必须与 `x` 同 dtype |
 | 核类型 | AIV-only。按行 `B*H*Q` 切核，行宽 `S` 对齐到 32B；SoftMax 预留 32KB UB |
 | 形状约束 | **必须 4D**；`1 ≤ S ≤ 4096`；`bias2` 若存在必须全尺寸 |
@@ -235,12 +235,12 @@ y = softmax(x + bias1(广播或全尺寸) + bias2, -1)   # 原地写回 x
 
 ```text
 g = go @ V^T
-probs ← probs ⊙ (g − rowsum(probs ⊙ g))   # fp32 域，原地覆写 probs
+probs ← probs ⊙ (g − rowsum(probs ⊙ g))   # fp32 域；底层 aclnn 原地覆写传入扩展的连续 probs
 ```
 
 | 项 | 内容 |
 |----|------|
-| 输入 / 输出 | `probs [B,H,Q,S]`，`gradOutput [B,H,Q,D]`，`values [B,H,S,D]` → `out` 与 `probs` 别名 |
+| 输入 / 输出 | `probs [B,H,Q,S]`，`gradOutput [B,H,Q,D]`，`values [B,H,S,D]` → `out` 与传入扩展的连续 `probs` 别名 |
 | dtype / format | 三输入同 dtype：`fp32` / `fp16` / `bf16`，`ND` |
 | 形状约束 | **必须 4D**；`Q ≠ S` 合法；`D` 必须一致且大于 0 |
 | 路径分发 | `fp32`/`fp16`/非对齐 `bf16` → 纯向量（key 0/1/2）；`bf16` 且 `S%16==0` 且 `D%16==0` → MIX_AIC_1_2（key 3：AIC 矩乘写 workspace，再 AIV JVP） |

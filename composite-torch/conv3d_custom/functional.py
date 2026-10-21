@@ -13,21 +13,20 @@
 # limitations under the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""conv3d：torch.nn.functional.conv3d 的等价替换（函数式入口）。
+"""conv3d：支持参数域内兼容 torch.nn.functional.conv3d 的函数式入口。
 
-始终经 ``_Conv3dFunction`` 组织前/反向：与原生数学等价（支持任意
-stride / dilation / groups 与双阶反向），NPU 上可绕开原生 backward 对
-大 kernel depthwise 的 L1 限制。nn.Module 形态（Conv3d，含 NPU 回退
-逻辑与 state_dict 互通）见 ``conv3d.py``。
+始终经 ``_Conv3dFunction`` 组织前/反向。``stride``、数值 ``padding``、
+``dilation`` 支持 int 或 3 元组，``groups`` 为 int；字符串 padding
+``"same"`` / ``"valid"`` 不受支持。数学一致性仅针对这些参数以及底层
+PyTorch 后端支持且经本仓测试的 dtype。nn.Module 形态（Conv3d，含 NPU
+回退逻辑与 state_dict 互通）见 ``conv3d.py``。
 
 反向构造：grad_input 用 flip+转置 channel 后的 ``F.conv3d``（stride>1 时先对
 grad_output 做零膨胀 + output_padding 补齐；padding 为负时裁剪），
 grad_weight 调 ``torch.nn.grad.conv3d_weight``，grad_bias 对 grad_output 求和。
 复数反向对 weight 取共轭，权重梯度拆成实数卷积后重组，以遵循复数 autograd 语义。
 
-精度验证：float64 下三梯度与原生 autograd 数学等价（阈值 1e-12 内）；
-NPU float32 实际训练尺寸全模式对比通过（grad_weight 因内核累加顺序差异在
-float32 正常范围内）；固化用例见 tests/composite/conv3d_custom/。
+固化精度用例及其实际覆盖范围见 tests/composite/conv3d_custom/。
 """
 
 import torch
@@ -68,7 +67,7 @@ class _Conv3dFunction(Function):
 
         grad_input = grad_weight = grad_bias = None
 
-        # 1. 计算输入梯度 — 转置卷积 (支持任意 stride/dilation)
+        # 1. 计算输入梯度 — 转置卷积（处理支持范围内的 stride/dilation）
         #
         # 数学原理:
         #   forward: out[j] = Σ_k W[k] * in[j*s + d*k - p]   (cross-correlation)
@@ -221,11 +220,12 @@ def _padding_for_string(padding, kernel_size, stride, dilation):
 
 
 def conv3d(x, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
-    """torch.nn.functional.conv3d 的等价替换（函数式入口，仅引用的包不同）。
+    """支持参数域内兼容 ``torch.nn.functional.conv3d`` 的函数式入口。
 
-    始终经 _Conv3dFunction 组织前/反向：与原生数学等价（支持任意
-    stride / dilation 与双阶反向），NPU 上可绕开原生 backward 对大 kernel
-    depthwise 的 L1 限制。nn.Module 形态与 NPU 回退逻辑见 Conv3d。
+    ``stride``、数值 ``padding``、``dilation`` 支持 int 或 3 元组，
+    ``groups`` 为 int；不支持字符串 padding。数学一致性仅适用于这些参数及
+    底层 PyTorch 后端支持且经本仓测试的 dtype。nn.Module 形态与 NPU 回退
+    逻辑见 ``Conv3d``。
     """
     if isinstance(padding, str):
         explicit_padding = _padding_for_string(padding, weight.shape[2:], stride, dilation)

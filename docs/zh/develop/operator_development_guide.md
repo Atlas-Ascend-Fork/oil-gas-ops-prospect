@@ -1,5 +1,7 @@
 # 算子开发指南
 
+简体中文 | [English](../../en/develop/operator_development_guide.md)
+
 本文说明如何新增 AscendC / Triton-Ascend / Composite 算子，以及必须遵守的目录、命名、封装与验收约定。路径以 [`dir_structure.md`](../context/dir_structure.md) 为准。Issue / PR 流程见[贡献指南](../../../CONTRIBUTING.md)。
 
 本仓有三类算子后端，交付件与开发流程不同。请先判断新算子属于哪一类：
@@ -207,7 +209,7 @@ package_dir={
 },
 ```
 
-不要加 `triton` / `ascendc` 二级包。裸 checkout 由 `scripts/local_pkg.py` 挂导入名；验 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`。
+不要加 `triton` / `ascendc` 二级包。直接用仓内源码跑、没装 whl 时，靠 `scripts/local_pkg.py` 解析导入名；验 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`。
 
 ### 4. 纳入 AOT 编译检查
 
@@ -265,7 +267,7 @@ package_dir={
 },
 ```
 
-不要加二级后端包。裸 checkout 由 `scripts/local_pkg.py` **自动发现** `composite-torch/` 下的算子（子目录含 `__init__.py`，或顶层单文件 `.py`），无需手工登记；验 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`。
+不要加二级后端包。直接用仓内源码跑、没装 whl 时，`scripts/local_pkg.py` 会**自动发现** `composite-torch/` 下的算子（子目录含 `__init__.py`，或顶层单文件 `.py`），无需手工登记；验 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`。
 
 ### 3. 封装约定
 
@@ -287,7 +289,7 @@ bash build.sh -u
 bash scripts/check_license_header.sh
 ```
 
-新增源文件需带 Apache License 2.0 许可证头，格式参考仓内已有文件。算子语义或约束变了，必须同步 [op_list.md](../op_list.md)、[api_list.md](../api_list.md)、对应 `README.md`。
+新增源文件需带 Apache License 2.0 许可证头，格式参考仓内已有文件。算子语义或约束变了，必须成对更新 `docs/zh/` 与 `docs/en/` 下对应的 [op_list.md](../op_list.md)、[api_list.md](../api_list.md)，并同步对应 `README.md`。
 
 ### 交付件清单
 
@@ -300,7 +302,7 @@ bash scripts/check_license_header.sh
 | ophost UT | `tests/ut/op_host/<op>/test_<op>_tiling.cpp` |
 | aclnn example / ST | `examples/aclnn/<op>/`、`tests/st/aclnn<OpType>/`；登记 `tests/suites.json` |
 | NPU 对比 | `tests/ascendc/<op>/`（Triton 则为 `tests/triton/<family>/`） |
-| 文档 | `docs/zh/op_list.md`、`api_list.md`；AscendC 还要 `ascendc/README.md` |
+| 文档 | `docs/zh/op_list.md`、`docs/zh/api_list.md` 与 `docs/en/` 下对应英文页必须成对更新；AscendC 还要 `ascendc/README.md` |
 | 精度报告 | PR 描述附 [模板](precision_acceptance_template.md) |
 | Triton 登记 | `setup.py` 的 `packages` / `package_dir`；AOT 检查覆盖 |
 | Composite-Torch 登记 | `composite-torch/<family>/`（纯 Python，`setup.py` 的 `packages` / `package_dir`；测试放 `tests/composite/<family>/`） |

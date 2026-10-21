@@ -1,5 +1,7 @@
 # oil-gas-ops-prospect
 
+简体中文 | [English](./README_en.md)
+
 ## 🚀 概述
 
 oil-gas-ops-prospect 是面向**油气勘探**（oil & gas exploration）领域的昇腾自定义算子库。仓名即 **oil-gas-ops**（油气算子）+ **prospect**（勘探目标），面向地震成像、全波形反演等勘探计算场景。
@@ -49,7 +51,7 @@ bash build.sh --pkg
 bash build.sh
 ```
 
-同时编译 OPP `.run` 与 Python whl，产物写入 `output/`，不安装到 CANN / Python，也不跑冒烟测试。
+同时编译 OPP `.run` 与 Python whl，产物写入 `output/`，不安装到 CANN / Python，也不跑冒烟测试。wheel 优先链接本次 OPP 构建工作区生成的 `libcust_opapi.so`，因此默认顶层流程无需先安装 OPP。
 
 **编译并安装**
 
@@ -125,12 +127,14 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 |---------------|---------------|------|----------------|
 | [`ComplexMul`](ascendc/operators/complex_mul/) | AscendC / OPP `.run`（AIV-only） | 复数逐点乘：`(ur, ui), (vr, vi) -> (wr, wi)` | `float32` / `ND`，全部张量同 shape |
 | [`ComplexMulGrad`](ascendc/operators/complex_mul_grad/) | AscendC / OPP `.run`（AIV-only） | `ComplexMul` 的反向 | `float32` / `ND`，全部张量同 shape |
-| [`FusedBiasSoftmax`](ascendc/operators/fused_bias_softmax/) | AscendC / OPP `.run` | `softmax(x + bias1 + bias2, -1)`，原地写回 | `fp32` / `fp16` / `bf16`，`ND` |
-| [`FusedSoftmaxGrad`](ascendc/operators/fused_softmax_grad/) | AscendC / OPP `.run`（可走 MIX） | 注意力 softmax JVP：`g = go @ V^T` 后原地覆写 probs | `fp32` / `fp16` / `bf16`，`ND` |
+| [`FusedBiasSoftmax`](ascendc/operators/fused_bias_softmax/) | AscendC / OPP `.run` | `softmax(x + bias1 + bias2, -1)`，连续输入成功进入融合路径时原地写回 | `fp32` / `fp16` / `bf16`，`ND` |
+| [`FusedSoftmaxGrad`](ascendc/operators/fused_softmax_grad/) | AscendC / OPP `.run`（可走 MIX） | 注意力 softmax JVP：连续 probs 成功进入融合路径时原地覆写 | `fp32` / `fp16` / `bf16`，`ND` |
 | [`real_rfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 实数正向 FFT：`x -> (xr, xi)`，频率轴长度 `n // 2 + 1` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
 | [`real_irfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 从实部、虚部半谱重建实数：`(xr, xi), n -> y` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
 | [`complex_reciprocal`](triton-ascend/complex_reciprocal/) | Triton-Ascend / Python whl | 复数倒数 `1/z`（`z` 或 `xr, xi` 两种形式、自定义反向） | NPU kernel 为 `complex64`，非 NPU 环境回退到 PyTorch |
-| [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | `nn.Conv3d` 等价替换（自定义前/反向，state_dict 互通） | 任意（同 `nn.Conv3d`） |
+| [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | 支持参数域内兼容 `nn.Conv3d`（自定义前/反向，state_dict key 互通） | 底层 PyTorch 后端支持且经本仓测试的 dtype |
+
+`Conv3d` / `conv3d` 的 `kernel_size`、`stride`、数值 `padding`、`dilation` 支持 `int` 或 3 元素序列，`groups` 为 `int`；模块支持 `zeros` / `reflect` / `replicate` / `circular`。字符串 `padding="same"` / `"valid"` 受支持（`"same"` 要求 stride 为 1），构造器不提供原生 `nn.Conv3d` 的 `device` / `dtype` 关键字。
 
 数学定义、约束与支持范围见[算子列表](docs/zh/op_list.md)；完整接口签名、参数与环境变量见[接口列表](docs/zh/api_list.md)。
 
@@ -148,16 +152,19 @@ oil-gas-ops-prospect/
 │   ├── complex_reciprocal/ #   complex_reciprocal（多态：z 或 xr,xi）
 │   └── tools/              #   AOT 编译检查
 ├── composite-torch/        # Composite-Torch 算子（纯 PyTorch 组合，打包为 oil_gas_ops_prospect.<op>）
-│   └── conv3d_custom/      #   Conv3d（nn.Conv3d 等价替换）
+│   └── conv3d_custom/      #   Conv3d（支持参数域内兼容 nn.Conv3d）
 ├── tests/                   # UT / ST / Python 精度性能；operators/ 不再放测试
 │   ├── ut/op_host/         #   tiling googletest
 │   ├── st/aclnn<OpType>/   #   两段式 aclnn 系统测试
 │   ├── ascendc/ophost/     #   汇总编译 ophost_ut（googletest）
 │   ├── ascendc/complex_mul/#   NPU 精度/性能对比
 │   ├── ascendc/fused_bias_softmax/
-│   └── triton/real_fft/    #   rFFT / iRFFT 精度（含 CPU 回退路径）
+│   ├── triton/real_fft/    #   rFFT / iRFFT 精度（含 CPU 回退路径）
+│   ├── triton/complex_reciprocal/ # 复数倒数精度（CPU 回退 + NPU verify）
+│   └── composite/conv3d_custom/   # Conv3d / conv3d 精度与性能基准
 ├── examples/               # Python 示例 + examples/aclnn/<op>/ C++ 样例
 ├── scripts/                # 辅助脚本
+├── SKILLS/                 # 可复用的算子开发技能（优化 / 定位 / 修复），按后端拆开
 ├── docs/                   # 文档
 ├── cmake/                  # CMake 模块（三方件解析、安全编译选项）
 ├── .gitcode/workflows/     # GitCode Action 门禁流水线

@@ -1,5 +1,7 @@
 # 算子调用
 
+简体中文 | [English](../../en/invocation/quick_op_invocation.md)
+
 本文给出各算子的端到端调用示例。可运行脚本见 [`examples/`](../../../examples/)。
 
 ## 前置条件
@@ -93,11 +95,11 @@ b, h, q, s, d = 2, 4, 64, 128, 32
 logits = torch.randn(b, h, q, s, device="npu")
 bias1 = torch.randn(b, h, 1, s, device="npu")   # 广播
 bias2 = torch.randn(b, h, q, s, device="npu")   # 全尺寸
-probs = fused_bias_softmax(logits, bias1, bias2)  # NPU 上原地写回 logits
+probs = fused_bias_softmax(logits, bias1, bias2)  # 输入连续且成功进入 NPU 融合路径时写回 logits
 
 go = torch.randn(b, h, q, d, device="npu")
 values = torch.randn(b, h, s, d, device="npu")
-g_logits = fused_softmax_grad(probs, go, values)  # NPU 上原地覆写 probs
+g_logits = fused_softmax_grad(probs, go, values)  # 输入连续且成功进入 NPU 融合路径时覆写 probs
 
 q_t = torch.randn(b, h, q, d, device="npu", requires_grad=True)
 k_t = torch.randn(b, h, s, d, device="npu", requires_grad=True)
@@ -105,6 +107,8 @@ v_t = torch.randn(b, h, s, d, device="npu", requires_grad=True)
 out = attention_core(q_t, k_t, v_t, bias1, bias2)
 out.sum().backward()
 ```
+
+非连续输入会经 `contiguous()` 复制，输出只与该连续副本别名，不会覆写调用者的原始张量；PyTorch 参考回退同样非原地。
 
 约束摘要：输入必须是 4D；`fused_bias_softmax` 的 `S ≤ 4096`；`fused_softmax_grad` 允许 `Q ≠ S`。完整约束见[算子列表](../op_list.md)。
 
@@ -149,6 +153,74 @@ print(x.grad.shape)
 ```bash
 OIL_GAS_OPS_FFT_BLOCK_M=256 python3 your_script.py
 ```
+
+## Triton-Ascend：复数倒数
+
+```python
+import torch
+import torch_npu  # noqa: F401
+from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
+
+z = torch.randn(4, 1024, dtype=torch.complex64, device="npu")
+w = complex_reciprocal(z)                       # 1/z，单个 Vector Core kernel
+
+# 实虚分离入口：1/(a - i*c)，省去先构造复数分母
+a = torch.randn(4, 1024, device="npu")
+w_fused = complex_reciprocal(a, -0.5)           # xi 可为标量或可广播张量
+```
+
+约束：
+
+- NPU kernel 仅接受 `complex64` / `float32`；CPU、其他 dtype 或 Triton 不可用时回退 torch 的 `1 / z`，因此同一段代码在 CPU 上也能跑，可用于精度自检。
+- `stable=True`（默认）避免 `a^2+b^2` 上下溢；`stable=False` 带宽快约 10%，但 `|z|` 超出约 `[1e-19, 1.8e19]` 时结果错误。
+- 单个张量元素数超过 `2^31 - 1` 抛 `ValueError`。
+
+### autograd
+
+```python
+z = torch.randn(4, 1024, dtype=torch.complex64, device="npu", requires_grad=True)
+complex_reciprocal(z).abs().pow(2).sum().backward()   # d(1/z)/dz = -w^2
+print(z.grad.shape)
+```
+
+### 性能调优
+
+`OIL_GAS_OPS_RECIP_BLOCK` 控制每 tile 的复数元素数（默认 2048，钳制 `[16, 2048]`）：
+
+```bash
+OIL_GAS_OPS_RECIP_BLOCK=1024 python3 your_script.py
+```
+
+## Composite-Torch：Conv3d
+
+```python
+import torch
+import torch_npu  # noqa: F401
+from oil_gas_ops_prospect.conv3d_custom import Conv3d
+from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
+
+x = torch.randn(2, 4, 8, 8, 8, device="npu")
+
+# 模块形态：检测到 torch.npu 接口时 use_custom 默认开启
+module = Conv3d(4, 8, kernel_size=3, padding=1).to("npu")
+y = module(x)
+
+# 函数式形态：始终走自定义前/反向，支持字符串 padding
+weight = torch.randn(8, 4, 3, 3, 3, device="npu")
+y_same = conv3d(x, weight, padding="same")
+```
+
+行为说明：
+
+- 没有 `torch.npu` 接口时 `Conv3d` 回退 `F.conv3d`；测试可设 `module.use_custom = True` 在 CPU 上驱动自定义路径。
+- weight/bias 的 state_dict key 与 `nn.Conv3d` 互通，可双向 `load_state_dict`：
+
+  ```python
+  native = torch.nn.Conv3d(4, 8, kernel_size=3, padding=1)
+  module.load_state_dict(native.state_dict())
+  ```
+
+- `padding="same"` 要求 stride 为 1；构造器不接受 `nn.Conv3d` 的 `device` / `dtype` 关键字，按上例用 `.to(...)` 迁移。
 
 ## 与 aclnn 接口直连
 

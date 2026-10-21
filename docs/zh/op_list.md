@@ -1,5 +1,7 @@
 # 算子列表
 
+简体中文 | [English](../en/op_list.md)
+
 当前仓库交付 4 个 AscendC/CANN OPP 算子、3 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
@@ -8,11 +10,12 @@
 |---------------|------|----------------|------|------|----------------|----------|
 | `ComplexMul` | AscendC | `aclnnComplexMul` / `complex_mul` | [`ascendc/operators/complex_mul/`](../../ascendc/operators/complex_mul/) | 复数逐点乘 | `float32` / `ND` | Ascend 910B |
 | `ComplexMulGrad` | AscendC | `aclnnComplexMulGrad`（反向由 `complex_mul` 的 autograd 调用） | [`ascendc/operators/complex_mul_grad/`](../../ascendc/operators/complex_mul_grad/) | `ComplexMul` 的反向 | `float32` / `ND` | Ascend 910B |
-| `FusedBiasSoftmax` | AscendC | `aclnnFusedBiasSoftmax` / `fused_bias_softmax` | [`ascendc/operators/fused_bias_softmax/`](../../ascendc/operators/fused_bias_softmax/) | `softmax(x + bias1 + bias2, -1)`，原地写回 | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
-| `FusedSoftmaxGrad` | AscendC | `aclnnFusedSoftmaxGrad` / `fused_softmax_grad` | [`ascendc/operators/fused_softmax_grad/`](../../ascendc/operators/fused_softmax_grad/) | 注意力 softmax JVP，原地覆写 probs | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
+| `FusedBiasSoftmax` | AscendC | `aclnnFusedBiasSoftmax` / `fused_bias_softmax` | [`ascendc/operators/fused_bias_softmax/`](../../ascendc/operators/fused_bias_softmax/) | `softmax(x + bias1 + bias2, -1)`，连续输入成功进入融合路径时原地写回 | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
+| `FusedSoftmaxGrad` | AscendC | `aclnnFusedSoftmaxGrad` / `fused_softmax_grad` | [`ascendc/operators/fused_softmax_grad/`](../../ascendc/operators/fused_softmax_grad/) | 注意力 softmax JVP，连续输入成功进入融合路径时覆写 probs | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 实数正向 FFT：`x → (xr, xi)` | NPU kernel 为 `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 半谱重建实数：`(xr, xi), n → y` | NPU kernel 为 `float32` | Ascend 910B |
-| `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | `nn.Conv3d` / `F.conv3d` 等价替换（自定义前/反向） | 任意（同 `nn.Conv3d`） | 任意（纯 PyTorch） |
+| `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | 复数倒数 `1/z`（`z` 或 `xr, xi`） | NPU kernel 为 `complex64` | Ascend 910B |
+| `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | 支持参数域内的 `nn.Conv3d` / `F.conv3d` 兼容实现（自定义前/反向） | 底层 PyTorch 后端支持且经本仓测试的 dtype | PyTorch 后端支持；已测 CPU / Ascend 910B |
 
 命名约定：
 
@@ -98,7 +101,7 @@ g_{v_i} &= -g_{w_r} u_i + g_{w_i} u_r
 
 ### FusedBiasSoftmax
 
-openfold 注意力前向融合：把 bias 累加与沿最后一维的 softmax 合成单 kernel，原地写回 `x`。对标 `attn_core_inplace_cuda.forward_` 的三次发射（bias1 / bias2 / in-place softmax）。
+openfold 注意力前向融合：把 bias 累加与沿最后一维的 softmax 合成单 kernel；底层 aclnn 输出可与 `x` 别名。对标 `attn_core_inplace_cuda.forward_` 的三次发射（bias1 / bias2 / in-place softmax）。
 
 #### 数学定义
 
@@ -117,7 +120,7 @@ y = \mathrm{softmax}(x + b_1 + b_2,\; \mathrm{dim}=-1)
 | 输入（可选） | `bias2` | 全尺寸偏置（如 triangle bias） | `[B, H, Q, S]` | 与 `x` 相同 |
 | 输出 | `y` | softmax 概率 | 与 `x` 相同 | 与 `x` 相同 |
 
-NPU 融合路径上 **`y` 与 `x` 共享同一块 device 内存**（原地写回）。PyTorch 参考实现 `torch_fused_bias_softmax` 非原地。
+底层 aclnn 接口允许 **`y` 与 `x` 别名**。Python 包装仅在传入 `x` 连续且成功进入 NPU 融合路径时与调用者原始 `x` 共享 storage 并原地写回；非连续输入会先经 `contiguous()` 复制，`y` 与副本别名，不会覆写原始非连续张量。PyTorch 参考实现 `torch_fused_bias_softmax` 非原地。
 
 #### 约束
 
@@ -134,7 +137,7 @@ NPU 融合路径上 **`y` 与 `x` 共享同一块 device 内存**（原地写回
 
 ### FusedSoftmaxGrad
 
-openfold 注意力反向融合：先做 \(g = go \cdot V^\top\)，再沿最后一维做 softmax Jacobian-vector product，原地覆写 `probs`。对标 `attn_core_inplace_cuda.backward_`，替换 `bmm + _softmax_backward_data + copy_`。
+openfold 注意力反向融合：先做 \(g = go \cdot V^\top\)，再沿最后一维做 softmax Jacobian-vector product；底层 aclnn 输出可与 `probs` 别名。对标 `attn_core_inplace_cuda.backward_`，替换 `bmm + _softmax_backward_data + copy_`。
 
 #### 数学定义
 
@@ -156,7 +159,7 @@ g &= \mathrm{grad\_output} \cdot V^{\top} \\
 | 输入 | `values` | 注意力的 \(V\) | `[B, H, S, D]` | 与 `probs` 相同 |
 | 输出 | `out` | \(\partial L / \partial \mathrm{logits}\) | 与 `probs` 相同 | 与 `probs` 相同 |
 
-NPU 融合路径上 **`out` 与 `probs` 共享同一块 device 内存**（原地覆写）。PyTorch 参考实现 `torch_fused_softmax_grad` 非原地。
+底层 aclnn 接口允许 **`out` 与 `probs` 别名**。Python 包装仅在传入 `probs` 连续且成功进入 NPU 融合路径时与调用者原始 `probs` 共享 storage 并原地覆写；非连续输入会先经 `contiguous()` 复制，`out` 与副本别名，不会覆写原始非连续张量。PyTorch 参考实现 `torch_fused_softmax_grad` 非原地。
 
 `Q ≠ S` 合法（openfold MSA / 三角注意力形态）。
 
@@ -290,7 +293,7 @@ complex64 张量的倒数，地震反演等负载用它替代 NPU 上走 Ai_Cpu 
 w = \frac{1}{z} = \frac{\bar{z}}{|z|^2} = \frac{a - ib}{a^2 + b^2}
 \]
 
-- **stable 路径**（默认）：用 \(t = |a| + |b|\) 缩放，\(w = \frac{\mathrm{sign}(a) - i\,\mathrm{sign}(b)}{t \cdot (1 + (b/a)^2)}\) 等价变形，避免 \(a^2+b^2\) 上下溢；
+- **stable 路径**（默认）：用 \(t = |a| + |b|\) 缩放，记 \(\hat{a} = a/t,\ \hat{b} = b/t\)，按 \(w = \frac{\hat{a} - i\,\hat{b}}{t\,(\hat{a}^2 + \hat{b}^2)}\) 计算；该式与 \(\frac{a - ib}{a^2+b^2}\) 代数等价，但避免了 \(a^2+b^2\) 上下溢；
 - **naive 路径**：直接计算 \(a^2+b^2\)，带宽更高（约 10%），但 \(|z|\) 超出约 \([10^{-19}, 1.8\times10^{19}]\) 时会错。
 
 反向：\(\partial(1/z)/\partial z = -1/z^2 = -w^2\)，kernel 支持交错与实虚分离两种梯度输出。
@@ -309,8 +312,8 @@ w = \frac{1}{z} = \frac{\bar{z}}{|z|^2} = \frac{a - ib}{a^2 + b^2}
 #### 约束
 
 - NPU kernel 仅 `complex64` / `float32`；CPU 或其他 dtype 回退 torch 参考实现（含 autograd）。
-- 元素数超过 `2^31` 时走 int64 offset 分支（kernel 自动选择，AOT 已覆盖）。
-- `block_size` 每 tile 复数元素数（2 的幂，钳制 `[16, 2048]`），可由 `OIL_GAS_OPS_RECIP_BLOCK` 覆盖。
+- 元素数达到 `2^30` 起走 int64 offset 分支（kernel 自动选择，AOT 已覆盖）；单个张量元素数超过 `2^31 - 1` 直接抛 `ValueError`，因为块内 int32 运算本身会回绕。
+- `block_size` 每 tile 复数元素数，默认 `2048`；会向下取整到 2 的幂并钳制到 `[16, 2048]`，可由 `OIL_GAS_OPS_RECIP_BLOCK` 覆盖。
 - 支持 autograd（自定义 backward kernel）与双入口（交错 / 实虚分离）。
 
 实现与说明详见 [`triton-ascend/complex_reciprocal/README.md`](../../triton-ascend/complex_reciprocal/README.md)。
@@ -323,11 +326,11 @@ w = \frac{1}{z} = \frac{\bar{z}}{|z|^2} = \frac{a - ib}{a^2 + b^2}
 
 ### Conv3d
 
-`torch.nn.Conv3d` / `F.conv3d` 的等价替换。NPU 可用（`torch_npu` 已导入）时模块走 `conv3d` 自定义前/反向，否则回退 `F.conv3d`；weight/bias 为顶层参数，state_dict 的 key 与 `nn.Conv3d` 完全一致。
+在下述支持参数域内兼容 `torch.nn.Conv3d` / `F.conv3d`。检测到 `torch.npu` 接口时模块默认走 `conv3d` 自定义前/反向，否则回退 `F.conv3d`；weight/bias 为顶层参数，state_dict key 与 `nn.Conv3d` 一致。
 
 #### 数学定义
 
-前向与 `F.conv3d` 完全一致（3D cross-correlation）。反向对已知 \(\partial L/\partial \text{out}\) 的三个梯度：
+在支持参数域内，前向采用与 `F.conv3d` 相同的 3D cross-correlation 数学定义。反向对已知 \(\partial L/\partial \text{out}\) 的三个梯度：
 
 \[
 \begin{aligned}
@@ -343,22 +346,25 @@ w = \frac{1}{z} = \frac{\bar{z}}{|z|^2} = \frac{a - ib}{a^2 + b^2}
 
 | 方向 | 名称 | 含义 | shape | dtype |
 |------|------|------|-------|-------|
-| 输入 | `x` | 输入特征 | \((N, C_{in}, D, H, W)\) | 任意（同 `nn.Conv3d`） |
+| 输入 | `x` | 输入特征 | \((N, C_{in}, D, H, W)\) | 底层 PyTorch 后端支持且经本仓测试的 dtype |
 | 输出 | `output` | 输出特征 | \((N, C_{out}, D_{out}, H_{out}, W_{out})\) | 与输入相同 |
 
-构造参数 `in_channels / out_channels / kernel_size / stride / padding / dilation / groups / bias / padding_mode` 与 `nn.Conv3d` 一致，支持 int 或 3 元组。
+`kernel_size`、`stride`、数值 `padding`、`dilation` 支持 `int` 或 3 元素序列（元组或列表），`groups` 为 `int`。模块的 `padding_mode` 支持 `zeros` / `reflect` / `replicate` / `circular`。字符串 `padding="same"` / `"valid"` 受支持，会在卷积前换算为显式补边；`"same"` 要求 stride 为 1，否则抛 `ValueError`。当前 `Conv3d` 构造器没有 `nn.Conv3d` 的 `device` / `dtype` 关键字。
 
 #### 约束与行为
 
-- `use_custom` 跟随 NPU 可用性（`torch_npu` 已导入即开启），**不限制 stride / dilation**；测试可强制 `module.use_custom = True` 在 CPU 上驱动自定义路径。
-- `padding_mode != 'zeros'` 时先 `F.pad` 再以 `conv_padding=0` 进入自定义 Function，梯度经 `F.pad` 的 autograd 正确回传。
-- 支持双阶反向（二阶混合导数与原生一致）。
-- 与原生的数值关系：前向逐位相同；反向 float64 最大绝对误差 ≤ 1.78e-14（数学等价）；NPU float32 上 grad_weight 因不同内核累加顺序存在 5.8e-4 ~ 9.3e-3 差异（float32 正常范围）。
-- NPU 上原生 `aclnnConvolutionBackward` 对大 kernel depthwise（kernel ≥ 7 + 大空间）会因 L1 buffer 超限崩溃，本实现分步构造反向可正常完成。
+- `use_custom` 在检测到 `torch.npu` 接口时默认开启；测试可强制 `module.use_custom = True` 在 CPU 上驱动自定义路径。
+- 参数只接受上述受支持类型与取值；数学一致性结论仅适用于该参数域和仓内覆盖的组合。
+- `padding_mode != 'zeros'` 时先 `F.pad`，再以 `conv_padding=0` 进入自定义 Function，梯度经 `F.pad` 的 autograd 回传。
+- weight/bias 的 state_dict key 与 `nn.Conv3d` 互通。
+- dtype 取决于底层 PyTorch 后端能力，并须经过本仓对应 CPU / NPU 测试后才能列为支持。
+- 支持复数输入：反向对翻转后的 weight 取共轭，复数权重梯度由实部/虚部各自的实数 `conv3d_weight` 结果重组（`torch.nn.grad.conv3d_weight` 本身只接受实数张量）。
+- 在仓内覆盖的特定大 kernel depthwise NPU 形态中，分步反向可避开原生反向曾触发的 L1 buffer 限制；该观察不扩展为所有大 kernel 或任意形态的保证。
 
 #### 验证
 
-- 精度 / 性能用例：[`tests/composite/conv3d_custom/`](../../tests/composite/conv3d_custom/)（主要取值场景组合、11 种实际训练调用模式、性能基准）。
-- 数学等价性与 NPU 实机精度已验证：float64 三梯度与原生 autograd 一致（阈值 1e-12 内）；NPU float32 实际训练尺寸全模式对比通过，20 epochs 训练 loss 正常收敛。
+- 精度 / 性能用例：[`tests/composite/conv3d_custom/`](../../tests/composite/conv3d_custom/)（仓内列出的参数组合、训练调用形态与性能基准）。
+- 已有用例覆盖 CPU float64/float32 组合、NPU float32 的指定形态，以及 CPU complex128/complex64 与 NPU complex64（[`test_conv3d_custom_complex.py`](../../tests/composite/conv3d_custom/test_conv3d_custom_complex.py)，含 CPU complex128 的 `gradcheck` / `gradgradcheck` 双阶反向）；结论仅适用于实际执行并通过的 case，不代表未列出的参数或 dtype。
+- 复数 NPU 用例在 `torch.npu.conv.allow_hf32 = False` 下执行（结束后恢复原值）。默认 HF32 设置下部分梯度相对误差约 `2e-4`，不按完整 fp32 阈值验收。
 
 实现与使用说明详见 [`composite-torch/conv3d_custom/README.md`](../../composite-torch/conv3d_custom/README.md)。

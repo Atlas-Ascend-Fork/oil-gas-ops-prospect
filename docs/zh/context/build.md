@@ -1,5 +1,7 @@
 # 编译参数说明
 
+简体中文 | [English](../../en/context/build.md)
+
 ## 简介
 
 `build.sh` 位于仓库根目录，把源码编译成可安装的 OPP `.run` 与 Python whl，或按分类执行测试并写出报告。选项解析在 [`scripts/build_options.sh`](../../../scripts/build_options.sh)。
@@ -74,7 +76,7 @@ bash build.sh --pkg
 bash build.sh
 ```
 
-编译 OPP `.run` 与 Python whl，产物写入 `output/`，不执行 `.run` 安装器、也不 `pip install`。编 whl 仍需链接 CANN 中已有的 `libcust_opapi.so`（与直接 `python3 setup.py bdist_wheel` 相同）；全新环境请先 `bash build.sh --install`，或先安装已有的 `.run`。
+编译 OPP `.run` 与 Python whl，产物写入 `output/`，不执行 `.run` 安装器、也不 `pip install`。顶层 `bash build.sh` 先执行 `build_opp_run`，再执行 `build_python_wheel`；`ascendc/pybind_extensions.py::_vendor_opapi` 优先使用 `ascendc/_work/CustomOp_*/build_out/autogen` 中的头文件和 `ascendc/_work/CustomOp_*/build_out/op_host/libcust_opapi.so`，所以默认顶层构建无需先安装 OPP。只有脱离顶层流程直接执行 `python3 setup.py bdist_wheel` 且工作区无有效 OPP 产物时，才回退到已安装的 CANN vendor 目录，并要求其中已有相应头文件和库。
 
 **编译并安装**
 
@@ -226,6 +228,7 @@ bash build.sh -u [--ut|--st|--precision|--perf|...] [--ops=${op_list}] [--openso
 | `--perf` | 可选 | **性能** | NPU Python 计时 |
 | `--examples` | 可选 | UT-device | 只跑 C++ 小 launch；需要 NPU |
 | `--triton` | 可选 | Triton CPU | CPU 回退 pytest |
+| `--composite` | 可选 | Composite CPU | 纯 PyTorch 组合算子的 CPU pytest |
 | `--aot` | 可选 | Triton AOT | kernel 可编译检查 |
 | `--ops=${op_list}` | 可选 | 过滤 | 作用于 UT-device / ST / 精度 / 性能 |
 | `--report=<path>` | 可选 | — | 执行纪要 Markdown 路径 |

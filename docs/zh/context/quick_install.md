@@ -1,5 +1,7 @@
 # 环境部署
 
+简体中文 | [English](../../en/context/quick_install.md)
+
 ## 版本配套
 
 当前仓库已验证通过的 CANN 版本如下：
@@ -45,23 +47,30 @@ chmod +x Ascend-cann-${soc_name}-ops_${cann_version}_linux-${arch}.run
 
 ## 3. 配置环境变量
 
+`${install_path}` 是传给安装器的**安装前缀**（如 `/usr/local/Ascend`），`ASCEND_HOME_PATH` 则必须指向包含 `set_env.sh` 的**实际 CANN 根目录**。按默认布局安装后可执行：
+
 ```bash
-source ${install_path}/cann/set_env.sh
+export ASCEND_HOME_PATH=${install_path}/cann
+source ${ASCEND_HOME_PATH}/set_env.sh
 ```
 
-请将 `${install_path}` 替换为 Toolkit 包的实际安装目录，例如 `/usr/local/Ascend` 或 `${HOME}/Ascend`。
+常见可探测布局包括 `<prefix>/cann`、`<prefix>/cann-9.0.0` 和 `<prefix>/ascend-toolkit/latest`；实际路径以 `set_env.sh` 所在目录为准。
 
-## 4. SoC 支持矩阵
+## 4. SoC 支持
+
+### 已验证矩阵
 
 访问 [CANN 下载中心](https://www.hiascend.com/cann/download)，根据页面提示复制硬件查询命令，在当前环境中执行返回芯片 ID 信息，再回填到官网获取产品名。
 
-| SoC 型号 | `SOC_VERSION` | 支持状态 |
+| SoC 型号 | `SOC_VERSION` | 验证状态 |
 |----------|---------------|----------|
-| Atlas A2 训练/推理系列产品 | `Ascend910B1` | ✅ 默认支持 |
-| Atlas A3 训练/推理系列产品 | `Ascend910_93` | ❌ 暂未验证 |
-| 950 系列产品 | `Ascend950` | ❌ 暂未验证 |
+| Atlas A2 训练/推理系列产品 | `Ascend910B1` | ✅ 已验证 |
+| Atlas A3 训练/推理系列产品 | `Ascend910_93` | ❌ 未验证 |
+| 950 系列产品 | `Ascend950` | ❌ 未验证 |
 
-本仓当前支持的 SoC 列表定义在 `ascendc/scripts/config.py` 的 `SUPPORTED_SOC_VERSIONS`，构建时传入不在列表中的型号会直接报错。
+### 构建参数可接受值
+
+`ascendc/scripts/config.py` 中的 `SUPPORTED_SOC_VERSIONS` 仅是 msopgen / 构建参数白名单，不等于已验证支持矩阵；传入白名单外的型号会直接报错。
 
 ## 5. 安装 Python 依赖
 
@@ -73,7 +82,7 @@ pip install -r requirements.txt
 
 ## 6. 安装 Triton-Ascend
 
-本仓的 `real_rfft` / `real_irfft` 依赖 **Triton-Ascend** 提供的 `triton.backends.ascend` 后端。PyPI 上的社区 `triton` 包没有昇腾后端，不能代替下面的安装。本仓已验证 **CANN 9.0.0 官方版本** 配套 **`triton-ascend==3.2.1`**。
+本仓的 Triton-Ascend 算子（`real_rfft` / `real_irfft` / `complex_reciprocal`）依赖 **Triton-Ascend** 提供的 `triton.backends.ascend` 后端。PyPI 上的社区 `triton` 包没有昇腾后端，不能代替下面的安装。本仓已验证 **CANN 9.0.0 官方版本** 配套 **`triton-ascend==3.2.1`**。
 
 上游说明见 [Triton-Ascend](https://gitcode.com/Ascend/triton-ascend)（[安装指南](https://triton-ascend.readthedocs.io/zh-cn/latest/installation_guide.html)）。安装命令：
 
@@ -88,7 +97,7 @@ pip install triton-ascend==3.2.1 --extra-index-url=https://mirrors.huaweicloud.c
 python3 -c "import importlib.metadata as m; print(m.version('triton-ascend'))"
 ```
 
-若之后再 `pip install` 其它依赖把社区 `triton` 装回来，按上面两条命令重装即可。本仓不下载、不分发 Triton-Ascend。
+`pip install .` 或安装本项目 wheel **不会自动安装 Triton-Ascend**。必须先按本节从 Ascend 软件源预装，以免 pip 在公共 PyPI 上把社区 `triton` 误解析为本项目所需后端。本项目依赖元数据不声明社区 `triton`，也不下载、不分发 Triton-Ascend。
 
 ## 7. 安装本项目
 

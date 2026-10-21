@@ -17,11 +17,15 @@
 
 ::
 
-    forward:  y = softmax(x + bias1(广播/全尺寸) + bias2, -1)，原地写回 x
-    backward: g = go @ V^T; probs ← probs ⊙ (g − rowsum(probs⊙g))，原地覆写 probs
+    forward:  y = softmax(x + bias1(广播/全尺寸) + bias2, -1)
+    backward: g = go @ V^T; probs ← probs ⊙ (g − rowsum(probs⊙g))
     attention_core: 上述两算子按 openfold attention_core 语义的组合封装
 
+仅当调用者输入连续且成功进入 NPU AscendC 融合路径时，前向原地写回调用者的 ``x``，
+反向原地覆写调用者的 ``probs``。非连续输入只会覆写 ``contiguous()`` 副本，参考回退非原地。
+
 环境变量：
+
 - ``OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL=torch|ascendc|auto``（默认 torch）
 - ``OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX=1`` 强制要求自定义算子
 """
@@ -96,8 +100,10 @@ def _ascendc_fused_softmax_grad(probs, grad_output, values):
 
 def fused_bias_softmax(x: torch.Tensor, bias1: torch.Tensor | None = None,
     bias2: torch.Tensor | None = None) -> torch.Tensor:
-    """前向融合：softmax(x + bias1 + bias2, -1)，NPU 上原地写回 x。
+    """前向融合：softmax(x + bias1 + bias2, -1)。
 
+    仅当调用者的 x 连续且成功进入 NPU AscendC 融合路径时，才会原地写回调用者的 x；
+    非连续输入只会写回 contiguous() 副本，融合失败后的参考回退非原地。
     bias1: [B,H,1,S] 广播或 [B,H,Q,S] 全尺寸；bias2: [B,H,Q,S]；均可为 None。
     """
     impl = _impl()
@@ -115,8 +121,10 @@ def fused_bias_softmax(x: torch.Tensor, bias1: torch.Tensor | None = None,
 
 def fused_softmax_grad(probs: torch.Tensor, grad_output: torch.Tensor,
     values: torch.Tensor) -> torch.Tensor:
-    """反向融合：g = go@V^T 融合 softmax JVP，NPU 上原地覆写 probs。
+    """反向融合：g = go@V^T 融合 softmax JVP。
 
+    仅当调用者的 probs 连续且成功进入 NPU AscendC 融合路径时，才会原地覆写调用者的 probs；
+    非连续输入只会覆写 contiguous() 副本，融合失败后的参考回退非原地。
     probs: [B,H,Q,S]（Q≠S 合法）；grad_output: [B,H,Q,D]；values: [B,H,S,D]。
     """
     impl = _impl()
@@ -140,7 +148,8 @@ class _FusedAttentionCoreFn(torch.autograd.Function):
 
     forward:  probs = softmax(qk^T + bias1 + bias2, -1); o = probs @ v
     backward: grad_v 先于 probs 覆写计算（与原版 CUDA 时序一致）；
-              probs 被融合算子原地覆写为 dL/dlogits 后再求 bias/q/k 梯度。
+              AscendC 融合分支原地覆写传入扩展的连续内部 probs，再求 bias/q/k 梯度；
+              参考分支非原地。
     """
 
     @staticmethod
