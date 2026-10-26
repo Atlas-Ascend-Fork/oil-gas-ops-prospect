@@ -54,6 +54,17 @@ def _fpad_order(padding):
     return (w, w, h, h, d, d)
 
 
+def _validate_channel_groups(in_channels, out_channels, groups, padding_mode):
+    if groups <= 0:
+        raise ValueError("groups must be a positive integer")
+    if in_channels % groups != 0:
+        raise ValueError("in_channels must be divisible by groups")
+    if out_channels % groups != 0:
+        raise ValueError("out_channels must be divisible by groups")
+    if padding_mode not in {"zeros", "reflect", "replicate", "circular"}:
+        raise ValueError(f"unsupported padding_mode: {padding_mode!r}")
+
+
 class Conv3d(nn.Module):
     """支持参数域内兼容 nn.Conv3d；检测到 torch.npu 时默认走自定义前/反向，state_dict key 互通。"""
 
@@ -70,6 +81,7 @@ class Conv3d(nn.Module):
         padding_mode='zeros',
     ):
         super().__init__()
+        _validate_channel_groups(in_channels, out_channels, groups, padding_mode)
         # 构造参数成对登记为实例属性，供 repr 与外部读取
         config = (
             ("in_channels", in_channels),
