@@ -64,6 +64,7 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     assert importlib.metadata.version("oil-gas-ops-prospect")
 
     from oil_gas_ops_prospect.complex_mul import complex_mul, torch_complex_mul, torch_complex_mul_grad
+    from oil_gas_ops_prospect.complex_exp import complex_exp
     from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
     from oil_gas_ops_prospect.conv3d_custom import Conv3d
     from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
@@ -81,6 +82,7 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     assert callable(torch_complex_mul)
     assert callable(torch_complex_mul_grad)
     assert callable(complex_reciprocal)
+    assert callable(complex_exp)
     assert callable(Conv3d)
     assert callable(conv3d)
     assert callable(fused_bias_softmax)
@@ -235,6 +237,24 @@ def test_complex_reciprocal_whl_cpu_fallback_matches_torch():
     ref_z = z.detach().clone().requires_grad_(True)
     ref_out = 1 / ref_z
     (ref_out.real * g.real + ref_out.imag * g.imag).sum().backward()
+    assert torch.allclose(z_g.grad, ref_z.grad, rtol=1e-5, atol=1e-5)
+
+
+def test_complex_exp_whl_cpu_fallback_matches_torch():
+    """CPU 上走 torch 回退，验证复数指数算子的接线与 autograd。"""
+    from oil_gas_ops_prospect.complex_exp import complex_exp
+
+    torch.manual_seed(13)
+    z = torch.randn(2, 7, 3) + 1j * torch.randn(2, 7, 3)
+    assert torch.equal(complex_exp(z), torch.exp(z))
+
+    z_g = z.clone().requires_grad_(True)
+    g = torch.randn_like(z_g.real) + 1j * torch.randn_like(z_g.real)
+    out = complex_exp(z_g)
+    (out.real * g.real + out.imag * g.imag).sum().backward()
+    ref_z = z.detach().clone().requires_grad_(True)
+    ref = torch.exp(ref_z)
+    (ref.real * g.real + ref.imag * g.imag).sum().backward()
     assert torch.allclose(z_g.grad, ref_z.grad, rtol=1e-5, atol=1e-5)
 
 

@@ -64,6 +64,9 @@ oil-gas-ops-prospect/
 │   ├── complex_reciprocal/                     #   complex_reciprocal (either z or xr, xi)
 │   │   ├── triton_complex_reciprocal.py        #     Triton kernel and autograd wrapper
 │   │   └── README.md                           #     operator notes
+│   ├── complex_exp/                            #   complex_exp
+│   │   ├── triton_complex_exp.py               #     Triton kernel and autograd wrapper
+│   │   └── README.md                           #     operator notes
 │   └── tools/
 │       └── aot_compile_check.py                #   AOT compilation check
 │
@@ -92,7 +95,8 @@ oil-gas-ops-prospect/
 │   ├── composite/conv3d_custom/                #   Conv3d / conv3d CPU precision and performance baseline
 │   └── triton/
 │       ├── real_fft/                           #   rFFT / iRFFT precision (includes the CPU fallback path)
-│       └── complex_reciprocal/                 #   complex reciprocal precision (CPU fallback + NPU verify)
+│       ├── complex_reciprocal/                 #   complex reciprocal precision (CPU fallback + NPU verify)
+│       └── complex_exp/                        #   complex exponential precision (CPU fallback + NPU verify + report)
 │
 ├── examples/                                   # Python examples + C++ two-phase samples
 │   ├── _common/                                #   aclnn sample scaffolding
@@ -142,6 +146,7 @@ All three are exposed through the unified Python package `oil_gas_ops_prospect` 
 - `oil_gas_ops_prospect.fused_bias_softmax` → `ascendc/pybind/fused_bias_softmax.py`
 - `oil_gas_ops_prospect.real_fft` → `triton-ascend/real_fft/`
 - `oil_gas_ops_prospect.complex_reciprocal` → `triton-ascend/complex_reciprocal/`
+- `oil_gas_ops_prospect.complex_exp` → `triton-ascend/complex_exp/`
 - `oil_gas_ops_prospect.conv3d_custom` → `composite-torch/conv3d_custom/`
 
 When running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` (activated automatically by the examples and by the pytest `conftest.py`) maps those directories onto the same import name, so call sites are identical whether or not the package is installed. Operators under `composite-torch/` are discovered automatically by that script and need no manual registration. When validating an installed whl, set `OIL_GAS_OPS_WHL_TEST=1` (`tests/run_whl_tests.sh` already handles this) so the in-repo sources are not tested by accident.

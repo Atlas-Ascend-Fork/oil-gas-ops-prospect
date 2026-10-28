@@ -8,6 +8,7 @@
 
 - AscendC：`Conv3DGelu`，cube conv3d 与 vector tanh-GELU 融合，float32 / NCDHW。前向不保存二者之间的预激活。反向是 `Conv3DGeluGrad`：重算 conv3d，再做 GELU 反向，再做 conv3d 反向。
 - 融合注意力算子 `FusedBiasSoftmax` / `FusedSoftmaxGrad`，以及组合接口 `attention_core`。
+- 新增 Triton-Ascend 复数算子 `complex_reciprocal`（复数倒数 `1/z`，支持实虚分离入口与自定义反向）与 `complex_exp`（复数指数 `e^z`，自定义反向），替代 NPU 上走 Ai_Cpu 的 `aclnnReciprocal` / `aclnnExp`。
 - 统一 Python 包 `oil_gas_ops_prospect`：AscendC 经 `ascendc/pybind/` 暴露，Triton 暴露 `real_rfft` / `real_irfft`。
 - Triton-Ascend `interpolate`：2D/3D 线性插值；5D fp32 trilinear 按空间轴拆成批量 Cube GEMM，支持一阶 autograd、大张量分块与 CPU 回退，4D 使用原生实现。
 - 根目录三种构建入口：`bash build.sh` 只编译出包，`--pkg` 只出 OPP `.run`，`--install` 安装并冒烟。
@@ -22,6 +23,7 @@
 
 ### Fixed
 
+- `complex_exp` 的数值语义对齐 `torch.exp(complex64)`（`cexpf`）：纯实数上溢不再得到 `inf+nanj`，`exp(a)` 溢出带内（如 `89+1j`）实部不再丢失为 `inf`，`b` 为 `±inf`/NaN 时按 `cexpf` 特判；补上二阶导（`create_graph=True`）与 conjugate-view 梯度；AOT 门禁补齐反向 int64 分支。
 - `complex_mul` 的 Python autograd 接线，反向梯度可正确回传到输入。
 - `bash build.sh -u` 单 flag 入口无法进入测试的问题。
 

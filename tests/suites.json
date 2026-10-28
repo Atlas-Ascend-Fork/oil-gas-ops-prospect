@@ -48,6 +48,10 @@
       "script": "tests/triton/complex_reciprocal/verify_complex_reciprocal.py"
     },
     {
+      "op": "complex_exp",
+      "script": "tests/triton/complex_exp/verify_complex_exp.py"
+    },
+    {
       "op": "interpolate",
       "script": "tests/triton/interpolate/verify_interpolate.py"
     }

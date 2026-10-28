@@ -44,6 +44,7 @@ setup(
         "oil_gas_ops_prospect.real_fft",
         "oil_gas_ops_prospect.complex_reciprocal",
         "oil_gas_ops_prospect.interpolate",
+        "oil_gas_ops_prospect.complex_exp",
         "oil_gas_ops_prospect.conv3d_custom",
     ],
     package_dir={
@@ -51,6 +52,7 @@ setup(
         "oil_gas_ops_prospect.real_fft": "triton-ascend/real_fft",
         "oil_gas_ops_prospect.complex_reciprocal": "triton-ascend/complex_reciprocal",
         "oil_gas_ops_prospect.interpolate": "triton-ascend/interpolate",
+        "oil_gas_ops_prospect.complex_exp": "triton-ascend/complex_exp",
         "oil_gas_ops_prospect.conv3d_custom": "composite-torch/conv3d_custom",
     },
     include_package_data=False,
@@ -59,6 +61,7 @@ setup(
         "oil_gas_ops_prospect.real_fft": ["README.md"],
         "oil_gas_ops_prospect.complex_reciprocal": ["README.md"],
         "oil_gas_ops_prospect.interpolate": ["README.md"],
+        "oil_gas_ops_prospect.complex_exp": ["README.md"],
         "oil_gas_ops_prospect.conv3d_custom": ["README.md"],
     },
     ext_modules=build_extensions(relative_to=ROOT),

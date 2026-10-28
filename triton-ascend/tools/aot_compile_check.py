@@ -61,6 +61,7 @@ TRITON_ROOT = REPO_ROOT / "triton-ascend"
 for _p in (
     TRITON_ROOT / "real_fft",
     TRITON_ROOT / "complex_reciprocal",
+    TRITON_ROOT / "complex_exp",
     TRITON_ROOT / "interpolate",
 ):
     if str(_p) not in sys.path:
@@ -342,6 +343,38 @@ def _complex_reciprocal_cases(cr) -> list[tuple[str, object, list[str], dict]]:
     return out
 
 
+def _complex_exp_cases(ce) -> list[tuple[str, object, list[str], dict]]:
+    """complex_exp 的两条 kernel：前向与反向（各含 int32 / int64 偏移分支）。"""
+    fwd_ptrs = p(2) + ["i32"]
+    bwd_ptrs = p(3) + ["i32"]
+    return [
+        (
+            "complex_exp/exp.fwd  [index32]",
+            kernel_of(ce, "_complex_exp_kernel"),
+            fwd_ptrs,
+            dict(block_size=2048, index64=False),
+        ),
+        (
+            "complex_exp/exp.fwd  [index64]",
+            kernel_of(ce, "_complex_exp_kernel"),
+            fwd_ptrs,
+            dict(block_size=2048, index64=True),
+        ),
+        (
+            "complex_exp/exp.grad [index32]",
+            kernel_of(ce, "_complex_exp_grad_kernel"),
+            bwd_ptrs,
+            dict(block_size=2048, index64=False),
+        ),
+        (
+            "complex_exp/exp.grad [index64]",
+            kernel_of(ce, "_complex_exp_grad_kernel"),
+            bwd_ptrs,
+            dict(block_size=2048, index64=True),
+        ),
+    ]
+
+
 def _interpolate_cases(interp) -> list[tuple[str, object, list[str], dict]]:
     """interpolate 前向 W/H/D 与反向 W^T/H^T/D^T 的 index32 分支。"""
     # 3 data pointers + gsx/gsy/sm_in/kstride/msize/nin/nout/sm_out/sn_out.
@@ -379,6 +412,7 @@ def _interpolate_cases(interp) -> list[tuple[str, object, list[str], dict]]:
 
 def cases() -> list[tuple[str, object, list[str], dict]]:
     """(用例名, kernel, 指针类型列表, constexpr 字典)，覆盖各算子的主要 IR 分支。"""
+    import triton_complex_exp as ce
     import triton_complex_reciprocal as cr
     import triton_fft_real as fft
     import triton_interpolate as interp
@@ -386,6 +420,7 @@ def cases() -> list[tuple[str, object, list[str], dict]]:
     return (
         _real_fft_cases(fft)
         + _complex_reciprocal_cases(cr)
+        + _complex_exp_cases(ce)
         + _interpolate_cases(interp)
     )
 

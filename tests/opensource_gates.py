@@ -95,6 +95,7 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "real_rfft",
             "real_irfft",
             "complex_reciprocal",
+            "complex_exp",
             "interpolate",
             "Conv3d",
             "conv3d",
@@ -102,7 +103,7 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "Conv3DGeluGrad",
             "数学定义",
         ),
-        "11 个已交付算子的数学定义、输入输出与约束",
+        "12 个已交付算子的数学定义、输入输出与约束",
     ),
     (
         "docs/zh/api_list.md",
@@ -115,6 +116,7 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "real_rfft",
             "real_irfft",
             "complex_reciprocal",
+            "complex_exp",
             "interpolate",
             "Conv3d",
             "conv3d",
@@ -241,6 +243,7 @@ def check_api() -> int:
     from oil_gas_ops_prospect.conv3d_gelu import conv3d_gelu
     from oil_gas_ops_prospect.conv3d_custom import Conv3d
     from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
+    from oil_gas_ops_prospect.complex_exp import complex_exp
     from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
     from oil_gas_ops_prospect.interpolate import interpolate
     from oil_gas_ops_prospect.real_fft import real_irfft, real_rfft
@@ -250,6 +253,9 @@ def check_api() -> int:
         return _fail("complex_reciprocal cpu fallback")
     if complex_reciprocal(zc.real, -0.25).shape != zc.shape:
         return _fail("complex_reciprocal parts shape")
+    ze = torch.randn(2, 3) + 1j * torch.randn(2, 3)
+    if not torch.equal(complex_exp(ze), torch.exp(ze)):
+        return _fail("complex_exp cpu fallback")
 
     xi = torch.randn(1, 2, 4, 5, 6)
     if interpolate(xi, size=(8, 10, 12), mode="trilinear").shape != (1, 2, 8, 10, 12):
@@ -307,7 +313,7 @@ def check_api() -> int:
     print(
         "PASS public API CPU fallback: complex_mul fused_bias_softmax "
         "fused_softmax_grad attention_core real_rfft real_irfft complex_reciprocal "
-        "interpolate Conv3d conv3d conv3d_gelu"
+        "complex_exp interpolate Conv3d conv3d conv3d_gelu"
     )
     return 0
 

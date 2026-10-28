@@ -121,7 +121,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 
 ## 📖 接口支持清单
 
-当前交付 6 个 AscendC 算子、4 个 Triton-Ascend 算子和 1 个 Composite-Torch 算子：
+当前交付 6 个 AscendC 算子、5 个 Triton-Ascend 算子和 1 个 Composite-Torch 算子：
 
 | 名称 / OpType | 后端 / 交付物 | 功能 | dtype / format |
 |---------------|---------------|------|----------------|
@@ -134,6 +134,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 | [`real_rfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 实数正向 FFT：`x -> (xr, xi)`，频率轴长度 `n // 2 + 1` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
 | [`real_irfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 从实部、虚部半谱重建实数：`(xr, xi), n -> y` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
 | [`complex_reciprocal`](triton-ascend/complex_reciprocal/) | Triton-Ascend / Python whl | 复数倒数 `1/z`（`z` 或 `xr, xi` 两种形式、自定义反向） | NPU kernel 为 `complex64`，非 NPU 环境回退到 PyTorch |
+| [`complex_exp`](triton-ascend/complex_exp/) | Triton-Ascend / Python whl | 复数指数 `e^z`（自定义反向） | NPU kernel 为 `complex64`，非 NPU 环境回退到 PyTorch |
 | [`interpolate`](triton-ascend/interpolate/) | Triton-Ascend / Python whl | 2D/3D 线性插值；5D fp32 走 Cube GEMM，4D 走原生 | 5D `float32`；4D 由原生实现支持 |
 | [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | 支持参数域内兼容 `nn.Conv3d`（自定义前/反向，state_dict key 互通） | 底层 PyTorch 后端支持且经本仓测试的 dtype |
 
@@ -153,6 +154,7 @@ oil-gas-ops-prospect/
 ├── triton-ascend/          # Triton-Ascend 算子（按算子名打包为 oil_gas_ops_prospect.<op>）
 │   ├── real_fft/           #   real_rfft / real_irfft
 │   ├── complex_reciprocal/ #   complex_reciprocal（多态：z 或 xr,xi）
+│   ├── complex_exp/        #   complex_exp
 │   ├── interpolate/        #   interpolate（5D Cube GEMM，4D 原生）
 │   └── tools/              #   AOT 编译检查
 ├── composite-torch/        # Composite-Torch 算子（纯 PyTorch 组合，打包为 oil_gas_ops_prospect.<op>）
@@ -166,6 +168,7 @@ oil-gas-ops-prospect/
 │   ├── ascendc/conv3d_gelu/ #   conv3d 与 tanh 近似 GELU 融合
 │   ├── triton/real_fft/    #   rFFT / iRFFT 精度（含 CPU 回退路径）
 │   ├── triton/complex_reciprocal/ # 复数倒数精度（CPU 回退 + NPU verify）
+│   ├── triton/complex_exp/ # 复数指数精度（CPU 回退 + NPU verify）
 │   ├── triton/interpolate/ #   2D/3D 插值验证（CPU 回退 + NPU verify + report）
 │   └── composite/conv3d_custom/   # Conv3d / conv3d 精度与性能基准
 ├── examples/               # Python 示例 + examples/aclnn/<op>/ C++ 样例

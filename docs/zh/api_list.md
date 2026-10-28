@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/api_list.md)
 
-对外接口统一由 Python 包 `oil_gas_ops_prospect` 暴露。源码树里没有这个目录：`setup.py` 在打包时把 `ascendc/pybind/`、`triton-ascend/real_fft/`、`triton-ascend/complex_reciprocal/`、`triton-ascend/interpolate/` 与 `composite-torch/conv3d_custom/` 显式映射到同一包名下；直接用仓内源码跑、没装 whl 时，由 `scripts/local_pkg.py` 自动发现并提供同一导入路径。
+对外接口统一由 Python 包 `oil_gas_ops_prospect` 暴露。源码树里没有这个目录：`setup.py` 在打包时把 `ascendc/pybind/`、`triton-ascend/real_fft/`、`triton-ascend/complex_reciprocal/`、`triton-ascend/complex_exp/`、`triton-ascend/interpolate/` 与 `composite-torch/conv3d_custom/` 显式映射到同一包名下；直接用仓内源码跑、没装 whl 时，由 `scripts/local_pkg.py` 自动发现并提供同一导入路径。
 
 ```text
 oil_gas_ops_prospect
@@ -11,6 +11,7 @@ oil_gas_ops_prospect
 ├── conv3d_gelu           # conv3d_gelu
 ├── real_fft              # real_rfft, real_irfft, make_basis
 ├── complex_reciprocal   # complex_reciprocal（z 或 xr, xi 两种形式）
+├── complex_exp          # complex_exp
 ├── interpolate           # interpolate, bilinear, trilinear
 └── conv3d_custom         # Conv3d；functional 子模块： conv3d
 ```
@@ -267,6 +268,37 @@ complex64 倒数，按输入形式自动分发：
 | `xi` | `torch.Tensor` / `float` / `None` | 双参形式的虚部（可广播）；单参形式不传 |
 | `stable` | `bool` | `True`（默认）用 `t=\|a\|+\|b\|` 缩放避免 `a^2+b^2` 上下溢；`False` 朴素公式（带宽高约 10%，`\|z\|` 超出 ~[1e-19, 1.8e19] 会错） |
 | `block_size` | `int` 或 `None` | 每 tile 复数元素数，向下取整到 2 的幂并钳制到 `[16, 2048]`；`None` 时取 `OIL_GAS_OPS_RECIP_BLOCK`，未设置则用默认值 `2048` |
+
+---
+
+## `oil_gas_ops_prospect.complex_exp`
+
+### `complex_exp`
+
+```python
+from oil_gas_ops_prospect.complex_exp import complex_exp
+
+def complex_exp(
+    z: torch.Tensor,
+    *,
+    block_size: int | None = None,
+) -> torch.Tensor
+```
+
+complex64 张量的指数 `e^z`。NPU 上由单个 Triton kernel（Vector Core）完成，替代走 Ai_Cpu 的 `aclnnExp`；CPU 或无 triton 环境回退 `torch.exp`（含 autograd）。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `z` | `torch.Tensor` | complex64 张量，任意形状（非连续会先转连续） |
+| `block_size` | `int` 或 `None` | 每 tile 复数元素数（2 的幂，钳制 `[16, 2048]`）；`None` 由实现选择，可由 `OIL_GAS_OPS_EXP_BLOCK` 覆盖 |
+
+数值语义对齐 `cexpf`（即 `torch.exp(complex64)`）：纯实数上溢返回 `inf+0j`（虚部不会是 `inf*0` 得到的 NaN），`a` 落在 `ln(FLT_MAX)` 以上时实部仍可能有限（如 `89+1j`），`b` 为 `±inf`/NaN 时按 `cexpf` 特判。反向 `grad_z = g·conj(e^z)` 由保存的前向输出直接计算；支持二阶及更高阶导（反向处于 grad 模式时改走等价的 torch 组合式）。
+
+已知限制：triton-ascend 后端的 `tl.sin`/`tl.cos` 在 `|b| >= 2^25` 后没有参数归约，该量级起与 `torch.exp` 不一致；虚部数值极大时请改用 `torch.exp`。详见 [算子列表](op_list.md#complex_exp)。
+
+验证记录见 [`tests/triton/complex_exp/report/`](../../tests/triton/complex_exp/report/)。
+
+性能提示：Triton kernel 有约 0.26ms/次的固定 host 派发开销，元素数很少（约低于 `3×10^4`）时可能慢于 `torch.exp`；该算子面向大张量，极小输入建议直接调用 `torch.exp`。
 
 ---
 

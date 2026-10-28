@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/op_list.md)
 
-当前仓库交付 6 个 AscendC/CANN OPP 算子、4 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
+当前仓库交付 6 个 AscendC/CANN OPP 算子、5 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
 
@@ -17,6 +17,7 @@
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 实数正向 FFT：`x → (xr, xi)` | NPU kernel 为 `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 半谱重建实数：`(xr, xi), n → y` | NPU kernel 为 `float32` | Ascend 910B |
 | `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | 复数倒数 `1/z`（`z` 或 `xr, xi`） | NPU kernel 为 `complex64` | Ascend 910B |
+| `complex_exp` | Triton-Ascend | `oil_gas_ops_prospect.complex_exp.complex_exp` | [`triton-ascend/complex_exp/`](../../triton-ascend/complex_exp/) | 复数指数 `e^z` | NPU kernel 为 `complex64` | Ascend 910B |
 | `interpolate` | Triton-Ascend | `oil_gas_ops_prospect.interpolate.interpolate` | [`triton-ascend/interpolate/`](../../triton-ascend/interpolate/) | 2D/3D 线性插值；5D fp32 走 Cube GEMM，4D 走原生 | 5D `float32`；4D 由原生实现支持 | Ascend 910B |
 | `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | 支持参数域内的 `nn.Conv3d` / `F.conv3d` 兼容实现（自定义前/反向） | 底层 PyTorch 后端支持且经本仓测试的 dtype | PyTorch 后端支持；已测 CPU / Ascend 910B |
 
@@ -354,6 +355,48 @@ w = \frac{1}{z} = \frac{\bar{z}}{|z|^2} = \frac{a - ib}{a^2 + b^2}
 
 ---
 
+### complex_exp
+
+complex64 张量的指数，替代 NPU 上走 Ai_Cpu 的 `aclnnExp`（f32 同算子走 AiCore 为"良"级，complex64 触发 AiCpu 后劣化约 2500 倍）。
+
+#### 数学定义
+
+对 \(z = a + ib\)：
+
+\[
+w = e^z = e^a (\cos b + i\sin b)
+\]
+
+反向：\(f(z) = e^z\) 全纯，\(f'(z) = e^z = w\)，torch 复数 autograd 约定下
+\(\text{grad}_z = g \cdot \overline{w}\)，kernel 从保存的前向输出直接计算。
+支持二阶及更高阶导：当反向本身处于 grad 模式（`create_graph=True` / `gradcheck`）时，
+`backward` 改用等价的 torch 组合式 `g * conj(w)`，由 autograd 继续求导。
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `z` | 复数指数 | 任意 | `complex64` |
+| 输出 | `w` | 指数 | 与 `z` 相同 | `complex64` |
+
+#### 约束
+
+- NPU kernel 仅 `complex64`；CPU 或其他 dtype 回退 `torch.exp`（含 autograd）。
+- 数值语义对齐 `cexpf`（即 `torch.exp(complex64)` 的实现），包括「`inf * 0` 不得把虚部 0 变成 NaN」和「实部在溢出处仍可能有限」这两种情况：
+  - `b == 0`（含 `-0.0`）直接返回 `exp(a) + i*b`，纯实数上溢得到 `inf+0j` 而不是 `inf+nanj`。
+  - `a > ln(FLT_MAX)`（约 88.72）时实部可能仍然有限（如 `89+1j` → `2.43e38+infj`）。kernel 用 `s = exp(a/4)` 连乘四次，不让 `exp(a)` 先溢出，结果与 torch 一致。
+  - `b` 为 `±inf` 或 NaN 时按 `cexpf` 特判：`a == -inf` 返回 `0`，`a == +inf` 返回 `inf`，其余 NaN。
+  - 下溢与常规有限值沿用 float32 `exp/cos/sin` 组合。
+- **已知限制**：triton-ascend 后端的 `tl.sin` / `tl.cos`（以及 CANN `libdevice` 版本）在 `|b| >= 2^25`（33554432）后没有参数归约，结果从该量级起与 `torch.exp` 不一致。本算子目标场景的相位角较小；虚部数值极大时请改用 `torch.exp`。
+- 元素数超过 `2^31` 不支持；`2^30` 起走 int64 offset 分支（前向与反向都由 kernel 自动选择，AOT 已覆盖）。
+- `block_size` 每 tile 复数元素数（2 的幂，钳制 `[16, 2048]`），可由 `OIL_GAS_OPS_EXP_BLOCK` 覆盖。
+- Triton kernel 有固定的 host 派发/launch 开销（约 0.26ms/次）；元素数很少（约低于 `3×10^4`）时可能慢于 `torch.exp`。该算子面向大张量（实测 12x~160x），极小输入建议直接调用 `torch.exp`。
+- 验证记录见 [`tests/triton/complex_exp/report/`](../../tests/triton/complex_exp/report/)。
+
+实现与说明详见 [`triton-ascend/complex_exp/README.md`](../../triton-ascend/complex_exp/README.md)。
+
+---
+
 ### interpolate
 
 2D/3D 线性插值。5D `float32` `trilinear` 将每个空间轴的一次批量 GEMM 交给 Cube；4D `bilinear` 与其余签名回退 `F.interpolate`。
@@ -403,6 +446,7 @@ shape / stride 参数走 `tl.constexpr` 特化。
 - 验证记录见 [`tests/triton/interpolate/report/`](../../tests/triton/interpolate/report/)。
 
 实现、环境变量与调试说明详见 [`triton-ascend/interpolate/README.md`](../../triton-ascend/interpolate/README.md)。
+
 
 ---
 

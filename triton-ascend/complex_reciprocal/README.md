@@ -16,6 +16,12 @@ denominator has the form `real tensor + constant imaginary part`.
   fallback, NPU forward/backward precision, extreme magnitudes, int64-offset branch, and
   the fused tensor+scalar expression.
 
+For the full mathematical definition, constraints, signatures and environment
+variables see [`docs/en/op_list.md`](../../docs/en/op_list.md) /
+[`docs/en/api_list.md`](../../docs/en/api_list.md) (English) and
+[`docs/zh/op_list.md`](../../docs/zh/op_list.md) /
+[`docs/zh/api_list.md`](../../docs/zh/api_list.md) (Chinese).
+
 ## Commands
 
 在仓库根目录 `oil-gas-ops-prospect/` 下执行（容器内一般为 `/root/projects/oil-gas-ops-prospect`）。

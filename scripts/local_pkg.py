@@ -146,6 +146,7 @@ def activate(repo_root: Path | None = None) -> bool:
         f"{_PKG}.real_fft": triton / "real_fft",
         f"{_PKG}.complex_reciprocal": triton / "complex_reciprocal",
         f"{_PKG}.interpolate": triton / "interpolate",
+        f"{_PKG}.complex_exp": triton / "complex_exp",
     }
     mapping.update(_composite_mapping(root / "composite-torch"))
     finder = _SourceTreeFinder(pybind, mapping)

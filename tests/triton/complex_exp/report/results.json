@@ -1,0 +1,188 @@
+{
+  "operator": "complex_exp",
+  "date": "2026-10-28",
+  "environment": {
+    "host": "bmswt001",
+    "device": "Ascend910B2",
+    "torch": "2.7.1+cpu",
+    "torch_npu": "2.7.1.post4",
+    "triton": "3.2.0",
+    "cann": "9.0.0"
+  },
+  "tolerance": {
+    "forward_vs_float64_rel": 1e-05,
+    "backward_vs_float64_rel": 0.0001,
+    "second_order_vs_float64_rel": 0.0001
+  },
+  "accuracy": [
+    {
+      "shape": [
+        13
+      ],
+      "method": "triton",
+      "max_abs": 1.0471959832764294e-07,
+      "max_rel": 9.84559290706534e-08
+    },
+    {
+      "shape": [
+        13
+      ],
+      "method": "torch NPU exp",
+      "max_abs": 1.0906426518963606e-07,
+      "max_rel": 1.0078034835183577e-07
+    },
+    {
+      "shape": [
+        1000001
+      ],
+      "method": "triton",
+      "max_abs": 9.999849905798714e-06,
+      "max_rel": 2.3731797314138623e-07
+    },
+    {
+      "shape": [
+        1000001
+      ],
+      "method": "torch NPU exp",
+      "max_abs": 9.999849905798714e-06,
+      "max_rel": 1.425876735935859e-07
+    },
+    {
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "method": "triton",
+      "max_abs": 1.566337053343712e-05,
+      "max_rel": 2.4423560678231764e-07
+    },
+    {
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "method": "torch NPU exp",
+      "max_abs": 4.071387046102453e-06,
+      "max_rel": 1.3648479202883063e-07
+    },
+    {
+      "shape": [
+        304,
+        304,
+        176
+      ],
+      "method": "triton",
+      "max_abs": 1.464310257390257e-05,
+      "max_rel": 2.6252102430495823e-07
+    },
+    {
+      "shape": [
+        304,
+        304,
+        176
+      ],
+      "method": "torch NPU exp",
+      "max_abs": 8.23320882918992e-06,
+      "max_rel": 1.4496653776712345e-07
+    },
+    {
+      "shape": [
+        4096,
+        4096
+      ],
+      "method": "triton",
+      "max_abs": 1.4443726141758433e-05,
+      "max_rel": 2.646797800183194e-07
+    },
+    {
+      "shape": [
+        4096,
+        4096
+      ],
+      "method": "torch NPU exp",
+      "max_abs": 1.3302257122895541e-05,
+      "max_rel": 1.444180788331672e-07
+    }
+  ],
+  "backward": {
+    "vs_torch_fp32": 4.0923078439074604e-07,
+    "vs_float64": 3.102266048462381e-07,
+    "second_order_vs_float64": 2.9241312634870665e-07
+  },
+  "perf_forward": [
+    {
+      "shape": [
+        13
+      ],
+      "n": 13,
+      "ms": {
+        "torch exp": 0.04508700221776962,
+        "triton": 0.40812697261571884
+      },
+      "gbps_triton": 0.0005096453161792055,
+      "speedup_vs_torch": 0.1104729783694603
+    },
+    {
+      "shape": [
+        1000001
+      ],
+      "n": 1000001,
+      "ms": {
+        "torch exp": 12.36463999375701,
+        "triton": 0.28538997285068035
+      },
+      "gbps_triton": 56.06369361957721,
+      "speedup_vs_torch": 43.325418444979306
+    },
+    {
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "n": 262144,
+      "ms": {
+        "torch exp": 3.7054409738630056,
+        "triton": 0.3039505332708359
+      },
+      "gbps_triton": 13.79929804651027,
+      "speedup_vs_torch": 12.190934274694175
+    },
+    {
+      "shape": [
+        304,
+        304,
+        176
+      ],
+      "n": 16265216,
+      "ms": {
+        "torch exp": 250.189283490181,
+        "triton": 2.2043325006961823
+      },
+      "gbps_triton": 118.05998229296567,
+      "speedup_vs_torch": 113.49888613045677
+    },
+    {
+      "shape": [
+        4096,
+        4096
+      ],
+      "n": 16777216,
+      "ms": {
+        "torch exp": 254.8589549958706,
+        "triton": 2.5375769939273596
+      },
+      "gbps_triton": 105.78416207365892,
+      "speedup_vs_torch": 100.43397918793008
+    }
+  ],
+  "perf_backward": {
+    "fwd_ms": 2.582585997879505,
+    "fwd_bwd_ms": 3.689867490902543,
+    "n": 16265216
+  },
+  "failures": [],
+  "status": "PASS"
+}

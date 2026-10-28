@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/op_list.md)
 
-This repository currently delivers 6 AscendC/CANN OPP operators, 4 Triton-Ascend Python operators and 1 Composite-Torch (pure PyTorch) operator. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
+This repository currently delivers 6 AscendC/CANN OPP operators, 5 Triton-Ascend Python operators and 1 Composite-Torch (pure PyTorch) operator. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
 
 ## Overview
 
@@ -17,8 +17,9 @@ This repository currently delivers 6 AscendC/CANN OPP operators, 4 Triton-Ascend
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | real forward FFT: `x → (xr, xi)` | the NPU kernel is `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | real reconstruction from a half spectrum: `(xr, xi), n → y` | the NPU kernel is `float32` | Ascend 910B |
 | `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | complex reciprocal `1/z` (`z` or `xr, xi`) | the NPU kernel is `complex64` | Ascend 910B |
+| `complex_exp` | Triton-Ascend | `oil_gas_ops_prospect.complex_exp.complex_exp` | [`triton-ascend/complex_exp/`](../../triton-ascend/complex_exp/) | complex exponential `e^z` | the NPU kernel is `complex64` | Ascend 910B |
 | `interpolate` | Triton-Ascend | `oil_gas_ops_prospect.interpolate.interpolate` | [`triton-ascend/interpolate/`](../../triton-ascend/interpolate/) | 2D/3D linear interpolation; 5D fp32 uses Cube GEMM, 4D uses the native kernel | `float32` for 5D; 4D is supported by the native path | Ascend 910B |
-| `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | compatible `nn.Conv3d` / `F.conv3d` implementation within the supported parameter domain (custom forward/backward) | data types supported by the underlying PyTorch backend and tested here | supported by the PyTorch backend; tested on CPU / Ascend 910B |
+| `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | compatible `nn.Conv3d` / `F.conv3d` implementation within the supported parameter domain (custom forward/backward) | dtypes supported by the underlying PyTorch backend and tested here | supported by the PyTorch backend; tested on CPU / Ascend 910B |
 
 Naming conventions:
 
@@ -351,6 +352,49 @@ The two-argument form `complex_reciprocal(xr, xi)` computes \(1/(xr + i\,xi)\). 
 - autograd is supported (a custom backward kernel), as are both entries (interleaved and real/imag-separated).
 
 For implementation and usage notes see [`triton-ascend/complex_reciprocal/README.md`](../../triton-ascend/complex_reciprocal/README.md).
+
+---
+
+### complex_exp
+
+The exponential of a complex64 tensor, replacing the Ai_Cpu `aclnnExp` path on NPU (the f32 version of the same operator runs on AiCore with a "good" rating, while complex64 drops to AiCpu and degrades by roughly 2500x).
+
+#### Mathematical definition
+
+For \(z = a + ib\):
+
+\[
+w = e^z = e^a (\cos b + i\sin b)
+\]
+
+Backward: \(f(z) = e^z\) is holomorphic and \(f'(z) = e^z = w\). Under the torch complex autograd convention,
+\(\text{grad}_z = g \cdot \overline{w}\), computed by the kernel from the saved forward output.
+Second order and higher derivatives are supported: when the backward pass itself runs in grad mode
+(`create_graph=True` / `gradcheck`), `backward` evaluates the equivalent `g * conj(w)` with torch ops so
+autograd can differentiate the result again.
+
+#### Inputs / outputs
+
+| Direction | Name | Meaning | shape | dtype |
+|-----------|------|---------|-------|-------|
+| Input | `z` | complex exponential input | any | `complex64` |
+| Output | `w` | exponential | same as `z` | `complex64` |
+
+#### Constraints
+
+- The NPU kernel accepts only `complex64`; on CPU or for other dtypes it falls back to `torch.exp` (including autograd).
+- Numerics follow `cexpf` (what `torch.exp(complex64)` uses), including "an `inf * 0` product must not turn a zero imaginary part into NaN" and the case where the real part stays finite while `a` is in the overflow band:
+  - `b == 0` (including `-0.0`) returns `exp(a) + i*b` directly, so a pure-real overflow yields `inf+0j` rather than `inf+nanj`.
+  - For `a > ln(FLT_MAX)` (about 88.72) the real part may still be finite (e.g. `89+1j` → `2.43e38+infj`). The kernel uses `s = exp(a/4)` multiplied four times instead of letting `exp(a)` overflow first, so the result matches torch.
+  - When `b` is `±inf` or NaN the result follows `cexpf`: `a == -inf` gives `0`, `a == +inf` gives `inf`, everything else NaN.
+  - Underflow and the plain finite case match the float32 `exp/cos/sin` composition.
+- **Known limitation**: the triton-ascend backend's `tl.sin` / `tl.cos` (and the CANN `libdevice` variants) do no argument reduction once `|b| >= 2^25` (33554432), so the result stops matching `torch.exp` from there. Phase angles in this operator's target workloads are small; for large-magnitude imaginary parts use `torch.exp`.
+- More than `2^31` elements is unsupported; from `2^30` elements the int64 offset branch is used (selected automatically, for both forward and backward; covered by AOT).
+- `block_size` is the number of complex elements per tile (a power of two, clamped to `[16, 2048]`); it can be overridden with `OIL_GAS_OPS_EXP_BLOCK`.
+- The Triton kernel has a fixed host dispatch/launch overhead (about 0.26 ms per call); for very small inputs (roughly below `3×10^4` elements) it can be slower than `torch.exp`. The operator targets large tensors (measured 12x–160x); for tiny inputs, call `torch.exp` directly.
+- Recorded verification results are under [`tests/triton/complex_exp/report/`](../../tests/triton/complex_exp/report/).
+
+For implementation and usage notes see [`triton-ascend/complex_exp/README.md`](../../triton-ascend/complex_exp/README.md).
 
 ---
 

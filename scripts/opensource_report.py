@@ -209,12 +209,14 @@ class Statuses:
     prec_crecip: str = NA
     prec_gelu: str = NA
     prec_interp: str = NA
+    prec_cexp: str = NA
     perf_cm: str = NA
     perf_fused: str = NA
     perf_conv3d: str = NA
     perf_crecip: str = NA
     perf_gelu: str = NA
     perf_interp: str = NA
+    perf_cexp: str = NA
     fft_v: str = NA
     fft_p: str = NA
     docs: str = NA
@@ -246,6 +248,7 @@ class PerfSummary:
     interp_fwd: list[PerfRow] = field(default_factory=list)
     interp_bwd: list[PerfRow] = field(default_factory=list)
     interp_fwdbwd: list[PerfRow] = field(default_factory=list)
+    cexp_fwd: list[PerfRow] = field(default_factory=list)
     gmean_txt: str = "未解析"
     fft_metric: str = ""
 
@@ -272,12 +275,14 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
         prec_crecip=job_status(jobs, "complex_reciprocal_precision"),
         prec_gelu=job_status(jobs, "conv3d_gelu_precision"),
         prec_interp=job_status(jobs, "interpolate_precision"),
+        prec_cexp=job_status(jobs, "complex_exp_precision"),
         perf_cm=job_status(jobs, "complex_mul_perf"),
         perf_fused=job_status(jobs, "fused_bias_softmax_perf"),
         perf_conv3d=job_status(jobs, "conv3d_custom_perf"),
         perf_crecip=job_status(jobs, "complex_reciprocal_perf"),
         perf_gelu=job_status(jobs, "conv3d_gelu_perf"),
         perf_interp=job_status(jobs, "interpolate_perf"),
+        perf_cexp=job_status(jobs, "complex_exp_perf"),
         fft_v=combine(
             job_status(jobs, "fft_npu_verify"), job_status(jobs, "fft_npu_verify_5d")
         ),
@@ -307,6 +312,7 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
     crecip_rows = parse_perf_rows(job_log(jobs, "complex_reciprocal_perf"))
     gelu_rows = parse_perf_rows(job_log(jobs, "conv3d_gelu_perf"))
     interp_rows = parse_perf_rows(job_log(jobs, "interpolate_perf"))
+    cexp_rows = parse_perf_rows(job_log(jobs, "complex_exp_perf"))
     fused_fwd = [r for r in fused_rows if r[0].startswith("fwd ")]
     fused_bwd = [r for r in fused_rows if r[0].startswith("bwd ")]
     gmean = geo_mean(speedup_vals(fft_rows))
@@ -336,6 +342,7 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
         interp_fwdbwd=[
             r for r in interp_rows if r[0].startswith("interpolate fwd+bwd ")
         ],
+        cexp_fwd=[r for r in cexp_rows if r[0].startswith("exp fwd")],
         gmean_txt=f"{gmean:.2f}x" if gmean else "未解析",
         fft_metric=fft_metric_text(fft_rows),
     )
@@ -413,6 +420,15 @@ def build_features(st: Statuses) -> list[tuple[str, str, str, str, str, str, str
             combine(st.triton, st.aot, st.prec_interp),
             st.prec_interp,
             st.perf_interp,
+            st.triton,
+            st.install,
+        ),
+        (
+            "complex_exp",
+            combine(st.triton, st.aot, st.prec_cexp, st.perf_cexp, st.install),
+            combine(st.triton, st.aot, st.prec_cexp),
+            st.prec_cexp,
+            st.perf_cexp,
             st.triton,
             st.install,
         ),
@@ -515,6 +531,13 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
             "4D bilinear 走原生路径；kernel 的 W/H/D 前向与 W^T/H^T/D^T 反向 index32 分支纳入 AOT",
         ),
         (
+            "complex_exp 前反向精度",
+            combine(st.triton, st.aot, st.prec_cexp),
+            "CPU 回退与 torch `exp` 逐位一致（含纯虚指数、`cexpf` 特殊值表、纯实数上溢、int64 offset 分支）；"
+            "NPU 真机对拍（vs float64，max_rel<=1e-5）、一阶与二阶反向 vs float64；"
+            "kernel 前向与反向的 int32/int64 四条 AOT 分支可编译",
+        ),
+        (
             "Conv3DGelu 精度与路径",
             combine(st.ophost, st.st_gelu, st.ex_gelu, st.prec_gelu),
             "1×1 直写与 3×3 单平面路径；stride / dilation / 非立方 kernel 的 ST；"
@@ -613,9 +636,11 @@ def section_overview(cmd: str, ok: bool, rate: str) -> list[str]:
         "dtype 以底层 PyTorch 后端支持且本仓实测为准，state_dict key 互通 |",
         "| 8 | complex_reciprocal | complex64 倒数 `1/z`（stable / naive 双路径、实虚分离入口、"
         "自定义反向），替代 NPU 上走 Ai_Cpu 的 `aclnnReciprocal` |",
-        "| 9 | interpolate | 2D/3D 线性插值；5D fp32 trilinear 按空间轴拆成批量 Cube GEMM，"
+        "| 9 | complex_exp | complex64 指数 `e^z`（`e^a·(cos b + i·sin b)`，自定义反向），"
+        "替代 NPU 上走 Ai_Cpu 的 `aclnnExp`；数值语义对齐 `cexpf` |",
+        "| 10 | interpolate | 2D/3D 线性插值；5D fp32 trilinear 按空间轴拆成批量 Cube GEMM，"
         "支持一阶 autograd、大张量分块与 CPU 回退，4D 使用原生实现 |",
-        "| 10 | Conv3DGelu | `gelu_tanh(conv3d(x, weight, bias))`，`float32` / `NCDHW`，`groups=1`；"
+        "| 11 | Conv3DGelu | `gelu_tanh(conv3d(x, weight, bias))`，`float32` / `NCDHW`，`groups=1`；"
         "1×1 直写，其余形状按一个输出平面切，反向不保存预激活 |",
         "",
         "`attention_core(q, k, v, bias1, bias2)` 为 FusedBiasSoftmax 与 FusedSoftmaxGrad 按 openfold "
@@ -800,6 +825,9 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_fused)} | 无 |",
         "| 算子微基准 | 不涉及 | real_rfft / real_irfft | 同设备 `torch.fft.rfft` / `irfft`，"
         f'`norm="ortho"` | {perf.fft_metric} | Atlas A2 + CANN 9.0.0 | {cell(st.fft_p)} | 无 |',
+        "| 算子微基准 | 不涉及 | complex_exp | 同设备 torch `exp`（aclnnExp） | "
+        f"前向 {speedup_span(perf.cexp_fwd)} | "
+        f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_cexp)} | 无 |",
         "| 算子微基准 | 不涉及 | complex_reciprocal | 同设备 torch `1/z`（aclnnReciprocal）与先构造 complex64 的原始写法 | "
         f"前向 {speedup_span(perf.crecip_fwd)}；端到端融合 {speedup_span(perf.crecip_e2e)} | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_crecip)} | 无 |",
@@ -823,6 +851,9 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
 
 def section_perf_tables(perf: PerfSummary) -> list[str]:
     lines = perf_md_table(
+        "complex_exp 前向（相对同设备 torch exp）", perf.cexp_fwd
+    )
+    lines += perf_md_table(
         "complex_reciprocal 前向（相对同设备 torch 1/z）", perf.crecip_fwd
     )
     lines += perf_md_table(

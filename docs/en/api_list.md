@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/api_list.md)
 
-All public APIs are exposed by the Python package `oil_gas_ops_prospect`. That directory does not exist in the source tree: at packaging time `setup.py` explicitly maps `ascendc/pybind/`, `triton-ascend/real_fft/`, `triton-ascend/complex_reciprocal/`, `triton-ascend/interpolate/`, and `composite-torch/conv3d_custom/` under the same package name, while when running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` discovers them automatically and provides the same import path.
+All public APIs are exposed by the Python package `oil_gas_ops_prospect`. That directory does not exist in the source tree: at packaging time `setup.py` explicitly maps `ascendc/pybind/`, `triton-ascend/real_fft/`, `triton-ascend/complex_reciprocal/`, `triton-ascend/complex_exp/`, `triton-ascend/interpolate/`, and `composite-torch/conv3d_custom/` under the same package name, while when running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` discovers them automatically and provides the same import path.
 
 ```text
 oil_gas_ops_prospect
@@ -11,6 +11,7 @@ oil_gas_ops_prospect
 ├── conv3d_gelu           # conv3d_gelu
 ├── real_fft              # real_rfft, real_irfft, make_basis
 ├── complex_reciprocal    # complex_reciprocal (either z or xr, xi)
+├── complex_exp           # complex_exp
 ├── interpolate           # interpolate, bilinear, trilinear
 └── conv3d_custom         # Conv3d; functional submodule: conv3d
 ```
@@ -267,6 +268,37 @@ Complex64 reciprocal. The call form selects the entry:
 | `xi` | `torch.Tensor` / `float` / `None` | imaginary part of the two-argument form (broadcastable); omitted in the one-argument form |
 | `stable` | `bool` | `True` (default) scales by `t=\|a\|+\|b\|` to avoid overflow and underflow of `a^2+b^2`; `False` uses the naive formula (about 10% higher bandwidth, wrong when `\|z\|` falls outside ~[1e-19, 1.8e19]) |
 | `block_size` | `int` or `None` | complex elements per tile, rounded down to a power of two and clamped to `[16, 2048]`; `None` means `OIL_GAS_OPS_RECIP_BLOCK` if set, otherwise the default `2048` |
+
+---
+
+## `oil_gas_ops_prospect.complex_exp`
+
+### `complex_exp`
+
+```python
+from oil_gas_ops_prospect.complex_exp import complex_exp
+
+def complex_exp(
+    z: torch.Tensor,
+    *,
+    block_size: int | None = None,
+) -> torch.Tensor
+```
+
+The exponential `e^z` of a complex64 tensor. On NPU it is computed by a single Triton kernel (Vector Core), replacing the Ai_Cpu `aclnnExp`; on CPU or when triton is unavailable it falls back to `torch.exp` (including autograd).
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `z` | `torch.Tensor` | complex64 tensor of any shape (non-contiguous inputs are made contiguous first) |
+| `block_size` | `int` or `None` | complex elements per tile (a power of two, clamped to `[16, 2048]`); `None` lets the implementation choose, overridable with `OIL_GAS_OPS_EXP_BLOCK` |
+
+Numerics follow `cexpf` (what `torch.exp(complex64)` uses): a pure-real overflow returns `inf+0j` (the imaginary part is never the NaN produced by `inf*0`), the real part can still be finite for `a` above `ln(FLT_MAX)` (e.g. `89+1j`), and `b` being `±inf`/NaN follows the `cexpf` special cases. The backward `grad_z = g·conj(e^z)` is computed from the saved forward output; second order and higher derivatives are supported (the backward uses the equivalent torch composition when it runs in grad mode).
+
+Known limitation: the triton-ascend backend's `tl.sin`/`tl.cos` do no argument reduction for `|b| >= 2^25`, so results diverge from `torch.exp` from that magnitude onwards; use `torch.exp` for very large imaginary parts. See the [operator list](op_list.md#complex_exp).
+
+Recorded verification results are under [`tests/triton/complex_exp/report/`](../../tests/triton/complex_exp/report/).
+
+Performance note: the Triton kernel has a fixed host dispatch overhead of about 0.26 ms per call; for very small inputs (roughly below `3×10^4` elements) it can be slower than `torch.exp`; the operator targets large tensors, so call `torch.exp` directly for tiny inputs.
 
 ---
 
