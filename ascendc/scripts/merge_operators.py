@@ -30,6 +30,7 @@ from scripts.config import (
     KERNEL_CMAKE_HEADER,
     OPERATORS_DIR,
 )
+from scripts.stage_ops_nn_conv3d import stage_conv3d_v2
 from scripts.manifest import OperatorEntry, lookup_entry
 
 INCLUDE_PATTERN = re.compile(r'#include "../op_kernel/')
@@ -143,6 +144,8 @@ def merge_operators(custom_op: Path, selected_ops: list[str]) -> list[Path]:
     print("[merge] 清理 msopgen dummy 占位文件...")
     _remove_dummy_files(custom_op)
     write_kernel_cmake(custom_op, selected_ops)
+    if "conv3d_gelu" in selected_ops:
+        stage_conv3d_v2(custom_op)
 
     host_files = sorted((custom_op / "op_host").glob("*.cpp"))
     print("[merge] 完成。Host 源:")

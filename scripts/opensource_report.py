@@ -197,19 +197,23 @@ class Statuses:
     st_cmg: str = NA
     st_fwd: str = NA
     st_bwd: str = NA
+    st_gelu: str = NA
     ex_cm: str = NA
     ex_cmg: str = NA
     ex_fwd: str = NA
     ex_bwd: str = NA
+    ex_gelu: str = NA
     prec_cm: str = NA
     prec_fused: str = NA
     prec_conv3d: str = NA
     prec_crecip: str = NA
+    prec_gelu: str = NA
     prec_interp: str = NA
     perf_cm: str = NA
     perf_fused: str = NA
     perf_conv3d: str = NA
     perf_crecip: str = NA
+    perf_gelu: str = NA
     perf_interp: str = NA
     fft_v: str = NA
     fft_p: str = NA
@@ -238,6 +242,7 @@ class PerfSummary:
     conv3d_fwdbwd: list[PerfRow] = field(default_factory=list)
     crecip_fwd: list[PerfRow] = field(default_factory=list)
     crecip_e2e: list[PerfRow] = field(default_factory=list)
+    gelu_rows: list[PerfRow] = field(default_factory=list)
     interp_fwd: list[PerfRow] = field(default_factory=list)
     interp_bwd: list[PerfRow] = field(default_factory=list)
     interp_fwdbwd: list[PerfRow] = field(default_factory=list)
@@ -259,15 +264,19 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
         ex_cmg=job_status(jobs, "example_complex_mul_grad"),
         ex_fwd=job_status(jobs, "example_fused_bias_softmax"),
         ex_bwd=job_status(jobs, "example_fused_softmax_grad"),
+        ex_gelu=job_status(jobs, "example_conv3d_gelu"),
+        st_gelu=job_status(jobs, "aclnnConv3dGeluCustom"),
         prec_cm=job_status(jobs, "complex_mul_precision"),
         prec_fused=job_status(jobs, "fused_bias_softmax_precision"),
         prec_conv3d=job_status(jobs, "conv3d_custom_precision"),
         prec_crecip=job_status(jobs, "complex_reciprocal_precision"),
+        prec_gelu=job_status(jobs, "conv3d_gelu_precision"),
         prec_interp=job_status(jobs, "interpolate_precision"),
         perf_cm=job_status(jobs, "complex_mul_perf"),
         perf_fused=job_status(jobs, "fused_bias_softmax_perf"),
         perf_conv3d=job_status(jobs, "conv3d_custom_perf"),
         perf_crecip=job_status(jobs, "complex_reciprocal_perf"),
+        perf_gelu=job_status(jobs, "conv3d_gelu_perf"),
         perf_interp=job_status(jobs, "interpolate_perf"),
         fft_v=combine(
             job_status(jobs, "fft_npu_verify"), job_status(jobs, "fft_npu_verify_5d")
@@ -296,6 +305,7 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
     fft_rows = parse_perf_rows(job_log(jobs, "fft_npu_perf"))
     conv3d_rows = parse_perf_rows(job_log(jobs, "conv3d_custom_perf"))
     crecip_rows = parse_perf_rows(job_log(jobs, "complex_reciprocal_perf"))
+    gelu_rows = parse_perf_rows(job_log(jobs, "conv3d_gelu_perf"))
     interp_rows = parse_perf_rows(job_log(jobs, "interpolate_perf"))
     fused_fwd = [r for r in fused_rows if r[0].startswith("fwd ")]
     fused_bwd = [r for r in fused_rows if r[0].startswith("bwd ")]
@@ -320,6 +330,7 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
         conv3d_fwdbwd=[r for r in conv3d_rows if r[0].endswith(" fwdbwd")],
         crecip_fwd=[r for r in crecip_rows if r[0].startswith("recip fwd")],
         crecip_e2e=[r for r in crecip_rows if r[0].startswith("e2e fused")],
+        gelu_rows=gelu_rows,
         interp_fwd=[r for r in interp_rows if r[0].startswith("interpolate fwd ")],
         interp_bwd=[r for r in interp_rows if r[0].startswith("interpolate bwd ")],
         interp_fwdbwd=[
@@ -414,6 +425,15 @@ def build_features(st: Statuses) -> list[tuple[str, str, str, str, str, str, str
             st.composite,
             st.install,
         ),
+        (
+            "Conv3DGelu",
+            combine(st.ophost, st.st_gelu, st.ex_gelu, st.prec_gelu, st.perf_gelu),
+            combine(st.st_gelu, st.ex_gelu),
+            st.prec_gelu,
+            st.perf_gelu,
+            st.ophost,
+            st.install,
+        ),
     ]
 
 
@@ -495,6 +515,12 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
             "4D bilinear 走原生路径；kernel 的 W/H/D 前向与 W^T/H^T/D^T 反向 index32 分支纳入 AOT",
         ),
         (
+            "Conv3DGelu 精度与路径",
+            combine(st.ophost, st.st_gelu, st.ex_gelu, st.prec_gelu),
+            "1×1 直写与 3×3 单平面路径；stride / dilation / 非立方 kernel 的 ST；"
+            'NPU 相对 CPU `F.gelu(F.conv3d, approximate="tanh")` 相对误差 `< 1e-5`，输入梯度最大绝对误差 `< 1e-4`',
+        ),
+        (
             "Conv3d / conv3d NPU 精度与性能",
             combine(st.prec_conv3d, st.perf_conv3d),
             "测试脚本列出的 NPU float32 形态对拍：支持参数域内的自定义前/反向 vs 原生（L2 相对误差阈值 `1e-5`；"
@@ -526,7 +552,7 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
         (
             "公开接口冒烟",
             st.api,
-            "`complex_mul` / `fused_bias_softmax` / `fused_softmax_grad` / `real_rfft` / `real_irfft` 可导入；"
+            "`complex_mul` / `fused_bias_softmax` / `fused_softmax_grad` / `conv3d_gelu` / `real_rfft` / `real_irfft` 可导入；"
             "CPU 回退前反向可跑通",
         ),
         (
@@ -589,6 +615,8 @@ def section_overview(cmd: str, ok: bool, rate: str) -> list[str]:
         "自定义反向），替代 NPU 上走 Ai_Cpu 的 `aclnnReciprocal` |",
         "| 9 | interpolate | 2D/3D 线性插值；5D fp32 trilinear 按空间轴拆成批量 Cube GEMM，"
         "支持一阶 autograd、大张量分块与 CPU 回退，4D 使用原生实现 |",
+        "| 10 | Conv3DGelu | `gelu_tanh(conv3d(x, weight, bias))`，`float32` / `NCDHW`，`groups=1`；"
+        "1×1 直写，其余形状按一个输出平面切，反向不保存预激活 |",
         "",
         "`attention_core(q, k, v, bias1, bias2)` 为 FusedBiasSoftmax 与 FusedSoftmaxGrad 按 openfold "
         "注意力语义的组合封装，随上述融合算子一并验证。",
@@ -779,6 +807,9 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
         f"前向 {speedup_span(perf.interp_fwd)}，反向 {speedup_span(perf.interp_bwd)}，"
         f"fwd+bwd {speedup_span(perf.interp_fwdbwd)} | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_interp)} | 无 |",
+        "| 算子微基准 | 不涉及 | Conv3DGelu | 同设备 `F.conv3d` + `F.gelu(approximate=\"tanh\")` | "
+        f"1×1 直写 {speedup_span(perf.gelu_rows, 'k1_')}；3×3 按输出平面切，速度让给显存 | "
+        f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_gelu)} | 3×3 单平面路径慢于整幅卷积 |",
         "| 算子微基准 | 不涉及 | Conv3d / conv3d | 同设备 `nn.Conv3d` / `F.conv3d`（测试脚本列出的形态） | "
         f"前向 {speedup_span(perf.conv3d_fwd)}，fwd+bwd {speedup_span(perf.conv3d_fwdbwd)}（特定大 kernel depthwise "
         "case 仅验证分步反向可避开已观察到的原生 L1 限制） | "
@@ -882,7 +913,9 @@ def section_compat(st: Statuses, env: dict[str, str], has_npu: bool) -> list[str
 def section_coverage(st: Statuses, cases: list[tuple[str, str, str]]) -> list[str]:
     feature_cases = cases[:-2]
     feature_pass = sum(1 for c in feature_cases if c[1] == PASS)
-    perf_all = combine(st.perf_cm, st.perf_fused, st.fft_p)
+    perf_parts = (st.perf_cm, st.perf_fused, st.fft_p, st.perf_gelu, st.perf_interp)
+    perf_all = combine(*perf_parts)
+    n_perf = len(perf_parts)
     rel_all = combine(st.ophost, st.prec_fused, st.api, st.prec_fused)
     compat_ok = st.install == PASS and st.api == PASS
     sec_ok = st.docs == PASS and st.pkg == PASS
@@ -897,8 +930,8 @@ def section_coverage(st: Statuses, cases: list[tuple[str, str, str]]) -> list[st
         "| --- | --- | --- | --- | --- |",
         f"| 特性测试 | {'pass' if feature_pass == len(feature_cases) else 'fail'} | {len(feature_cases)} | 100% | "
         f"{feature_pass}/{len(feature_cases)} |",
-        f"| 性能测试 | {'pass' if perf_all == PASS else 'fail'} | 4 | 100% | "
-        f"{'4/4' if perf_all == PASS else cell(perf_all)} |",
+        f"| 性能测试 | {'pass' if perf_all == PASS else 'fail'} | {n_perf} | 100% | "
+        f"{f'{n_perf}/{n_perf}' if perf_all == PASS else cell(perf_all)} |",
         f"| 可靠性测试 | {'pass' if rel_all == PASS else 'fail'} | 4 | 100% | "
         f"{'4/4' if rel_all == PASS else cell(rel_all)} |",
         "| 继承特性测试 | 不涉及 | 0 | — | — |",

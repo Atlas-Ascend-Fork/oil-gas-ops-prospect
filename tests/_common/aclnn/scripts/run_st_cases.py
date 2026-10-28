@@ -55,8 +55,17 @@ def main() -> int:
             for leftover in d.glob("*.bin"):
                 leftover.unlink()
         gen_cmd = ["python3", str(current / "scripts" / "gen_data.py"), "--shape", ",".join(str(d) for d in shape)]
-        if "bias1" in case:
-            gen_cmd += ["--bias1", str(case["bias1"])]
+        # 除 name/shape 外的键都传给该算子自己的 gen_data.py，键名必须已是它的参数。
+        # 现有四套 ST：ComplexMul / Grad 只有 name+shape；FusedBiasSoftmax 有 bias1；
+        # FusedSoftmaxGrad 只有 name+shape；Conv3DGelu 另有 weight/stride/padding/dilation/bias。
+        for key, value in case.items():
+            if key in ("name", "shape"):
+                continue
+            flag = f"--{key}"
+            if isinstance(value, list):
+                gen_cmd += [flag, ",".join(str(item) for item in value)]
+            else:
+                gen_cmd += [flag, str(value)]
         subprocess.check_call(gen_cmd, cwd=current)
         subprocess.check_call([str(exe)], cwd=current / "output")
         verify = ["python3", str(common / "verify_result.py"), *verify_args]

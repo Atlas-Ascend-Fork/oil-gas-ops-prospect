@@ -6,6 +6,7 @@
 
 ### Added
 
+- AscendC：`Conv3DGelu`，cube conv3d 与 vector tanh-GELU 融合，float32 / NCDHW。前向不保存二者之间的预激活。反向是 `Conv3DGeluGrad`：重算 conv3d，再做 GELU 反向，再做 conv3d 反向。
 - 融合注意力算子 `FusedBiasSoftmax` / `FusedSoftmaxGrad`，以及组合接口 `attention_core`。
 - 统一 Python 包 `oil_gas_ops_prospect`：AscendC 经 `ascendc/pybind/` 暴露，Triton 暴露 `real_rfft` / `real_irfft`。
 - Triton-Ascend `interpolate`：2D/3D 线性插值；5D fp32 trilinear 按空间轴拆成批量 Cube GEMM，支持一阶 autograd、大张量分块与 CPU 回退，4D 使用原生实现。
@@ -14,6 +15,7 @@
 
 ### Changed
 
+- `Conv3DGelu`：1×1 直写只在输入通道不少于 8、输出通道不超过 64 时启用。其余形状的前向按一个输出平面切，私有格式缓冲不再按整幅分配。反向由 `Conv3DGeluGrad` 一次完成。
 - AscendC OpType 去掉 `Og` 后缀（`ComplexMul` 等）；Python 接口为蛇形命名，不加 `npu_` 前缀。
 - `operators/` 只保留实现；测试在 `tests/`，aclnn 样例在 `examples/aclnn/`。
 - 许可证改为 Apache License 2.0。

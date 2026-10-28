@@ -62,6 +62,19 @@ aclnnStatus aclnnFusedBiasSoftmax(void* workspace, uint64_t workspaceSize, aclOp
 }
 #endif
 
+#if __has_include("aclnn_conv3d_gelu_custom.h")
+#include "aclnn_conv3d_gelu_custom.h"
+#else
+extern "C" {
+aclnnStatus aclnnConv3dGeluCustomGetWorkspaceSize(const aclTensor* x, const aclTensor* weight,
+                                                  const aclTensor* biasOptional, const aclIntArray* stride,
+                                                  const aclIntArray* padding, const aclIntArray* dilation,
+                                                  int64_t groups, aclTensor* out, uint64_t* workspaceSize,
+                                                  aclOpExecutor** executor);
+aclnnStatus aclnnConv3dGeluCustom(void* workspace, uint64_t workspaceSize, aclOpExecutor* executor, aclrtStream stream);
+}
+#endif
+
 #if __has_include("aclnn_fused_softmax_grad.h")
 #include "aclnn_fused_softmax_grad.h"
 #else

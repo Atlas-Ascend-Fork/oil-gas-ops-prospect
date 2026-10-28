@@ -8,6 +8,7 @@
 oil_gas_ops_prospect
 ├── complex_mul           # complex_mul, torch_complex_mul, torch_complex_mul_grad
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
+├── conv3d_gelu           # conv3d_gelu
 ├── real_fft              # real_rfft, real_irfft, make_basis
 ├── complex_reciprocal   # complex_reciprocal（z 或 xr, xi 两种形式）
 ├── interpolate           # interpolate, bilinear, trilinear
@@ -370,6 +371,47 @@ def conv3d(
 
 ---
 
+## `oil_gas_ops_prospect.conv3d_gelu`
+
+### `conv3d_gelu`
+
+```python
+from oil_gas_ops_prospect.conv3d_gelu import conv3d_gelu
+
+def conv3d_gelu(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None = None,
+    stride=1,
+    padding=0,
+    dilation=1,
+    groups: int = 1,
+    *,
+    padding_mode: str = "zeros",
+    enable_hf32: bool = False,
+) -> torch.Tensor
+```
+
+`y = gelu_tanh(conv3d(x, weight, bias))`。NPU 上走 `Conv3DGelu`。GELU 对齐 NPU 的 `F.gelu` / `nn.GELU`（实际都是 tanh 近似），也对齐 CPU `F.gelu(approximate="tanh")`。不对齐 CPU `nn.GELU()` 的 erf 默认公式。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `x` | `torch.Tensor` | `NCDHW`，`float32` |
+| `weight` | `torch.Tensor` | `(C_out, C_in/groups, Kd, Kh, Kw)` |
+| `bias` | `torch.Tensor \| None` | `(C_out,)`，可省略 |
+| `stride`, `padding`, `dilation` | `int` 或长度 1 或 3 的序列 | 与 `F.conv3d` 相同。长度不是 1 或 3 时抛 `ValueError` |
+| `groups` | `int` | 只支持 `1`。其他值抛 `ValueError` |
+| `padding_mode` | `str` | 非 `zeros` 时先 pad 再卷积 |
+| `enable_hf32` | `bool` | 默认 `False`。精度对拍必须保持关闭 |
+
+反向不保存卷积预激活。NPU 上先重算一次不带 GELU 的 conv3d 得到预激活，再用 `Conv3DGeluGrad` 做 GELU 反向，最后做 conv3d 反向，得到 `dx`、`dW`、`db`。非 NPU 或扩展未安装时回退到 `F.conv3d` + `F.gelu(approximate="tanh")` 的 autograd。
+
+两段式生成接口是 `aclnnConv3DGelu`（`aclnn` + OpType）。`aclnnConv3dGeluCustom` 是额外的 L2：直接收 NCDHW，在同一个 executor 里做 TransData 再调 `Conv3DGelu`。加 `Custom` 是为了和生成接口、以及 CANN 里已有的 conv3d aclnn 分开，不是把 OpType 改名。
+
+CANN 9 会缓存 aclnn 输出地址，换 shape 后可能读到错误结果。`ACLNN_CACHE_LIMIT=0` 必须在启动 Python、`import torch` 之前设置。包导入时的 `setdefault` 补不了已经初始化的进程。
+
+---
+
 ## aclnn 接口
 
 安装 OPP `.run` 包后，CANN 侧走标准两段式入口（`GetWorkspaceSize` + 执行）。仓内 pybind 即按此直调：
@@ -380,6 +422,8 @@ def conv3d(
 | `aclnnComplexMulGrad` / `aclnnComplexMulGradGetWorkspaceSize` | `ComplexMulGrad` | `gwr, gwi, ur, ui, vr, vi → gur, gui, gvr, gvi` | 全部 `float32` / `ND`，同 shape |
 | `aclnnFusedBiasSoftmax` / `aclnnFusedBiasSoftmaxGetWorkspaceSize` | `FusedBiasSoftmax` | `x, bias1, bias2 → y` | `bias1`/`bias2` 可为 `nullptr`；`y` 可与 `x` 别名 |
 | `aclnnFusedSoftmaxGrad` / `aclnnFusedSoftmaxGradGetWorkspaceSize` | `FusedSoftmaxGrad` | `probs, gradOutput, values → out` | `out` 可与 `probs` 别名 |
+| `aclnnConv3dGeluCustom` / `aclnnConv3dGeluCustomGetWorkspaceSize` | `Conv3DGelu` | `x, weight, bias, stride, padding, dilation, groups → y` | 输入输出为 `float32` / `NCDHW`；`bias` 可为空 |
+| `aclnnConv3dGeluGrad` / `aclnnConv3dGeluGradGetWorkspaceSize` | `Conv3DGeluGrad` | `dy, x, weight, bias → dx, dW, db` | 先重算 conv3d，再 GELU 反向，再 conv3d 反向 |
 
 自定义算子的 opapi 动态库位于 `${ASCEND_HOME_PATH}/opp/vendors/customize/op_api/lib`，调用前需将其加入 `LD_LIBRARY_PATH`。绑定实现见 [`ascendc/pybind/csrc/`](../../ascendc/pybind/csrc/)。
 
@@ -399,6 +443,8 @@ Triton 算子没有 aclnn 入口。
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_COMPLEX_MUL` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch，AscendC 调用失败直接抛异常 |
 | `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` | `torch` / `ascendc` / `auto` | `torch` | `fused_bias_softmax` / `fused_softmax_grad` / `attention_core` 的实现选择 |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch，AscendC 调用失败直接抛异常 |
+| `OIL_GAS_OPS_CONV3D_GELU_IMPL` | `torch` / `ascendc` / `auto` | `auto` | `conv3d_gelu` 的实现选择。`auto` 在 NPU 上走融合算子 |
+| `OIL_GAS_OPS_REQUIRE_ASCENDC_CONV3D_GELU` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch |
 | `OIL_GAS_OPS_RECIP_BLOCK` | 正整数（2 的幂） | `2048` | `complex_reciprocal` 的 tile 大小（向下取整到 2 的幂，钳制 `[16, 2048]`）；显式传入的 `block_size` 参数优先 |
 | `OIL_GAS_OPS_INTERPOLATE_IMPL` | `auto` / `triton` / `torch` | `auto` | `interpolate` 的实现选择；`auto` 对大 5D fp32 输出走 Cube，4D/小输出/非 fp32 回退原生 |
 | `OIL_GAS_OPS_FFT_BLOCK_M` | 正整数 | `512` | `real_rfft` / `real_irfft` 的 DFT-matmul 行分块大小，用于性能调优（可扫 128 / 256 / 512）。每进程首次使用时读取一次并缓存，需在启动 Python 前设置 |

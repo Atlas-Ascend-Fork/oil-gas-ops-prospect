@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/op_list.md)
 
-This repository currently delivers 4 AscendC/CANN OPP operators, 4 Triton-Ascend Python operators and 1 Composite-Torch (pure PyTorch) operator. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
+This repository currently delivers 6 AscendC/CANN OPP operators, 4 Triton-Ascend Python operators and 1 Composite-Torch (pure PyTorch) operator. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
 
 ## Overview
 
@@ -12,11 +12,13 @@ This repository currently delivers 4 AscendC/CANN OPP operators, 4 Triton-Ascend
 | `ComplexMulGrad` | AscendC | `aclnnComplexMulGrad` (the backward is driven by the autograd of `complex_mul`) | [`ascendc/operators/complex_mul_grad/`](../../ascendc/operators/complex_mul_grad/) | backward of `ComplexMul` | `float32` / `ND` | Ascend 910B |
 | `FusedBiasSoftmax` | AscendC | `aclnnFusedBiasSoftmax` / `fused_bias_softmax` | [`ascendc/operators/fused_bias_softmax/`](../../ascendc/operators/fused_bias_softmax/) | `softmax(x + bias1 + bias2, -1)`, in-place for contiguous inputs that successfully enter the fused path | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
 | `FusedSoftmaxGrad` | AscendC | `aclnnFusedSoftmaxGrad` / `fused_softmax_grad` | [`ascendc/operators/fused_softmax_grad/`](../../ascendc/operators/fused_softmax_grad/) | attention softmax JVP, overwrites probs for contiguous inputs that successfully enter the fused path | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
+| `Conv3DGelu` | AscendC | `aclnnConv3dGeluCustom` / `conv3d_gelu` | [`ascendc/operators/conv3d_gelu/`](../../ascendc/operators/conv3d_gelu/) | `gelu_tanh(conv3d(x, weight, bias))` | `float32` / `NCDHW` | Ascend 910B |
+| `Conv3DGeluGrad` | AscendC | `aclnnConv3dGeluGrad` (called by `conv3d_gelu` autograd) | [`ascendc/operators/conv3d_gelu_grad/`](../../ascendc/operators/conv3d_gelu_grad/) | recompute conv3d, then GELU backward, then conv3d backward | `float32` / `NCDHW` | Ascend 910B |
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | real forward FFT: `x → (xr, xi)` | the NPU kernel is `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | real reconstruction from a half spectrum: `(xr, xi), n → y` | the NPU kernel is `float32` | Ascend 910B |
 | `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | complex reciprocal `1/z` (`z` or `xr, xi`) | the NPU kernel is `complex64` | Ascend 910B |
 | `interpolate` | Triton-Ascend | `oil_gas_ops_prospect.interpolate.interpolate` | [`triton-ascend/interpolate/`](../../triton-ascend/interpolate/) | 2D/3D linear interpolation; 5D fp32 uses Cube GEMM, 4D uses the native kernel | `float32` for 5D; 4D is supported by the native path | Ascend 910B |
-| `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | compatible `nn.Conv3d` / `F.conv3d` implementation within the supported parameter domain (custom forward/backward) | dtypes supported by the underlying PyTorch backend and tested here | supported by the PyTorch backend; tested on CPU / Ascend 910B |
+| `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | compatible `nn.Conv3d` / `F.conv3d` implementation within the supported parameter domain (custom forward/backward) | data types supported by the underlying PyTorch backend and tested here | supported by the PyTorch backend; tested on CPU / Ascend 910B |
 
 Naming conventions:
 
@@ -185,6 +187,37 @@ The low-level aclnn API allows **`out` to alias `probs`**. The Python wrapper sh
 
 `attention_core(q, k, v, bias1, bias2)` is a composed wrapper over the two operators above following the semantics of openfold `AttentionCoreFunction.apply`; it is not a standalone OPP operator. For its mathematical definition see the [API List](api_list.md#attention_core).
 
+### Conv3DGelu
+
+A cube+vector fusion of Conv3d and the tanh-approximation GELU. It matches the tanh approximation that `F.gelu` / `nn.GELU` actually run on NPU, which is also CPU `F.gelu(approximate="tanh")`. CPU `nn.GELU()` defaults to erf and is not the reference for this operator.
+
+#### Mathematical Definition
+
+\[
+y = \text{gelu}_{\tanh}(\text{conv3d}(x, W, b))
+\]
+
+\[
+\text{gelu}_{\tanh}(x) = \frac{x}{1 + \exp(-1.5957691216057308\,(x + 0.044715\, x^3))}
+\]
+
+For 1×1 kernels with stride 1, padding 0, at least 8 input channels and at most 64 output channels, GELU is written directly into the user output. Other shapes run one output plane at a time, so the private-format buffer follows that plane. The backward does not save the pre-activation. `Conv3DGeluGrad` recomputes conv3d, applies the GELU backward, then the conv3d backward, in one call.
+
+#### Inputs and Outputs
+
+| Direction | Name | Meaning | shape | dtype |
+|-----------|------|---------|-------|-------|
+| input | `x` | feature map | `NCDHW` | `float32` |
+| input | `filter` | kernel | `(C_out, C_in/groups, Kd, Kh, Kw)` | `float32` |
+| input | `bias` | optional bias | `(C_out,)` | `float32` |
+| output | `y` | result after GELU | `NCDHW` | `float32` |
+
+#### Constraints
+
+- `float32` and `groups=1` only. `groups` other than 1, or a `stride` / `padding` / `dilation` whose length is not 1 or 3, raises `ValueError`. When `padding_mode` is not `zeros`, Python pads first.
+- Precision is checked against CPU `F.gelu(F.conv3d(...), approximate="tanh")` with `torch_npu.npu.conv.allow_hf32` off, and the relative error must be `< 1e-5`. See [`tests/ascendc/conv3d_gelu/`](../../tests/ascendc/conv3d_gelu/).
+- Required shapes match the original `oil_gas_ops` conv3d_gelu cases, including `(2, 32, 160, 160, 160)` with a `3×3×3` kernel.
+
 ---
 
 ## Triton-Ascend Operators
@@ -312,7 +345,7 @@ The two-argument form `complex_reciprocal(xr, xi)` computes \(1/(xr + i\,xi)\). 
 
 #### Constraints
 
-- The NPU kernel accepts only `complex64` / `float32`. On CPU, or for other dtypes, it falls back to the torch reference (including autograd).
+- The NPU kernel accepts only `complex64` / `float32`. On CPU, or for other data types, it falls back to the torch reference (including autograd).
 - From `2^30` elements on, the kernel takes the int64 offset branch (selected automatically; covered by AOT). A single tensor of more than `2^31 - 1` elements is rejected with `ValueError`, because the in-block int32 arithmetic would wrap around.
 - `block_size` is the number of complex elements per tile, `2048` by default. It is rounded down to a power of two and clamped to `[16, 2048]`, and can be overridden with `OIL_GAS_OPS_RECIP_BLOCK`.
 - autograd is supported (a custom backward kernel), as are both entries (interleaved and real/imag-separated).
@@ -401,7 +434,7 @@ where \(\widetilde{\text{grad\_out}}\) is the zero-dilated grad_output (with \(s
 
 | Direction | Name | Meaning | shape | dtype |
 |-----------|------|---------|-------|-------|
-| input | `x` | input features | \((N, C_{in}, D, H, W)\) | dtypes supported by the underlying PyTorch backend and tested in this repository |
+| input | `x` | input features | \((N, C_{in}, D, H, W)\) | data types supported by the underlying PyTorch backend and tested in this repository |
 | output | `output` | output features | \((N, C_{out}, D_{out}, H_{out}, W_{out})\) | same as the input |
 
 `kernel_size`, `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence (tuple or list), and `groups` is an `int`. The module's `padding_mode` supports `zeros` / `reflect` / `replicate` / `circular`. The string padding values `"same"` / `"valid"` are supported and are converted to explicit padding before the convolution; `"same"` requires a stride of 1, otherwise `ValueError` is raised. The current `Conv3d` constructor does not have the `device` / `dtype` keyword arguments of `nn.Conv3d`.
@@ -419,7 +452,7 @@ where \(\widetilde{\text{grad\_out}}\) is the zero-dilated grad_output (with \(s
 #### Verification
 
 - Precision / performance cases: [`tests/composite/conv3d_custom/`](../../tests/composite/conv3d_custom/) (the listed parameter combinations, training call patterns, and performance baselines).
-- Existing cases cover selected CPU float64/float32 combinations, specified NPU float32 shapes, and CPU complex128/complex64 plus NPU complex64 ([`test_conv3d_custom_complex.py`](../../tests/composite/conv3d_custom/test_conv3d_custom_complex.py), including double backward via `gradcheck` / `gradgradcheck` on CPU complex128). Conclusions apply only to cases that were actually executed and passed, not to unlisted parameters or dtypes.
+- Existing cases cover selected CPU float64/float32 combinations, specified NPU float32 shapes, and CPU complex128/complex64 plus NPU complex64 ([`test_conv3d_custom_complex.py`](../../tests/composite/conv3d_custom/test_conv3d_custom_complex.py), including double backward via `gradcheck` / `gradgradcheck` on CPU complex128). Conclusions apply only to cases that were actually executed and passed, not to unlisted parameters or data types.
 - The complex NPU cases run with `torch.npu.conv.allow_hf32 = False` (restored afterwards). Under the default HF32 setting some gradients show a relative error of roughly `2e-4`, which is not accepted against the full fp32 threshold.
 
 For implementation and usage notes see [`composite-torch/conv3d_custom/README.md`](../../composite-torch/conv3d_custom/README.md) (Chinese).

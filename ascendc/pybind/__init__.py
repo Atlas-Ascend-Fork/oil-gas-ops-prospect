@@ -22,6 +22,7 @@
 
     from oil_gas_ops_prospect.complex_mul import complex_mul
     from oil_gas_ops_prospect.fused_bias_softmax import fused_bias_softmax
+    from oil_gas_ops_prospect.conv3d_gelu import conv3d_gelu
 """
 
 from . import _aclnn_cache  # noqa: F401

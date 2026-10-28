@@ -3,3 +3,5 @@ complex_mul	ComplexMul	complex_mul.cpp
 complex_mul_grad	ComplexMulGrad	complex_mul_grad.cpp
 fused_bias_softmax	FusedBiasSoftmax	fused_bias_softmax.cpp
 fused_softmax_grad	FusedSoftmaxGrad	fused_softmax_grad.cpp
+conv3d_gelu	Conv3DGelu	conv3d_gelu.cpp
+conv3d_gelu_grad	Conv3DGeluGrad	conv3d_gelu_grad.cpp

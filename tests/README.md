@@ -47,8 +47,12 @@ bash build.sh --opensource-report
 - **UT** = UT-host + UT-device。切分不依赖 NPU；「UT 要上板」指的是 UT-device 必须在 NPU 上把算子跑起来。
 - **ST** 比 UT-device 更重：按 `cases.json` 循环多个 shape，并和 golden 比。
 - **精度 / 性能** 走 Python API（pybind），不是 C++ aclnn 那条路径。脚本按算子登记在
-  `tests/suites.json` 的 `npu_python`；composite 算子经同一 `--mode precision/perf` 协议接入
+  `tests/suites.json` 的 `npu_python`，并且必须接受 `--mode precision|perf` 与 `--build-ext`。
+  `conv3d_gelu` 登记为 `tests/ascendc/conv3d_gelu/test_conv3d_gelu_npu.py`：
+  `--mode precision` 只查精度并以精度决定退出码，`--mode perf` 只计时且退出码为 0。
+  composite 算子经同一协议接入
   （如 `tests/composite/conv3d_custom/bench_conv3d_custom_perf.py`）。
+  `ACLNN_CACHE_LIMIT=0` 必须在启动 Python 之前设置，不能等 `conv3d_gelu` 被 import 再补。
 - Python 示例 `examples/*.py`、whl 冒烟见文末。Triton 大形态已纳入全量 `-u`。
 
 ---

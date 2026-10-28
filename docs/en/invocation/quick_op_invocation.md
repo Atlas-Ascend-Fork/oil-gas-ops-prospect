@@ -171,7 +171,7 @@ w_fused = complex_reciprocal(a, -0.5)           # xi may be a scalar or a broadc
 
 Constraints:
 
-- The NPU kernel accepts only `complex64` / `float32`; on CPU, for other dtypes, or when Triton is unavailable it falls back to torch `1 / z`, so the same code runs on CPU for a precision self-check.
+- The NPU kernel accepts only `complex64` / `float32`; on CPU, for other data types, or when Triton is unavailable it falls back to torch `1 / z`, so the same code runs on CPU for a precision self-check.
 - `stable=True` (the default) avoids overflow and underflow of `a^2+b^2`. `stable=False` is about 10% faster in bandwidth but is wrong when `|z|` falls outside roughly `[1e-19, 1.8e19]`.
 - A single tensor of more than `2^31 - 1` elements raises `ValueError`.
 

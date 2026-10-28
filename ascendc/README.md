@@ -87,7 +87,7 @@ bash build.sh clean
 bash build.sh list-ops
 ```
 
-`--ops` 支持空格分隔或逗号；当前 manifest 包含 `complex_mul`、`complex_mul_grad`、`fused_bias_softmax`、`fused_softmax_grad`。
+`--ops` 支持空格分隔或逗号；当前 manifest 包含 `complex_mul`、`complex_mul_grad`、`fused_bias_softmax`、`fused_softmax_grad`、`conv3d_gelu`。
 
 等价的 Python 入口：
 
@@ -173,12 +173,18 @@ python3 scripts/patch_presets.py _work/CustomOp_Ascend910B1 Ascend910B
 
 ### 移植 CANN 框架算子的注意事项
 
-部分从 CANN 原仓移植的算子（如 `conv3d`、`ffn`）的 host tiling/infershape 依赖
+`conv3d_gelu` 的 cube 与 tiling 不放在本仓。构建时下载
+[ops-nn v9.0.0](https://raw.gitcode.com/cann/ops-nn/archive/refs/heads/v9.0.0.tar.gz)，
+只把 `conv/conv3d_v2` 的 910B 源码原样拷进本次 CustomOp，和本仓的 GELU 入口一起编。
+不编译 ops-nn 工程，也不改它的源码。`arch35`、`conv3d_v2.cpp` 和 Conv3DV2 的 op 注册不拷。
+`log/log.h` 由本仓 `operators/conv3d_gelu/op_host/log/log.h` 提供空宏，避免 msopgen 去拉 slog。
+
+部分从 CANN 原仓移植的算子（如 `ffn`）的 host tiling/infershape 依赖
 CANN 内部框架头（`op_host/tiling_base.h`、`op_host/tiling_templates_registry.h`、
 `err/ops_err.h`、`log/log.h` 等），这些头在 msopgen 自定义算子工程的 opbuild 编译
 环境下缺失或会拉入 slog 依赖。处理方式（保持源码改动最小）：
 
-- 提供本地 compat shim（如 `ffn_log_compat.h` / `conv3d_log_compat.h`），用等价/降级
+- 提供本地 compat shim（如 `ffn_log_compat.h`），用等价/降级
   实现替换 `OP_CHECK_IF`、`OP_CHECK_NULL_WITH_CONTEXT`、`OPS_REPORT_*`、`OP_LOG*`、
   `ASCENDC_EXTERN_C` 等宏；
 - 仅把不可用的 include 替换为该 shim，不改动 tiling 算法本身；
@@ -187,7 +193,7 @@ CANN 内部框架头（`op_host/tiling_base.h`、`op_host/tiling_templates_regis
 
 ## 已集成算子
 
-`operators/manifest.tsv` 当前四行：
+`operators/manifest.tsv` 当前五行：
 
 | 目录名 | OpType | aclnn 接口 | Python | 说明 |
 |--------|--------|-----------|--------|------|
@@ -195,6 +201,8 @@ CANN 内部框架头（`op_host/tiling_base.h`、`op_host/tiling_templates_regis
 | `complex_mul_grad` | `ComplexMulGrad` | `aclnnComplexMulGrad` | 由 `complex_mul` 的 autograd 调用 | 上者的反向（AIV-only） |
 | `fused_bias_softmax` | `FusedBiasSoftmax` | `aclnnFusedBiasSoftmax` | `oil_gas_ops_prospect.fused_bias_softmax.fused_bias_softmax` | `softmax(x+bias1+bias2,-1)`；底层 aclnn 可原地写回传入扩展的连续 `x` |
 | `fused_softmax_grad` | `FusedSoftmaxGrad` | `aclnnFusedSoftmaxGrad` | `oil_gas_ops_prospect.fused_bias_softmax.fused_softmax_grad` | 注意力 softmax JVP；底层 aclnn 可原地覆写传入扩展的连续 `probs` |
+| `conv3d_gelu` | `Conv3DGelu` | `aclnnConv3dGeluCustom` | `oil_gas_ops_prospect.conv3d_gelu.conv3d_gelu` | conv3d + tanh GELU，cube+vector，省掉中间激活 |
+| `conv3d_gelu_grad` | `Conv3DGeluGrad` | `aclnnConv3dGeluGrad` | 由 `conv3d_gelu` 的 autograd 调用 | 重算 conv3d，再 GELU 反向，再 conv3d 反向 |
 
 更完整的数学定义、输入输出与约束见 [`docs/zh/op_list.md`](../docs/zh/op_list.md)；Python / aclnn 签名见 [`docs/zh/api_list.md`](../docs/zh/api_list.md)。下面按算子列出本目录实现侧必须守住的规格。
 

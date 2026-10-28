@@ -3,6 +3,7 @@ build/
 dist/
 build_out/
 ascendc/_work/
+ascendc/_deps/
 ascendc/dist/
 *.egg-info/
 # 统一产物目录（OPP .run + whl）

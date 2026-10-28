@@ -8,6 +8,7 @@ All public APIs are exposed by the Python package `oil_gas_ops_prospect`. That d
 oil_gas_ops_prospect
 ├── complex_mul           # complex_mul, torch_complex_mul, torch_complex_mul_grad
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
+├── conv3d_gelu           # conv3d_gelu
 ├── real_fft              # real_rfft, real_irfft, make_basis
 ├── complex_reciprocal    # complex_reciprocal (either z or xr, xi)
 ├── interpolate           # interpolate, bilinear, trilinear
@@ -347,7 +348,7 @@ A pure PyTorch composition that is mathematically consistent with `torch.nn.Conv
 - **Parameter range**: `kernel_size`, `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence (tuple or list); `groups` is an `int`. The string padding values `"same"` / `"valid"` are supported and are converted to explicit padding before the convolution; `"same"` requires a stride of 1, otherwise `ValueError` is raised.
 - **state_dict interoperability**: the keys match those of `nn.Conv3d`, so `load_state_dict` works in both directions (strict).
 - **Path selection**: `use_custom` is enabled by default when the `torch.npu` interface is detected; otherwise it falls back to `F.conv3d`. Tests may force `module.use_custom = True` to drive the custom path on CPU.
-- **Backward and dtype**: the internal `_Conv3dFunction` organizes forward/backward. Mathematical equivalence is limited to the supported parameter domain above and combinations covered by this repository. Supported dtypes are those supported by the underlying PyTorch backend and tested in this repository, including complex inputs (CPU complex128/complex64 and NPU complex64), for which the backward conjugates the weight and recombines the complex weight gradient from real-valued convolution gradients.
+- **Backward and dtype**: the internal `_Conv3dFunction` organizes forward/backward. Mathematical equivalence is limited to the supported parameter domain above and combinations covered by this repository. Supported data types are those supported by the underlying PyTorch backend and tested in this repository, including complex inputs (CPU complex128/complex64 and NPU complex64), for which the backward conjugates the weight and recombines the complex weight gradient from real-valued convolution gradients.
 - **`padding_mode`**: the module supports `zeros` / `reflect` / `replicate` / `circular`; non-`zeros` modes apply `F.pad` before convolution.
 
 ### `conv3d`
@@ -366,7 +367,46 @@ def conv3d(
 ) -> torch.Tensor
 ```
 
-A pure PyTorch functional compatibility implementation whose forward/backward is always organized by the internal `_Conv3dFunction` (a `torch.autograd.Function`). `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence (tuple or list), and `groups` is an `int`; the string padding values `"same"` / `"valid"` are converted to explicit padding before the convolution (`"same"` requires a stride of 1). It is mathematically consistent with `F.conv3d` for these supported parameters and dtypes supported by the underlying PyTorch backend and tested in this repository. For the nn.Module form and NPU fallback logic, see `Conv3d`.
+A pure PyTorch functional compatibility implementation whose forward/backward is always organized by the internal `_Conv3dFunction` (a `torch.autograd.Function`). `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence (tuple or list), and `groups` is an `int`; the string padding values `"same"` / `"valid"` are converted to explicit padding before the convolution (`"same"` requires a stride of 1). It is mathematically consistent with `F.conv3d` for these supported parameters and data types supported by the underlying PyTorch backend and tested in this repository. For the nn.Module form and NPU fallback logic, see `Conv3d`.
+
+---
+
+## `oil_gas_ops_prospect.conv3d_gelu`
+
+### `conv3d_gelu`
+
+```python
+from oil_gas_ops_prospect.conv3d_gelu import conv3d_gelu
+
+def conv3d_gelu(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None = None,
+    stride=1,
+    padding=0,
+    dilation=1,
+    groups: int = 1,
+    *,
+    padding_mode: str = "zeros",
+    enable_hf32: bool = False,
+) -> torch.Tensor
+```
+
+`y = gelu_tanh(conv3d(x, weight, bias))`. On NPU this calls `Conv3DGelu`. The GELU matches NPU `F.gelu` / `nn.GELU` (both run the tanh approximation) and CPU `F.gelu(approximate="tanh")`. It does not match the erf formula used by CPU `nn.GELU()`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `x` | `torch.Tensor` | `NCDHW`, `float32` |
+| `weight` | `torch.Tensor` | `(C_out, C_in/groups, Kd, Kh, Kw)` |
+| `bias` | `torch.Tensor \| None` | `(C_out,)`, optional |
+| `stride`, `padding`, `dilation` | `int` or a sequence of length 1 or 3 | same as `F.conv3d`. Any other length raises `ValueError` |
+| `groups` | `int` | only `1` is supported. Any other value raises `ValueError` |
+| `padding_mode` | `str` | when not `zeros`, pad first, then convolve |
+| `enable_hf32` | `bool` | default `False`. Precision checks must keep it off |
+
+The backward does not save the pre-activation. On NPU it calls the fused operator `Conv3DGeluGrad`: recompute conv3d without GELU, apply the GELU backward, then the conv3d backward, producing `dx`, `dW` and `db`. Off NPU, or when the extension is not installed, it falls back to autograd of `F.conv3d` + `F.gelu(approximate="tanh")`.
+
+CANN 9 caches aclnn output addresses, so a later shape can read the wrong result. Export `ACLNN_CACHE_LIMIT=0` before starting Python and before `import torch`. A `setdefault` after the process has already initialized ACL cannot close that cache.
 
 ---
 
@@ -380,6 +420,8 @@ Once the OPP `.run` package is installed, the CANN side uses the standard two-ph
 | `aclnnComplexMulGrad` / `aclnnComplexMulGradGetWorkspaceSize` | `ComplexMulGrad` | `gwr, gwi, ur, ui, vr, vi → gur, gui, gvr, gvi` | all `float32` / `ND`, identical shapes |
 | `aclnnFusedBiasSoftmax` / `aclnnFusedBiasSoftmaxGetWorkspaceSize` | `FusedBiasSoftmax` | `x, bias1, bias2 → y` | `bias1`/`bias2` may be `nullptr`; `y` may alias `x` |
 | `aclnnFusedSoftmaxGrad` / `aclnnFusedSoftmaxGradGetWorkspaceSize` | `FusedSoftmaxGrad` | `probs, gradOutput, values → out` | `out` may alias `probs` |
+| `aclnnConv3dGeluCustom` / `aclnnConv3dGeluCustomGetWorkspaceSize` | `Conv3DGelu` | `x, weight, bias, stride, padding, dilation, groups → y` | inputs and output are `float32` / `NCDHW`; `bias` may be empty |
+| `aclnnConv3dGeluGrad` / `aclnnConv3dGeluGradGetWorkspaceSize` | `Conv3DGeluGrad` | `dy, x, weight, bias → dx, dW, db` | recompute conv3d, then GELU backward, then conv3d backward |
 
 The opapi shared library of the custom operators lives in `${ASCEND_HOME_PATH}/opp/vendors/customize/op_api/lib` and must be added to `LD_LIBRARY_PATH` before calling. For the binding implementation see [`ascendc/pybind/csrc/`](../../ascendc/pybind/csrc/).
 
@@ -399,6 +441,8 @@ Custom environment variables all use the `OIL_GAS_OPS_` prefix.
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_COMPLEX_MUL` | `0` / `1` | `0` | set to `1` to forbid the PyTorch fallback and raise on an AscendC failure |
 | `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` | `torch` / `ascendc` / `auto` | `torch` | implementation selection for `fused_bias_softmax` / `fused_softmax_grad` / `attention_core` |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX` | `0` / `1` | `0` | set to `1` to forbid the PyTorch fallback and raise on an AscendC failure |
+| `OIL_GAS_OPS_CONV3D_GELU_IMPL` | `torch` / `ascendc` / `auto` | `auto` | implementation selection for `conv3d_gelu`. `auto` uses the fused operator on NPU |
+| `OIL_GAS_OPS_REQUIRE_ASCENDC_CONV3D_GELU` | `0` / `1` | `0` | set to `1` to forbid the PyTorch fallback |
 | `OIL_GAS_OPS_RECIP_BLOCK` | positive integer (power of two) | `2048` | tile size of `complex_reciprocal` (rounded down to a power of two, clamped to `[16, 2048]`); an explicit `block_size` argument takes precedence |
 | `OIL_GAS_OPS_INTERPOLATE_IMPL` | `auto` / `triton` / `torch` | `auto` | implementation choice for `interpolate`; `auto` uses Cube for large 5D fp32 outputs and falls back natively for 4D, small outputs and non-fp32 inputs |
 | `OIL_GAS_OPS_FFT_BLOCK_M` | positive integer | `512` | row tile size of the DFT matmul in `real_rfft` / `real_irfft`, for performance tuning (sweep 128 / 256 / 512). Read once per process on first use, so set it before starting Python |

@@ -98,9 +98,11 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "interpolate",
             "Conv3d",
             "conv3d",
+            "Conv3DGelu",
+            "Conv3DGeluGrad",
             "数学定义",
         ),
-        "9 个已交付算子的数学定义、输入输出与约束",
+        "11 个已交付算子的数学定义、输入输出与约束",
     ),
     (
         "docs/zh/api_list.md",
@@ -116,7 +118,9 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "interpolate",
             "Conv3d",
             "conv3d",
+            "conv3d_gelu",
             "aclnnComplexMul",
+            "aclnnConv3dGeluCustom",
         ),
         "Python 公开接口与 aclnn 两段式入口、环境变量",
     ),
@@ -225,6 +229,7 @@ def check_api() -> int:
     spec.loader.exec_module(mod)
     mod.activate(REPO_ROOT)
 
+    os.environ["ACLNN_CACHE_LIMIT"] = "0"
     os.environ["TORCH_DEVICE_BACKEND_AUTOLOAD"] = "0"
     import torch
     from oil_gas_ops_prospect.complex_mul import complex_mul
@@ -233,6 +238,7 @@ def check_api() -> int:
         fused_bias_softmax,
         fused_softmax_grad,
     )
+    from oil_gas_ops_prospect.conv3d_gelu import conv3d_gelu
     from oil_gas_ops_prospect.conv3d_custom import Conv3d
     from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
     from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
@@ -258,6 +264,17 @@ def check_api() -> int:
     mod = Conv3d(3, 4, 3, padding=1)
     if mod(torch.randn(1, 3, 5, 5, 5)).shape != (1, 4, 5, 5, 5):
         return _fail("Conv3d module shape")
+    gx = torch.randn(1, 2, 4, 4, 4)
+    gw = torch.randn(2, 2, 1, 1, 1)
+    gy = conv3d_gelu(gx, gw)
+    if gy.shape != (1, 2, 4, 4, 4):
+        return _fail("conv3d_gelu shape")
+    try:
+        conv3d_gelu(gx, gw, groups=2)
+    except ValueError:
+        pass
+    else:
+        return _fail("conv3d_gelu groups!=1 should raise")
 
     ur = torch.randn(4, 8)
     ui, vr, vi = torch.randn_like(ur), torch.randn_like(ur), torch.randn_like(ur)
@@ -290,7 +307,7 @@ def check_api() -> int:
     print(
         "PASS public API CPU fallback: complex_mul fused_bias_softmax "
         "fused_softmax_grad attention_core real_rfft real_irfft complex_reciprocal "
-        "interpolate Conv3d conv3d"
+        "interpolate Conv3d conv3d conv3d_gelu"
     )
     return 0
 

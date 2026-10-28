@@ -19,6 +19,11 @@
       "op": "fused_softmax_grad",
       "name": "aclnnFusedSoftmaxGrad",
       "run": "tests/st/aclnnFusedSoftmaxGrad/run.sh"
+    },
+    {
+      "op": "conv3d_gelu",
+      "name": "aclnnConv3dGeluCustom",
+      "run": "tests/st/aclnnConv3dGeluCustom/run.sh"
     }
   ],
   "npu_python": [
@@ -29,6 +34,10 @@
     {
       "op": "fused_bias_softmax",
       "script": "tests/ascendc/fused_bias_softmax/test_fused_bias_softmax_npu.py"
+    },
+    {
+      "op": "conv3d_gelu",
+      "script": "tests/ascendc/conv3d_gelu/test_conv3d_gelu_npu.py"
     },
     {
       "op": "conv3d_custom",
@@ -59,6 +68,10 @@
     {
       "op": "fused_softmax_grad",
       "run": "examples/aclnn/fused_softmax_grad/run.sh"
+    },
+    {
+      "op": "conv3d_gelu",
+      "run": "examples/aclnn/conv3d_gelu/run.sh"
     }
   ]
 }

@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/op_list.md)
 
-当前仓库交付 4 个 AscendC/CANN OPP 算子、4 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
+当前仓库交付 6 个 AscendC/CANN OPP 算子、4 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
 
@@ -12,6 +12,8 @@
 | `ComplexMulGrad` | AscendC | `aclnnComplexMulGrad`（反向由 `complex_mul` 的 autograd 调用） | [`ascendc/operators/complex_mul_grad/`](../../ascendc/operators/complex_mul_grad/) | `ComplexMul` 的反向 | `float32` / `ND` | Ascend 910B |
 | `FusedBiasSoftmax` | AscendC | `aclnnFusedBiasSoftmax` / `fused_bias_softmax` | [`ascendc/operators/fused_bias_softmax/`](../../ascendc/operators/fused_bias_softmax/) | `softmax(x + bias1 + bias2, -1)`，连续输入成功进入融合路径时原地写回 | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
 | `FusedSoftmaxGrad` | AscendC | `aclnnFusedSoftmaxGrad` / `fused_softmax_grad` | [`ascendc/operators/fused_softmax_grad/`](../../ascendc/operators/fused_softmax_grad/) | 注意力 softmax JVP，连续输入成功进入融合路径时覆写 probs | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
+| `Conv3DGelu` | AscendC | `aclnnConv3dGeluCustom` / `conv3d_gelu` | [`ascendc/operators/conv3d_gelu/`](../../ascendc/operators/conv3d_gelu/) | `gelu_tanh(conv3d(x, weight, bias))` | `float32` / `NCDHW` | Ascend 910B |
+| `Conv3DGeluGrad` | AscendC | `aclnnConv3dGeluGrad`（由 `conv3d_gelu` 的反向调用） | [`ascendc/operators/conv3d_gelu_grad/`](../../ascendc/operators/conv3d_gelu_grad/) | `dz = dy * gelu'(z)`。反向先重算 conv3d，再调本算子，再做 conv3d 反向 | `float32` / `ND` | Ascend 910B |
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 实数正向 FFT：`x → (xr, xi)` | NPU kernel 为 `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 半谱重建实数：`(xr, xi), n → y` | NPU kernel 为 `float32` | Ascend 910B |
 | `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | 复数倒数 `1/z`（`z` 或 `xr, xi`） | NPU kernel 为 `complex64` | Ascend 910B |
@@ -184,6 +186,37 @@ g &= \mathrm{grad\_output} \cdot V^{\top} \\
 - 精度验收与前向同一目录：fp32 `max_diff ≤ 1e-5`；bf16 `atol=2e-2, rtol=4e-3`。MIX 路径的 half-`g` 量化误差经 `rowsum(P⊙g)` 放大，与 \(\sum P^2\) 成正比，生产输入应为 softmax 分布。
 
 `attention_core(q, k, v, bias1, bias2)` 是上述两算子按 openfold `AttentionCoreFunction.apply` 语义的组合封装，不是独立 OPP 算子。数学定义见[接口列表](api_list.md#attention_core)。
+
+### Conv3DGelu
+
+Conv3d 与 tanh 近似 GELU 的 cube+vector 融合。对齐的是 NPU 上 `F.gelu` / `nn.GELU` 实际执行的 tanh 近似，也就是 CPU 的 `F.gelu(approximate="tanh")`。CPU `nn.GELU()` 默认是 erf，不是本算子的真值。
+
+#### 数学定义
+
+\[
+y = \text{gelu}_{\tanh}(\text{conv3d}(x, W, b))
+\]
+
+\[
+\text{gelu}_{\tanh}(x) = \frac{x}{1 + \exp(-1.5957691216057308\,(x + 0.044715\, x^3))}
+\]
+
+1×1、stride=1、padding=0，且输入通道不少于 8、输出通道不超过 64 时，GELU 直接写进用户输出。其余形状沿输出深度每次只算一个平面，私有格式缓冲只跟这一平面走。反向不保存预激活，由 `Conv3DGeluGrad` 在一次调用里重算 conv3d、做 GELU 反向，再做 conv3d 反向。
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `x` | 特征图 | `NCDHW` | `float32` |
+| 输入 | `filter` | 卷积核 | `(C_out, C_in/groups, Kd, Kh, Kw)` | `float32` |
+| 输入 | `bias` | 可选偏置 | `(C_out,)` | `float32` |
+| 输出 | `y` | GELU 之后的结果 | `NCDHW` | `float32` |
+
+#### 约束
+
+- 只支持 `float32`、`groups=1`。`groups` 不是 1，或 `stride` / `padding` / `dilation` 的长度不是 1 或 3，会抛 `ValueError`。`padding_mode` 不是 `zeros` 时由 Python 先做 pad。
+- 精度验收相对 CPU `F.gelu(F.conv3d(...), approximate="tanh")`，且关闭 `torch_npu.npu.conv.allow_hf32`，相对误差 `< 1e-5`。见 [`tests/ascendc/conv3d_gelu/`](../../tests/ascendc/conv3d_gelu/)。
+- 必测 shape 与原 `oil_gas_ops` conv3d_gelu 用例一致，包含 `(2, 32, 160, 160, 160)`、kernel `3×3×3`。
 
 ---
 
