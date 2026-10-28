@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/api_list.md)
 
-对外接口统一由 Python 包 `oil_gas_ops_prospect` 暴露。源码树里没有这个目录：`setup.py` 在打包时把 `ascendc/pybind/`、`triton-ascend/real_fft/`、`triton-ascend/complex_reciprocal/` 与 `composite-torch/conv3d_custom/` 显式映射到同一包名下；直接用仓内源码跑、没装 whl 时，由 `scripts/local_pkg.py` 自动发现并提供同一导入路径。
+对外接口统一由 Python 包 `oil_gas_ops_prospect` 暴露。源码树里没有这个目录：`setup.py` 在打包时把 `ascendc/pybind/`、`triton-ascend/real_fft/`、`triton-ascend/complex_reciprocal/`、`triton-ascend/interpolate/` 与 `composite-torch/conv3d_custom/` 显式映射到同一包名下；直接用仓内源码跑、没装 whl 时，由 `scripts/local_pkg.py` 自动发现并提供同一导入路径。
 
 ```text
 oil_gas_ops_prospect
@@ -10,6 +10,7 @@ oil_gas_ops_prospect
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
 ├── real_fft              # real_rfft, real_irfft, make_basis
 ├── complex_reciprocal   # complex_reciprocal（z 或 xr, xi 两种形式）
+├── interpolate           # interpolate, bilinear, trilinear
 └── conv3d_custom         # Conv3d；functional 子模块： conv3d
 ```
 
@@ -268,6 +269,56 @@ complex64 倒数，按输入形式自动分发：
 
 ---
 
+## `oil_gas_ops_prospect.interpolate`
+
+### `interpolate`
+
+```python
+from oil_gas_ops_prospect.interpolate import interpolate
+
+def interpolate(
+    x: torch.Tensor,
+    size: int | Sequence[int] | None = None,
+    scale_factor: float | Sequence[float] | None = None,
+    mode: str = "trilinear",
+    align_corners: bool = False,
+    antialias: bool = False,
+    recompute_scale_factor: bool | None = None,
+) -> torch.Tensor
+```
+
+2D/3D 线性插值。NPU 上 5D `float32` `trilinear` 走 Cube GEMM 路径（每个空间轴一次批量矩阵乘，支持 autograd）；4D 与其余签名回退 `F.interpolate`。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `x` | `torch.Tensor` | 4D `[B,C,H,W]` 或 5D `[B,C,D,H,W]`；NPU 快路径要求 `float32` |
+| `size` | `int` / 序列 / `None` | 目标空间尺寸；4D 给 2 元组，5D 给 3 元组 |
+| `scale_factor` | `float` / 序列 / `None` | 传此参数时回退 `F.interpolate` |
+| `mode` | `str` | 4D 用 `"bilinear"`，5D 用 `"trilinear"`；其它模式回退 |
+| `align_corners` | `bool` | 两种取值都支持 |
+| `antialias` | `bool` | 置 `True` 时回退原生 |
+| `recompute_scale_factor` | `bool` / `None` | 仅在回退路径使用 |
+
+便捷入口：
+
+```python
+from oil_gas_ops_prospect.interpolate import bilinear, trilinear
+
+y2 = bilinear(x2, size=(256, 256))
+y3 = trilinear(x3, size=(160, 160, 160))
+```
+
+#### 行为与约束
+
+- NPU 快路径仅支持 5D `float32` `trilinear`；4D、fp16/bf16/fp64 回退 `F.interpolate`。
+- 输出小于 128 MiB 时使用原生 kernel；该阈值和 1 GiB 单次 launch 分块预算为内部实现细节，不提供公开环境变量。
+- 支持一阶 autograd；反向为转置权重的三次轴 GEMM。4D 使用原生 autograd。
+- 验证记录见 [`tests/triton/interpolate/report/`](../../tests/triton/interpolate/report/)。
+
+环境变量见[环境变量 · 算子行为](#算子行为)。
+
+---
+
 ## `oil_gas_ops_prospect.conv3d_custom`
 
 ### `Conv3d`
@@ -349,6 +400,7 @@ Triton 算子没有 aclnn 入口。
 | `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` | `torch` / `ascendc` / `auto` | `torch` | `fused_bias_softmax` / `fused_softmax_grad` / `attention_core` 的实现选择 |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch，AscendC 调用失败直接抛异常 |
 | `OIL_GAS_OPS_RECIP_BLOCK` | 正整数（2 的幂） | `2048` | `complex_reciprocal` 的 tile 大小（向下取整到 2 的幂，钳制 `[16, 2048]`）；显式传入的 `block_size` 参数优先 |
+| `OIL_GAS_OPS_INTERPOLATE_IMPL` | `auto` / `triton` / `torch` | `auto` | `interpolate` 的实现选择；`auto` 对大 5D fp32 输出走 Cube，4D/小输出/非 fp32 回退原生 |
 | `OIL_GAS_OPS_FFT_BLOCK_M` | 正整数 | `512` | `real_rfft` / `real_irfft` 的 DFT-matmul 行分块大小，用于性能调优（可扫 128 / 256 / 512）。每进程首次使用时读取一次并缓存，需在启动 Python 前设置 |
 
 ### 构建与产物

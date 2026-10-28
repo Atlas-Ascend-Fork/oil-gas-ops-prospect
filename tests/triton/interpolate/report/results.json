@@ -1,0 +1,314 @@
+{
+  "shapes": 5,
+  "tol": 1e-05,
+  "precision": [
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        32,
+        33,
+        33,
+        33,
+        128,
+        128,
+        128
+      ],
+      "max_abs": 4.76837158203125e-07,
+      "max_rel": 0.0183936208486557,
+      "status": "PASS"
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        32,
+        41,
+        41,
+        41,
+        160,
+        160,
+        160
+      ],
+      "max_abs": 4.76837158203125e-07,
+      "max_rel": 0.04117671400308609,
+      "status": "PASS"
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        256,
+        33,
+        33,
+        33,
+        128,
+        128,
+        128
+      ],
+      "max_abs": 4.76837158203125e-07,
+      "max_rel": 0.054249539971351624,
+      "status": "PASS"
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        256,
+        41,
+        41,
+        41,
+        160,
+        160,
+        160
+      ],
+      "max_abs": 7.152557373046875e-07,
+      "max_rel": 0.060778502374887466,
+      "status": "PASS"
+    },
+    {
+      "mode": "bilinear",
+      "shape": [
+        1,
+        128,
+        65,
+        65,
+        256,
+        256
+      ],
+      "max_abs": 0.0,
+      "max_rel": 0.0,
+      "status": "PASS"
+    }
+  ],
+  "grad_precision": [
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        32,
+        33,
+        33,
+        33,
+        128,
+        128,
+        128
+      ],
+      "grad_max_abs": 1.9073486328125e-06,
+      "status": "PASS"
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        32,
+        41,
+        41,
+        41,
+        160,
+        160,
+        160
+      ],
+      "grad_max_abs": 2.86102294921875e-06,
+      "status": "PASS"
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        64,
+        33,
+        33,
+        33,
+        128,
+        128,
+        128
+      ],
+      "grad_max_abs": 1.9073486328125e-06,
+      "status": "PASS"
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        64,
+        41,
+        41,
+        41,
+        160,
+        160,
+        160
+      ],
+      "grad_max_abs": 3.814697265625e-06,
+      "status": "PASS"
+    }
+  ],
+  "perf": [
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        32,
+        33,
+        33,
+        33,
+        128,
+        128,
+        128
+      ],
+      "triton_ms": 0.8244810625910759,
+      "native_ms": 1.7636820673942566,
+      "speedup": 2.139141997818091,
+      "out_gbs": 325.58110571563
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        32,
+        41,
+        41,
+        41,
+        160,
+        160,
+        160
+      ],
+      "triton_ms": 1.4111550524830818,
+      "native_ms": 3.3246470615267754,
+      "speedup": 2.355975734683935,
+      "out_gbs": 371.5311078520095
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        256,
+        33,
+        33,
+        33,
+        128,
+        128,
+        128
+      ],
+      "triton_ms": 3.914750926196575,
+      "native_ms": 13.337991945445538,
+      "speedup": 3.407111256093176,
+      "out_gbs": 548.5620128804502
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        256,
+        41,
+        41,
+        41,
+        160,
+        160,
+        160
+      ],
+      "triton_ms": 10.9443798661232,
+      "native_ms": 26.904984936118126,
+      "speedup": 2.4583380022653225,
+      "out_gbs": 383.2381597958677
+    }
+  ],
+  "backward_perf": [
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        32,
+        33,
+        33,
+        33,
+        128,
+        128,
+        128
+      ],
+      "bwd_triton_ms": 2.247031033039093,
+      "bwd_native_ms": 3.539367951452732,
+      "bwd_speedup": 1.5751308724320388,
+      "fwd_bwd_triton_ms": 2.771104872226715,
+      "fwd_bwd_native_ms": 5.3017258644104,
+      "fwd_bwd_speedup": 1.9132173298624424
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        32,
+        41,
+        41,
+        41,
+        160,
+        160,
+        160
+      ],
+      "bwd_triton_ms": 2.913633920252323,
+      "bwd_native_ms": 5.7829828932881355,
+      "bwd_speedup": 1.9848007854011132,
+      "fwd_bwd_triton_ms": 4.333271086215973,
+      "fwd_bwd_native_ms": 8.96954108029604,
+      "fwd_bwd_speedup": 2.069923829327901
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        64,
+        33,
+        33,
+        33,
+        128,
+        128,
+        128
+      ],
+      "bwd_triton_ms": 4.3283820152282715,
+      "bwd_native_ms": 7.068172842264175,
+      "bwd_speedup": 1.6329826751420442,
+      "fwd_bwd_triton_ms": 5.30961100012064,
+      "fwd_bwd_native_ms": 10.388781875371933,
+      "fwd_bwd_speedup": 1.9565994335810832
+    },
+    {
+      "mode": "trilinear",
+      "shape": [
+        1,
+        64,
+        41,
+        41,
+        41,
+        160,
+        160,
+        160
+      ],
+      "bwd_triton_ms": 5.629185028374195,
+      "bwd_native_ms": 11.672521010041237,
+      "bwd_speedup": 2.073572098128823,
+      "fwd_bwd_triton_ms": 8.385182917118073,
+      "fwd_bwd_native_ms": 18.211792036890984,
+      "fwd_bwd_speedup": 2.1719015812657125
+    }
+  ],
+  "operator": "interpolate",
+  "date": "2026-10-27",
+  "environment": {
+    "host": "bmswt015 (172.18.0.117)",
+    "device": "Ascend 910B2 (single card, exclusive)",
+    "cann": "9.0.0",
+    "torch": "2.7.1+cpu",
+    "torch_npu": "2.7.1.post4",
+    "triton_ascend": "3.2.1",
+    "native_only_check": "100/100 calls max_abs=4.77e-7, xdiff=0"
+  },
+  "tolerance": {
+    "forward_max_abs": 1e-05,
+    "backward_max_abs": 1e-05
+  },
+  "notes": [
+    "4D bilinear uses the native F.interpolate path; its max_abs=0 does not measure the Cube kernel.",
+    "C=256 backward is not run because the gradient/workspace would need several extra GiB.",
+    "Native-only qualification was run before the Cube tests to avoid attributing an environment fault to the kernel."
+  ]
+}

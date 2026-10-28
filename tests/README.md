@@ -36,7 +36,7 @@ bash build.sh --opensource-report
 | **ST** | 多 shape 两段式 aclnn + numpy 真值 | `tests/st/aclnn<OpType>/` | **是** |
 | **精度** | Python 对拍 PyTorch / autograd，看相对误差 | `tests/ascendc/<op>/test_*_npu.py --mode precision` | **是** |
 | **性能** | Python 计时、加速比 | 同上 `--mode perf` | **是** |
-| **Triton CPU** | rFFT / 复数倒数 CPU 回退精度（pytest） | `tests/triton/real_fft/`、`tests/triton/complex_reciprocal/` | 否 |
+| **Triton CPU** | rFFT / 复数倒数 / 插值 CPU 回退精度（pytest） | `tests/triton/real_fft/`、`tests/triton/complex_reciprocal/`、`tests/triton/interpolate/` | 否 |
 | **Composite CPU** | Conv3d / conv3d 前反向精度与取值组合（pytest） | `tests/composite/conv3d_custom/` | 否 |
 | **Triton AOT** | kernel 分支能编译 | `triton-ascend/tools/aot_compile_check.py` | 否 |
 | **Triton 大形态 / 微基准** | `128^3` 与业务 5D 精度，以及开源报告 5.3 的 FFT 计时 | `tests/triton/real_fft/verify_triton_fft_real_128_3d.py`、`bench_opensource_perf.py` | **是** |
@@ -121,6 +121,8 @@ tests/
 ├── ascendc/ophost/                      # 汇总编译 ophost_ut
 ├── ascendc/<op>/test_*_npu.py           # 精度 + 性能
 ├── triton/real_fft/                     # Triton CPU（及可选 NPU verify）
+├── triton/interpolate/                  # 2D/3D 插值 CPU 回退 + NPU verify
+│   └── report/                          # 精度/性能结果、机型与复现命令
 └── composite/conv3d_custom/             # Composite CPU（Conv3d / conv3d）
 
 examples/aclnn/<op>/                     # UT-device（C++ 两段式小 launch）

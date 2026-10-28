@@ -121,7 +121,7 @@ Operator precision, performance and device memory on the NPU must be verified on
 
 ## 📖 Supported API List
 
-The current delivery contains 4 AscendC operators, 3 Triton-Ascend operators and 1 Composite-Torch operator:
+The current delivery contains 4 AscendC operators, 4 Triton-Ascend operators and 1 Composite-Torch operator:
 
 | Name / OpType | Backend / Deliverable | Function | dtype / format |
 |---------------|-----------------------|----------|----------------|
@@ -132,6 +132,7 @@ The current delivery contains 4 AscendC operators, 3 Triton-Ascend operators and
 | [`real_rfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | real forward FFT: `x -> (xr, xi)`, frequency axis length `n // 2 + 1` | the NPU kernel is `float32`; falls back to PyTorch outside an NPU environment |
 | [`real_irfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | reconstructs a real signal from the half-spectrum real and imaginary parts: `(xr, xi), n -> y` | the NPU kernel is `float32`; falls back to PyTorch outside an NPU environment |
 | [`complex_reciprocal`](triton-ascend/complex_reciprocal/) | Triton-Ascend / Python whl | complex reciprocal `1/z` (either `z` or `xr, xi`, with a custom backward) | the NPU kernel is `complex64`; falls back to PyTorch outside an NPU environment |
+| [`interpolate`](triton-ascend/interpolate/) | Triton-Ascend / Python whl | 2D/3D linear interpolation; 5D fp32 uses Cube GEMM, 4D uses the native kernel | `float32` for 5D; 4D is supported by the native path |
 | [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | compatible with `nn.Conv3d` within the supported parameter domain (custom forward/backward, interoperable state_dict keys) | dtypes supported by the underlying PyTorch backend and tested here |
 
 For `Conv3d` / `conv3d`, `kernel_size`, `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence, and `groups` is an `int`; the module supports `zeros` / `reflect` / `replicate` / `circular`. The string padding values `"same"` / `"valid"` are supported (`"same"` requires a stride of 1), while the constructor does not provide the `device` / `dtype` keyword arguments of native `nn.Conv3d`.
@@ -150,6 +151,7 @@ oil-gas-ops-prospect/
 ├── triton-ascend/          # Triton-Ascend operators (packaged per operator as oil_gas_ops_prospect.<op>)
 │   ├── real_fft/           #   real_rfft / real_irfft
 │   ├── complex_reciprocal/ #   complex_reciprocal (polymorphic: z or xr, xi)
+│   ├── interpolate/        #   interpolate (5D Cube GEMM, 4D native)
 │   └── tools/              #   AOT compilation check
 ├── composite-torch/        # Composite-Torch operators (pure PyTorch composition, packaged as oil_gas_ops_prospect.<op>)
 │   └── conv3d_custom/      #   Conv3d (compatible with nn.Conv3d within the supported parameter domain)
@@ -161,6 +163,7 @@ oil-gas-ops-prospect/
 │   ├── ascendc/fused_bias_softmax/
 │   ├── triton/real_fft/    #   rFFT / iRFFT precision (includes the CPU fallback path)
 │   ├── triton/complex_reciprocal/ # complex reciprocal precision (CPU fallback + NPU verify)
+│   ├── triton/interpolate/ #   2D/3D interpolation verification (CPU fallback + NPU verify + report)
 │   └── composite/conv3d_custom/   # Conv3d / conv3d precision and performance baseline
 ├── examples/               # Python examples + C++ samples under examples/aclnn/<op>/
 ├── scripts/                # helper scripts

@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/api_list.md)
 
-All public APIs are exposed by the Python package `oil_gas_ops_prospect`. That directory does not exist in the source tree: at packaging time `setup.py` explicitly maps `ascendc/pybind/`, `triton-ascend/real_fft/`, `triton-ascend/complex_reciprocal/`, and `composite-torch/conv3d_custom/` under the same package name, while when running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` discovers them automatically and provides the same import path.
+All public APIs are exposed by the Python package `oil_gas_ops_prospect`. That directory does not exist in the source tree: at packaging time `setup.py` explicitly maps `ascendc/pybind/`, `triton-ascend/real_fft/`, `triton-ascend/complex_reciprocal/`, `triton-ascend/interpolate/`, and `composite-torch/conv3d_custom/` under the same package name, while when running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` discovers them automatically and provides the same import path.
 
 ```text
 oil_gas_ops_prospect
@@ -10,6 +10,7 @@ oil_gas_ops_prospect
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
 ├── real_fft              # real_rfft, real_irfft, make_basis
 ├── complex_reciprocal    # complex_reciprocal (either z or xr, xi)
+├── interpolate           # interpolate, bilinear, trilinear
 └── conv3d_custom         # Conv3d; functional submodule: conv3d
 ```
 
@@ -268,6 +269,56 @@ Complex64 reciprocal. The call form selects the entry:
 
 ---
 
+## `oil_gas_ops_prospect.interpolate`
+
+### `interpolate`
+
+```python
+from oil_gas_ops_prospect.interpolate import interpolate
+
+def interpolate(
+    x: torch.Tensor,
+    size: int | Sequence[int] | None = None,
+    scale_factor: float | Sequence[float] | None = None,
+    mode: str = "trilinear",
+    align_corners: bool = False,
+    antialias: bool = False,
+    recompute_scale_factor: bool | None = None,
+) -> torch.Tensor
+```
+
+2D/3D linear interpolation. On the NPU, 5D `float32` `trilinear` uses the Cube GEMM path (one batched matrix multiply per spatial axis, autograd-ready); 4D and every other signature fall back to `F.interpolate`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `x` | `torch.Tensor` | 4D `[B,C,H,W]` or 5D `[B,C,D,H,W]`; the NPU fast path requires `float32` |
+| `size` | `int` / sequence / `None` | target spatial size; a 2-tuple for 4D, a 3-tuple for 5D |
+| `scale_factor` | `float` / sequence / `None` | passing it falls back to `F.interpolate` |
+| `mode` | `str` | `"bilinear"` for 4D, `"trilinear"` for 5D; other modes fall back |
+| `align_corners` | `bool` | both values are supported |
+| `antialias` | `bool` | `True` falls back to the native kernel |
+| `recompute_scale_factor` | `bool` / `None` | used only on the fallback path |
+
+Convenience entries:
+
+```python
+from oil_gas_ops_prospect.interpolate import bilinear, trilinear
+
+y2 = bilinear(x2, size=(256, 256))
+y3 = trilinear(x3, size=(160, 160, 160))
+```
+
+#### Behavior and Constraints
+
+- The NPU fast path supports only 5D `float32` `trilinear`; 4D, fp16/bf16 and fp64 fall back to `F.interpolate`.
+- Outputs smaller than 128 MiB use the native kernel. This threshold and the 1 GiB per-launch chunk budget are internal implementation details, not public environment variables.
+- First-order autograd is supported; the backward is three axis GEMMs with transposed weights. 4D uses native autograd.
+- Recorded verification results are under [`tests/triton/interpolate/report/`](../../tests/triton/interpolate/report/).
+
+See [Environment Variables · Operator Behavior](#operator-behavior) for the public knob.
+
+---
+
 ## `oil_gas_ops_prospect.conv3d_custom`
 
 ### `Conv3d`
@@ -349,6 +400,7 @@ Custom environment variables all use the `OIL_GAS_OPS_` prefix.
 | `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` | `torch` / `ascendc` / `auto` | `torch` | implementation selection for `fused_bias_softmax` / `fused_softmax_grad` / `attention_core` |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX` | `0` / `1` | `0` | set to `1` to forbid the PyTorch fallback and raise on an AscendC failure |
 | `OIL_GAS_OPS_RECIP_BLOCK` | positive integer (power of two) | `2048` | tile size of `complex_reciprocal` (rounded down to a power of two, clamped to `[16, 2048]`); an explicit `block_size` argument takes precedence |
+| `OIL_GAS_OPS_INTERPOLATE_IMPL` | `auto` / `triton` / `torch` | `auto` | implementation choice for `interpolate`; `auto` uses Cube for large 5D fp32 outputs and falls back natively for 4D, small outputs and non-fp32 inputs |
 | `OIL_GAS_OPS_FFT_BLOCK_M` | positive integer | `512` | row tile size of the DFT matmul in `real_rfft` / `real_irfft`, for performance tuning (sweep 128 / 256 / 512). Read once per process on first use, so set it before starting Python |
 
 ### Build and Artifacts

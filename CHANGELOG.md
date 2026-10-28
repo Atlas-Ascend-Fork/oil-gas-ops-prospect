@@ -8,6 +8,7 @@
 
 - 融合注意力算子 `FusedBiasSoftmax` / `FusedSoftmaxGrad`，以及组合接口 `attention_core`。
 - 统一 Python 包 `oil_gas_ops_prospect`：AscendC 经 `ascendc/pybind/` 暴露，Triton 暴露 `real_rfft` / `real_irfft`。
+- Triton-Ascend `interpolate`：2D/3D 线性插值；5D fp32 trilinear 按空间轴拆成批量 Cube GEMM，支持一阶 autograd、大张量分块与 CPU 回退，4D 使用原生实现。
 - 根目录三种构建入口：`bash build.sh` 只编译出包，`--pkg` 只出 OPP `.run`，`--install` 安装并冒烟。
 - 统一测试入口 `bash build.sh -u`（切分、上板、精度、性能、示例、FFT、文档门禁）；`--opensource-report` 生成开源测试报告。
 

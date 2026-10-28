@@ -58,7 +58,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRITON_ROOT = REPO_ROOT / "triton-ascend"
-for _p in (TRITON_ROOT / "real_fft", TRITON_ROOT / "complex_reciprocal"):
+for _p in (
+    TRITON_ROOT / "real_fft",
+    TRITON_ROOT / "complex_reciprocal",
+    TRITON_ROOT / "interpolate",
+):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
@@ -123,12 +127,16 @@ def ensure_triton_ascend_available() -> None:
     try:
         import triton.backends.ascend  # noqa: F401
     except ModuleNotFoundError as exc:
-        print(f"[FAIL] AOT 编译检查无法执行：当前 triton {getattr(triton, '__version__', '?')}"
-              f" 无昇腾后端（缺失模块: {exc.name}）。")
+        print(
+            f"[FAIL] AOT 编译检查无法执行：当前 triton {getattr(triton, '__version__', '?')}"
+            f" 无昇腾后端（缺失模块: {exc.name}）。"
+        )
         print("       PyPI 社区版 triton 不能替代 Triton-Ascend。安装方式：")
         print("       pip uninstall -y triton triton-ascend && \\")
-        print("       pip install triton-ascend==3.2.1 "
-              "--extra-index-url=https://mirrors.huaweicloud.com/ascend/repos/pypi")
+        print(
+            "       pip install triton-ascend==3.2.1 "
+            "--extra-index-url=https://mirrors.huaweicloud.com/ascend/repos/pypi"
+        )
         raise
 
 
@@ -158,33 +166,88 @@ def _real_fft_cases(fft) -> list[tuple[str, object, list[str], dict]]:
     out: list[tuple[str, object, list[str], dict]] = []
 
     # ---- real_fft: flatten 2D GEMM 分支（先摊平成 rows x n，再与傅里叶基做双 GEMM）----
-    flat = dict(rows=16384, n=128, freq_len=65, num_blocks=128,
-                tile_m=128, tile_n=128, tile_k=128)
+    flat = dict(
+        rows=16384,
+        n=128,
+        freq_len=65,
+        num_blocks=128,
+        tile_m=128,
+        tile_n=128,
+        tile_k=128,
+    )
     out += [
-        ("real_fft/rfft.fwd  [flatten 2D GEMM]",
-         kernel_of(fft, "_rfft_matmul_kernel"), p(5), flat),
-        ("real_fft/irfft.fwd [flatten 2D GEMM]",
-         kernel_of(fft, "_irfft_matmul_kernel"), p(5), flat),
-        ("real_fft/rfft.bwd  [flatten 2D GEMM]",
-         kernel_of(fft, "_rfft_backward_matmul_kernel"), p(5), flat),
-        ("real_fft/irfft.bwd [flatten 2D GEMM]",
-         kernel_of(fft, "_irfft_backward_matmul_kernel"), p(5), flat),
+        (
+            "real_fft/rfft.fwd  [flatten 2D GEMM]",
+            kernel_of(fft, "_rfft_matmul_kernel"),
+            p(5),
+            flat,
+        ),
+        (
+            "real_fft/irfft.fwd [flatten 2D GEMM]",
+            kernel_of(fft, "_irfft_matmul_kernel"),
+            p(5),
+            flat,
+        ),
+        (
+            "real_fft/rfft.bwd  [flatten 2D GEMM]",
+            kernel_of(fft, "_rfft_backward_matmul_kernel"),
+            p(5),
+            flat,
+        ),
+        (
+            "real_fft/irfft.bwd [flatten 2D GEMM]",
+            kernel_of(fft, "_irfft_backward_matmul_kernel"),
+            p(5),
+            flat,
+        ),
     ]
 
     # ---- real_fft: axis strided GEMM 分支（沿任意轴直算，免 permute）----
-    ax_k = dict(n_lead=128, n=128, freq_len=65, n_tail=128, num_blocks=128,
-                tile_b=64, tile_f=64, tile_k=64)
-    ax_t = dict(n_lead=128, n=128, freq_len=65, n_tail=128, num_blocks=128,
-                tile_b=64, tile_f=64, tile_t=64)
+    ax_k = dict(
+        n_lead=128,
+        n=128,
+        freq_len=65,
+        n_tail=128,
+        num_blocks=128,
+        tile_b=64,
+        tile_f=64,
+        tile_k=64,
+    )
+    ax_t = dict(
+        n_lead=128,
+        n=128,
+        freq_len=65,
+        n_tail=128,
+        num_blocks=128,
+        tile_b=64,
+        tile_f=64,
+        tile_t=64,
+    )
     out += [
-        ("real_fft/rfft.fwd  [axis strided GEMM]",
-         kernel_of(fft, "_rfft_axis_matmul_kernel"), p(5), ax_k),
-        ("real_fft/rfft.bwd  [axis strided GEMM]",
-         kernel_of(fft, "_rfft_axis_backward_kernel"), p(5), ax_k),
-        ("real_fft/irfft.fwd [axis strided GEMM]",
-         kernel_of(fft, "_irfft_axis_matmul_kernel"), p(5), ax_t),
-        ("real_fft/irfft.bwd [axis strided GEMM]",
-         kernel_of(fft, "_irfft_axis_backward_kernel"), p(5), ax_t),
+        (
+            "real_fft/rfft.fwd  [axis strided GEMM]",
+            kernel_of(fft, "_rfft_axis_matmul_kernel"),
+            p(5),
+            ax_k,
+        ),
+        (
+            "real_fft/rfft.bwd  [axis strided GEMM]",
+            kernel_of(fft, "_rfft_axis_backward_kernel"),
+            p(5),
+            ax_k,
+        ),
+        (
+            "real_fft/irfft.fwd [axis strided GEMM]",
+            kernel_of(fft, "_irfft_axis_matmul_kernel"),
+            p(5),
+            ax_t,
+        ),
+        (
+            "real_fft/irfft.bwd [axis strided GEMM]",
+            kernel_of(fft, "_irfft_axis_backward_kernel"),
+            p(5),
+            ax_t,
+        ),
     ]
 
     return out
@@ -196,44 +259,121 @@ def _complex_reciprocal_cases(cr) -> list[tuple[str, object, list[str], dict]]:
 
     fwd_ptrs = p(2) + ["i32"]
     out += [
-        ("complex_reciprocal/recip.fwd [stable]",
-         kernel_of(cr, "_complex_reciprocal_kernel"), fwd_ptrs,
-         dict(block_size=2048, index64=False, stable=True)),
-        ("complex_reciprocal/recip.fwd [stable, index64]",
-         kernel_of(cr, "_complex_reciprocal_kernel"), fwd_ptrs,
-         dict(block_size=2048, index64=True, stable=True)),
-        ("complex_reciprocal/recip.fwd [naive]",
-         kernel_of(cr, "_complex_reciprocal_kernel"), fwd_ptrs,
-         dict(block_size=2048, index64=False, stable=False)),
+        (
+            "complex_reciprocal/recip.fwd [stable]",
+            kernel_of(cr, "_complex_reciprocal_kernel"),
+            fwd_ptrs,
+            dict(block_size=2048, index64=False, stable=True),
+        ),
+        (
+            "complex_reciprocal/recip.fwd [stable, index64]",
+            kernel_of(cr, "_complex_reciprocal_kernel"),
+            fwd_ptrs,
+            dict(block_size=2048, index64=True, stable=True),
+        ),
+        (
+            "complex_reciprocal/recip.fwd [naive]",
+            kernel_of(cr, "_complex_reciprocal_kernel"),
+            fwd_ptrs,
+            dict(block_size=2048, index64=False, stable=False),
+        ),
     ]
 
     of_ptrs = p(3) + ["i32", "fp32", "fp32"]
     for xr_t, xi_t in ((True, True), (True, False), (False, True)):
         tag = f"xr={'tensor' if xr_t else 'scalar'},xi={'tensor' if xi_t else 'scalar'}"
-        out.append((
-            f"complex_reciprocal/of.fwd   [{tag}]",
-            kernel_of(cr, "_complex_reciprocal_of_kernel"), of_ptrs,
-            dict(block_size=2048, index64=False, stable=True, xr_is_tensor=xr_t, xi_is_tensor=xi_t),
-        ))
-    out.append((
-        "complex_reciprocal/of.fwd   [tensor,tensor naive index64]",
-        kernel_of(cr, "_complex_reciprocal_of_kernel"), of_ptrs,
-        dict(block_size=2048, index64=True, stable=False, xr_is_tensor=True, xi_is_tensor=True),
-    ))
+        out.append(
+            (
+                f"complex_reciprocal/of.fwd   [{tag}]",
+                kernel_of(cr, "_complex_reciprocal_of_kernel"),
+                of_ptrs,
+                dict(
+                    block_size=2048,
+                    index64=False,
+                    stable=True,
+                    xr_is_tensor=xr_t,
+                    xi_is_tensor=xi_t,
+                ),
+            )
+        )
+    out.append(
+        (
+            "complex_reciprocal/of.fwd   [tensor,tensor naive index64]",
+            kernel_of(cr, "_complex_reciprocal_of_kernel"),
+            of_ptrs,
+            dict(
+                block_size=2048,
+                index64=True,
+                stable=False,
+                xr_is_tensor=True,
+                xi_is_tensor=True,
+            ),
+        )
+    )
 
     grad_ptrs = p(5) + ["i32"]
     out += [
-        ("complex_reciprocal/grad    [interleaved]",
-         kernel_of(cr, "_complex_reciprocal_grad_kernel"), grad_ptrs,
-         dict(block_size=2048, index64=False, interleaved_output=True, write_gxi=False)),
-        ("complex_reciprocal/grad    [planar gxr+gxi]",
-         kernel_of(cr, "_complex_reciprocal_grad_kernel"), grad_ptrs,
-         dict(block_size=2048, index64=False, interleaved_output=False, write_gxi=True)),
-        ("complex_reciprocal/grad    [planar gxr, index64]",
-         kernel_of(cr, "_complex_reciprocal_grad_kernel"), grad_ptrs,
-         dict(block_size=2048, index64=True, interleaved_output=False, write_gxi=False)),
+        (
+            "complex_reciprocal/grad    [interleaved]",
+            kernel_of(cr, "_complex_reciprocal_grad_kernel"),
+            grad_ptrs,
+            dict(
+                block_size=2048, index64=False, interleaved_output=True, write_gxi=False
+            ),
+        ),
+        (
+            "complex_reciprocal/grad    [planar gxr+gxi]",
+            kernel_of(cr, "_complex_reciprocal_grad_kernel"),
+            grad_ptrs,
+            dict(
+                block_size=2048, index64=False, interleaved_output=False, write_gxi=True
+            ),
+        ),
+        (
+            "complex_reciprocal/grad    [planar gxr, index64]",
+            kernel_of(cr, "_complex_reciprocal_grad_kernel"),
+            grad_ptrs,
+            dict(
+                block_size=2048, index64=True, interleaved_output=False, write_gxi=False
+            ),
+        ),
     ]
 
+    return out
+
+
+def _interpolate_cases(interp) -> list[tuple[str, object, list[str], dict]]:
+    """interpolate 前向 W/H/D 与反向 W^T/H^T/D^T 的 index32 分支。"""
+    # 3 data pointers + gsx/gsy/sm_in/kstride/msize/nin/nout/sm_out/sn_out.
+    ptrs = p(3) + ["i32"] * 9
+    out: list[tuple[str, object, list[str], dict]] = []
+    for name, meta in (
+        (
+            "interpolate/fwd [last]",
+            dict(NG=32, NM=16, NN=1, BLOCK_M=64, BLOCK_N=256, BLOCK_K=128),
+        ),
+        (
+            "interpolate/fwd [mid]",
+            dict(NG=64, NM=2, NN=2, BLOCK_M=256, BLOCK_N=128, BLOCK_K=64),
+        ),
+        (
+            "interpolate/fwd [first]",
+            dict(NG=32, NM=4, NN=1, BLOCK_M=256, BLOCK_N=128, BLOCK_K=64),
+        ),
+        (
+            "interpolate/bwd [W^T]",
+            dict(NG=64, NM=8, NN=1, BLOCK_M=512, BLOCK_N=64, BLOCK_K=64),
+        ),
+        (
+            "interpolate/bwd [H^T]",
+            dict(NG=64, NM=2, NN=2, BLOCK_M=64, BLOCK_N=64, BLOCK_K=256),
+        ),
+        (
+            "interpolate/bwd [D^T]",
+            dict(NG=64, NM=4, NN=1, BLOCK_M=512, BLOCK_N=64, BLOCK_K=64),
+        ),
+    ):
+        out.append((name, kernel_of(interp, "_interp_axis_kernel"), ptrs, meta))
     return out
 
 
@@ -241,8 +381,13 @@ def cases() -> list[tuple[str, object, list[str], dict]]:
     """(用例名, kernel, 指针类型列表, constexpr 字典)，覆盖各算子的主要 IR 分支。"""
     import triton_complex_reciprocal as cr
     import triton_fft_real as fft
+    import triton_interpolate as interp
 
-    return _real_fft_cases(fft) + _complex_reciprocal_cases(cr)
+    return (
+        _real_fft_cases(fft)
+        + _complex_reciprocal_cases(cr)
+        + _interpolate_cases(interp)
+    )
 
 
 def _slugify(name: str) -> str:
@@ -271,7 +416,9 @@ def _report_stages(compiled, name: str, dump: Path | None) -> None:
             stages[stage] = size
     meta = compiled.metadata
     info = " ".join(
-        f"{k}={getattr(meta, k)}" for k in ("mix_mode", "parallel_mode") if hasattr(meta, k)
+        f"{k}={getattr(meta, k)}"
+        for k in ("mix_mode", "parallel_mode")
+        if hasattr(meta, k)
     )
     print(f"[ OK ] {name}")
     print(f"       {stages}  {info}")

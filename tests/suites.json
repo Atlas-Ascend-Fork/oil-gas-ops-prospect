@@ -37,6 +37,10 @@
     {
       "op": "complex_reciprocal",
       "script": "tests/triton/complex_reciprocal/verify_complex_reciprocal.py"
+    },
+    {
+      "op": "interpolate",
+      "script": "tests/triton/interpolate/verify_interpolate.py"
     }
   ],
   "examples": [

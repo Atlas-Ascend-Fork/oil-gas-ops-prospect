@@ -83,7 +83,9 @@ def cell(status: str) -> str:
 
 
 def verdict(status: str) -> str:
-    return {PASS: "通过", FAIL: "未通过", SKIP: "跳过", NA: "未执行"}.get(status, status)
+    return {PASS: "通过", FAIL: "未通过", SKIP: "跳过", NA: "未执行"}.get(
+        status, status
+    )
 
 
 def collect_env() -> dict[str, str]:
@@ -154,11 +156,18 @@ def speedup_span(rows: list[tuple[str, str, str, str]], prefix: str = "") -> str
 def geo_mean(vals: list[float]) -> float | None:
     if not vals:
         return None
-    return math.exp(sum(math.log(v) for v in vals if v > 0) / len([v for v in vals if v > 0]))
+    return math.exp(
+        sum(math.log(v) for v in vals if v > 0) / len([v for v in vals if v > 0])
+    )
 
 
 def perf_md_table(title: str, rows: list[tuple[str, str, str, str]]) -> list[str]:
-    lines = [f"**{title}**", "", "| 用例 | 标杆 ms | 本算子 ms | 加速比 |", "| --- | ---: | ---: | ---: |"]
+    lines = [
+        f"**{title}**",
+        "",
+        "| 用例 | 标杆 ms | 本算子 ms | 加速比 |",
+        "| --- | ---: | ---: | ---: |",
+    ]
     if not rows:
         lines.append("| （本次 `-u` 日志未解析到该表） | — | — | — |")
     else:
@@ -196,10 +205,12 @@ class Statuses:
     prec_fused: str = NA
     prec_conv3d: str = NA
     prec_crecip: str = NA
+    prec_interp: str = NA
     perf_cm: str = NA
     perf_fused: str = NA
     perf_conv3d: str = NA
     perf_crecip: str = NA
+    perf_interp: str = NA
     fft_v: str = NA
     fft_p: str = NA
     docs: str = NA
@@ -227,6 +238,9 @@ class PerfSummary:
     conv3d_fwdbwd: list[PerfRow] = field(default_factory=list)
     crecip_fwd: list[PerfRow] = field(default_factory=list)
     crecip_e2e: list[PerfRow] = field(default_factory=list)
+    interp_fwd: list[PerfRow] = field(default_factory=list)
+    interp_bwd: list[PerfRow] = field(default_factory=list)
+    interp_fwdbwd: list[PerfRow] = field(default_factory=list)
     gmean_txt: str = "未解析"
     fft_metric: str = ""
 
@@ -249,11 +263,15 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
         prec_fused=job_status(jobs, "fused_bias_softmax_precision"),
         prec_conv3d=job_status(jobs, "conv3d_custom_precision"),
         prec_crecip=job_status(jobs, "complex_reciprocal_precision"),
+        prec_interp=job_status(jobs, "interpolate_precision"),
         perf_cm=job_status(jobs, "complex_mul_perf"),
         perf_fused=job_status(jobs, "fused_bias_softmax_perf"),
         perf_conv3d=job_status(jobs, "conv3d_custom_perf"),
         perf_crecip=job_status(jobs, "complex_reciprocal_perf"),
-        fft_v=combine(job_status(jobs, "fft_npu_verify"), job_status(jobs, "fft_npu_verify_5d")),
+        perf_interp=job_status(jobs, "interpolate_perf"),
+        fft_v=combine(
+            job_status(jobs, "fft_npu_verify"), job_status(jobs, "fft_npu_verify_5d")
+        ),
         fft_p=job_status(jobs, "fft_npu_perf"),
         docs=job_status(jobs, "docs_gate"),
         pkg=job_status(jobs, "pkg_gate"),
@@ -278,6 +296,7 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
     fft_rows = parse_perf_rows(job_log(jobs, "fft_npu_perf"))
     conv3d_rows = parse_perf_rows(job_log(jobs, "conv3d_custom_perf"))
     crecip_rows = parse_perf_rows(job_log(jobs, "complex_reciprocal_perf"))
+    interp_rows = parse_perf_rows(job_log(jobs, "interpolate_perf"))
     fused_fwd = [r for r in fused_rows if r[0].startswith("fwd ")]
     fused_bwd = [r for r in fused_rows if r[0].startswith("bwd ")]
     gmean = geo_mean(speedup_vals(fft_rows))
@@ -292,11 +311,20 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
         bwd_fp32=[r for r in fused_bwd if "fp32" in r[0]],
         bwd_bf16=[r for r in fused_bwd if "bf16" in r[0]],
         fft_rows=fft_rows,
-        fft_reg=[r for r in fft_rows if not r[0].endswith(("5d W", "5d H", "5d D")) and "5d " not in r[0]],
+        fft_reg=[
+            r
+            for r in fft_rows
+            if not r[0].endswith(("5d W", "5d H", "5d D")) and "5d " not in r[0]
+        ],
         conv3d_fwd=[r for r in conv3d_rows if r[0].endswith(" fwd")],
         conv3d_fwdbwd=[r for r in conv3d_rows if r[0].endswith(" fwdbwd")],
         crecip_fwd=[r for r in crecip_rows if r[0].startswith("recip fwd")],
         crecip_e2e=[r for r in crecip_rows if r[0].startswith("e2e fused")],
+        interp_fwd=[r for r in interp_rows if r[0].startswith("interpolate fwd ")],
+        interp_bwd=[r for r in interp_rows if r[0].startswith("interpolate bwd ")],
+        interp_fwdbwd=[
+            r for r in interp_rows if r[0].startswith("interpolate fwd+bwd ")
+        ],
         gmean_txt=f"{gmean:.2f}x" if gmean else "未解析",
         fft_metric=fft_metric_text(fft_rows),
     )
@@ -305,87 +333,226 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
 def build_features(st: Statuses) -> list[tuple[str, str, str, str, str, str, str]]:
     """（特性, 总结论, 功能, 精度, 性能, 可靠性, 兼容性）"""
     return [
-        ("ComplexMul", combine(st.ophost, st.st_cm, st.ex_cm, st.prec_cm, st.perf_cm),
-         combine(st.st_cm, st.ex_cm), st.prec_cm, st.perf_cm, st.ophost, st.install),
-        ("ComplexMulGrad", combine(st.ophost, st.st_cmg, st.ex_cmg, st.prec_cm, st.perf_cm),
-         combine(st.st_cmg, st.ex_cmg), st.prec_cm, st.perf_cm, st.ophost, st.install),
-        ("FusedBiasSoftmax", combine(st.ophost, st.st_fwd, st.ex_fwd, st.prec_fused, st.perf_fused),
-         combine(st.st_fwd, st.ex_fwd), st.prec_fused, st.perf_fused, st.ophost, st.install),
-        ("FusedSoftmaxGrad", combine(st.ophost, st.st_bwd, st.ex_bwd, st.prec_fused, st.perf_fused),
-         combine(st.st_bwd, st.ex_bwd), st.prec_fused, st.perf_fused, st.ophost, st.install),
-        ("real_rfft", combine(st.triton, st.aot, st.fft_v, st.fft_p),
-         combine(st.triton, st.aot, st.fft_v), st.triton, st.fft_p, st.triton, st.install),
-        ("real_irfft", combine(st.triton, st.aot, st.fft_v, st.fft_p),
-         combine(st.triton, st.aot, st.fft_v), st.triton, st.fft_p, st.triton, st.install),
-        ("complex_reciprocal", combine(st.triton, st.aot, st.prec_crecip, st.perf_crecip, st.install),
-         combine(st.triton, st.aot, st.prec_crecip), st.prec_crecip, st.perf_crecip, st.triton, st.install),
-        ("Conv3d / conv3d", combine(st.composite, st.prec_conv3d, st.perf_conv3d, st.api, st.install),
-         st.composite, st.prec_conv3d, st.perf_conv3d, st.composite, st.install),
+        (
+            "ComplexMul",
+            combine(st.ophost, st.st_cm, st.ex_cm, st.prec_cm, st.perf_cm),
+            combine(st.st_cm, st.ex_cm),
+            st.prec_cm,
+            st.perf_cm,
+            st.ophost,
+            st.install,
+        ),
+        (
+            "ComplexMulGrad",
+            combine(st.ophost, st.st_cmg, st.ex_cmg, st.prec_cm, st.perf_cm),
+            combine(st.st_cmg, st.ex_cmg),
+            st.prec_cm,
+            st.perf_cm,
+            st.ophost,
+            st.install,
+        ),
+        (
+            "FusedBiasSoftmax",
+            combine(st.ophost, st.st_fwd, st.ex_fwd, st.prec_fused, st.perf_fused),
+            combine(st.st_fwd, st.ex_fwd),
+            st.prec_fused,
+            st.perf_fused,
+            st.ophost,
+            st.install,
+        ),
+        (
+            "FusedSoftmaxGrad",
+            combine(st.ophost, st.st_bwd, st.ex_bwd, st.prec_fused, st.perf_fused),
+            combine(st.st_bwd, st.ex_bwd),
+            st.prec_fused,
+            st.perf_fused,
+            st.ophost,
+            st.install,
+        ),
+        (
+            "real_rfft",
+            combine(st.triton, st.aot, st.fft_v, st.fft_p),
+            combine(st.triton, st.aot, st.fft_v),
+            st.triton,
+            st.fft_p,
+            st.triton,
+            st.install,
+        ),
+        (
+            "real_irfft",
+            combine(st.triton, st.aot, st.fft_v, st.fft_p),
+            combine(st.triton, st.aot, st.fft_v),
+            st.triton,
+            st.fft_p,
+            st.triton,
+            st.install,
+        ),
+        (
+            "complex_reciprocal",
+            combine(st.triton, st.aot, st.prec_crecip, st.perf_crecip, st.install),
+            combine(st.triton, st.aot, st.prec_crecip),
+            st.prec_crecip,
+            st.perf_crecip,
+            st.triton,
+            st.install,
+        ),
+        (
+            "interpolate",
+            combine(st.triton, st.aot, st.prec_interp, st.perf_interp, st.install),
+            combine(st.triton, st.aot, st.prec_interp),
+            st.prec_interp,
+            st.perf_interp,
+            st.triton,
+            st.install,
+        ),
+        (
+            "Conv3d / conv3d",
+            combine(st.composite, st.prec_conv3d, st.perf_conv3d, st.api, st.install),
+            st.composite,
+            st.prec_conv3d,
+            st.perf_conv3d,
+            st.composite,
+            st.install,
+        ),
     ]
 
 
 def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
     """（测试用例, 结果, 测试内容）"""
     return [
-        ("ComplexMul 切分与约束", st.ophost,
-         "代表 shape / 小 tensor / 退化输入的切分计划，核间覆盖与对齐，UB 预算"),
-        ("ComplexMul 前反向精度", st.prec_cm,
-         "闭式解对拍（含 `whl` 接口与 NPU 执行）：`(4,1024)`、`(1,1,192,320,320)` 等，相对误差阈值 `1e-5`"),
-        ("ComplexMulGrad 切分与梯度", combine(st.ophost, st.st_cmg, st.prec_cm),
-         "反向 tile 小于前向、代表 shape 填满、退化输入；梯度与 autograd / 闭式解一致"),
-        ("FusedBiasSoftmax 切分与约束", st.ophost,
-         "双 bias 广播、无 bias、非对齐宽、满尺寸 bias1、非法输入拒绝、dtype 对应 tiling key"),
-        ("FusedBiasSoftmax 前向精度", st.prec_fused,
-         "`softmax(x+bias1+bias2,-1)`：bf16 广播/全尺寸/尖峰分布、fp32 无 bias；连续输入成功进入融合路径时的原地语义；"
-         "同 shape 不同缓冲互不污染；与 fp32 标杆对拍"),
-        ("FusedSoftmaxGrad 切分与路径", st.ophost,
-         "对齐 MIX、非对齐 VEC、fp32/fp16 走向量、超 UB 拒绝、`Q≠S` 合法、非法输入拒绝"),
-        ("FusedSoftmaxGrad 反向精度", st.prec_fused,
-         "`g=go@V^T` 后 JVP：连续 probs 成功进入融合路径时原地覆写；典型 / 超核 / 非对齐 D / fp32 / `Q≠S`；与 fp32 标杆对拍"),
-        ("融合注意力链路", st.prec_fused,
-         "`attention_core` 前向输出与 `dL/dlogits`、`dL/dq`、`dL/dv` 对拍，容差 `max_diff<0.6`"),
-        ("real_rfft 基函数与前向", st.triton,
-         "Fourier 基与 `torch.fft` 一致；多 shape/dim 前向半谱对拍（含回退路径与 NPU）"),
-        ("real_irfft 重建与往返", st.triton,
-         "半谱重建实信号，往返误差与 `torch.fft.irfft(..., norm=\"ortho\")` 对齐"),
-        ("real_rfft / real_irfft 反向", st.triton,
-         "多 shape/dim 反向与 CPU `torch.fft` 对拍"),
-        ("real_rfft / real_irfft 大形态", st.fft_v,
-         "三维潜变量形态与 `128^3` 往返/反向；默认示例可运行"),
-        ("complex_reciprocal 前反向精度", combine(st.triton, st.aot, st.prec_crecip),
-         "CPU 回退与 torch `1/z` 逐位一致（含实虚分离入口、极端幅值、int64 offset 分支）；NPU 真机"
-         "五方法对拍（stable 全分布 max_rel<=1e-5，含 tiny/huge 极端幅值）与反向 vs float64；"
-         "kernel 三条 AOT 全分支可编译"),
-        ("Conv3d / conv3d NPU 精度与性能", combine(st.prec_conv3d, st.perf_conv3d),
-         "测试脚本列出的 NPU float32 形态对拍：支持参数域内的自定义前/反向 vs 原生（L2 相对误差阈值 `1e-5`；"
-         "特定大 kernel depthwise case 验证分步反向可避开已观察到的原生 L1 限制）；fwd / fwd+bwd 计时"),
-        ("Conv3d / conv3d 前反向精度", st.composite,
-         "仓内列出的 stride/dilation/非立方 kernel/数值 padding 组合与训练调用形态；"
-         "在支持参数域内和 `nn.Conv3d` / `F.conv3d` 前反向对拍（测试脚本规定的 dtype 与阈值）"),
-        ("算子文档", st.docs,
-         "交付文档齐全（README、LICENSE、SECURITY、文档导航及入门/使用/开发文档共 "
-         f"{len(load_doc_checks())} 份）；核对应子清单、公开接口与 `--pkg` / `--install` / `-u` 入口。"
-         "文档列表与检查项见下表「文档测试」"),
-        ("编译出包", st.pkg,
-         "`bash build.sh --help` 合法选项可打印；`--soc` / `--ops` / `-j` 可组合；产出 OPP `.run` 与 Python whl"),
-        ("安装与卸载", st.install,
-         "OPP 写入 customize vendor；`pip install` / `pip uninstall oil-gas-ops-prospect` 可执行"),
-        ("公开接口冒烟", st.api,
-         "`complex_mul` / `fused_bias_softmax` / `fused_softmax_grad` / `real_rfft` / `real_irfft` 可导入；"
-         "CPU 回退前反向可跑通"),
-        ("可靠性", combine(st.ophost, st.prec_fused, st.api),
-         "非法输入被切分侧拒绝；融合算子仅在连续输入成功进入融合路径时原地写回；非连续输入副本与非 NPU 回退不覆写调用者原张量"),
-        ("配套兼容", combine(st.install, st.api),
-         "CANN 9.0.0 + 配套 PyTorch / torch_npu 可完成编译、安装与算子验证"),
+        (
+            "ComplexMul 切分与约束",
+            st.ophost,
+            "代表 shape / 小 tensor / 退化输入的切分计划，核间覆盖与对齐，UB 预算",
+        ),
+        (
+            "ComplexMul 前反向精度",
+            st.prec_cm,
+            "闭式解对拍（含 `whl` 接口与 NPU 执行）：`(4,1024)`、`(1,1,192,320,320)` 等，相对误差阈值 `1e-5`",
+        ),
+        (
+            "ComplexMulGrad 切分与梯度",
+            combine(st.ophost, st.st_cmg, st.prec_cm),
+            "反向 tile 小于前向、代表 shape 填满、退化输入；梯度与 autograd / 闭式解一致",
+        ),
+        (
+            "FusedBiasSoftmax 切分与约束",
+            st.ophost,
+            "双 bias 广播、无 bias、非对齐宽、满尺寸 bias1、非法输入拒绝、dtype 对应 tiling key",
+        ),
+        (
+            "FusedBiasSoftmax 前向精度",
+            st.prec_fused,
+            "`softmax(x+bias1+bias2,-1)`：bf16 广播/全尺寸/尖峰分布、fp32 无 bias；连续输入成功进入融合路径时的原地语义；"
+            "同 shape 不同缓冲互不污染；与 fp32 标杆对拍",
+        ),
+        (
+            "FusedSoftmaxGrad 切分与路径",
+            st.ophost,
+            "对齐 MIX、非对齐 VEC、fp32/fp16 走向量、超 UB 拒绝、`Q≠S` 合法、非法输入拒绝",
+        ),
+        (
+            "FusedSoftmaxGrad 反向精度",
+            st.prec_fused,
+            "`g=go@V^T` 后 JVP：连续 probs 成功进入融合路径时原地覆写；典型 / 超核 / 非对齐 D / fp32 / `Q≠S`；与 fp32 标杆对拍",
+        ),
+        (
+            "融合注意力链路",
+            st.prec_fused,
+            "`attention_core` 前向输出与 `dL/dlogits`、`dL/dq`、`dL/dv` 对拍，容差 `max_diff<0.6`",
+        ),
+        (
+            "real_rfft 基函数与前向",
+            st.triton,
+            "Fourier 基与 `torch.fft` 一致；多 shape/dim 前向半谱对拍（含回退路径与 NPU）",
+        ),
+        (
+            "real_irfft 重建与往返",
+            st.triton,
+            '半谱重建实信号，往返误差与 `torch.fft.irfft(..., norm="ortho")` 对齐',
+        ),
+        (
+            "real_rfft / real_irfft 反向",
+            st.triton,
+            "多 shape/dim 反向与 CPU `torch.fft` 对拍",
+        ),
+        (
+            "real_rfft / real_irfft 大形态",
+            st.fft_v,
+            "三维潜变量形态与 `128^3` 往返/反向；默认示例可运行",
+        ),
+        (
+            "complex_reciprocal 前反向精度",
+            combine(st.triton, st.aot, st.prec_crecip),
+            "CPU 回退与 torch `1/z` 逐位一致（含实虚分离入口、极端幅值、int64 offset 分支）；NPU 真机"
+            "五方法对拍（stable 全分布 max_rel<=1e-5，含 tiny/huge 极端幅值）与反向 vs float64；"
+            "kernel 三条 AOT 全分支可编译",
+        ),
+        (
+            "interpolate 前反向精度",
+            combine(st.triton, st.aot, st.prec_interp),
+            "5D float32 trilinear 与同设备 `F.interpolate` 对拍（前向 `max_abs<=1e-5`、反向梯度同阈值）；"
+            "4D bilinear 走原生路径；kernel 的 W/H/D 前向与 W^T/H^T/D^T 反向 index32 分支纳入 AOT",
+        ),
+        (
+            "Conv3d / conv3d NPU 精度与性能",
+            combine(st.prec_conv3d, st.perf_conv3d),
+            "测试脚本列出的 NPU float32 形态对拍：支持参数域内的自定义前/反向 vs 原生（L2 相对误差阈值 `1e-5`；"
+            "特定大 kernel depthwise case 验证分步反向可避开已观察到的原生 L1 限制）；fwd / fwd+bwd 计时",
+        ),
+        (
+            "Conv3d / conv3d 前反向精度",
+            st.composite,
+            "仓内列出的 stride/dilation/非立方 kernel/数值 padding 组合与训练调用形态；"
+            "在支持参数域内和 `nn.Conv3d` / `F.conv3d` 前反向对拍（测试脚本规定的 dtype 与阈值）",
+        ),
+        (
+            "算子文档",
+            st.docs,
+            "交付文档齐全（README、LICENSE、SECURITY、文档导航及入门/使用/开发文档共 "
+            f"{len(load_doc_checks())} 份）；核对应子清单、公开接口与 `--pkg` / `--install` / `-u` 入口。"
+            "文档列表与检查项见下表「文档测试」",
+        ),
+        (
+            "编译出包",
+            st.pkg,
+            "`bash build.sh --help` 合法选项可打印；`--soc` / `--ops` / `-j` 可组合；产出 OPP `.run` 与 Python whl",
+        ),
+        (
+            "安装与卸载",
+            st.install,
+            "OPP 写入 customize vendor；`pip install` / `pip uninstall oil-gas-ops-prospect` 可执行",
+        ),
+        (
+            "公开接口冒烟",
+            st.api,
+            "`complex_mul` / `fused_bias_softmax` / `fused_softmax_grad` / `real_rfft` / `real_irfft` 可导入；"
+            "CPU 回退前反向可跑通",
+        ),
+        (
+            "可靠性",
+            combine(st.ophost, st.prec_fused, st.api),
+            "非法输入被切分侧拒绝；融合算子仅在连续输入成功进入融合路径时原地写回；非连续输入副本与非 NPU 回退不覆写调用者原张量",
+        ),
+        (
+            "配套兼容",
+            combine(st.install, st.api),
+            "CANN 9.0.0 + 配套 PyTorch / torch_npu 可完成编译、安装与算子验证",
+        ),
     ]
 
 
-def build_conclusion(total: int, failed: int, ok: bool, cmd: str, generated: str) -> str:
+def build_conclusion(
+    total: int, failed: int, ok: bool, cmd: str, generated: str
+) -> str:
     return (
         f"oil-gas-ops-prospect 基于 CANN 9.0.0 完成开源测试，共计执行 {total} 组特性级测试用例，"
         f"发现 {failed} 个问题，其中有效问题 {failed} 个。"
-        + ("整体质量良好，满足出口质量标准。**建议发布。**" if ok else
-           "存在失败或未执行项。**不建议作为完整开源出口。**")
+        + (
+            "整体质量良好，满足出口质量标准。**建议发布。**"
+            if ok
+            else "存在失败或未执行项。**不建议作为完整开源出口。**"
+        )
         + f" 本次入口：`{cmd}`（{generated}）。"
     )
 
@@ -413,13 +580,15 @@ def section_overview(cmd: str, ok: bool, rate: str) -> list[str]:
         "连续输入成功进入 NPU 融合路径时原地写回 `x`，支持 `fp32` / `fp16` / `bf16` |",
         "| 4 | FusedSoftmaxGrad | 注意力 softmax JVP：`g = go @ V^T`，连续 `probs` 成功进入 NPU 融合路径时原地覆写，支持 `Q≠S`，"
         "`fp32` / `fp16` / `bf16` |",
-        "| 5 | real_rfft | 实数正向 FFT：`x → (xr, xi)`，`norm=\"ortho\"`，频率轴长度为 `n//2+1` |",
-        "| 6 | real_irfft | 由半谱实部、虚部重建实数：`(xr, xi), n → y`，`norm=\"ortho\"` |",
+        '| 5 | real_rfft | 实数正向 FFT：`x → (xr, xi)`，`norm="ortho"`，频率轴长度为 `n//2+1` |',
+        '| 6 | real_irfft | 由半谱实部、虚部重建实数：`(xr, xi), n → y`，`norm="ortho"` |',
         "| 7 | Conv3d / conv3d | 纯 PyTorch 组合兼容实现：数值 padding、stride、dilation 支持 int / 3 元组，"
         "groups 为 int，字符串 padding 不受支持；模块支持 zeros / reflect / replicate / circular，构造器无 device/dtype 关键字；"
         "dtype 以底层 PyTorch 后端支持且本仓实测为准，state_dict key 互通 |",
         "| 8 | complex_reciprocal | complex64 倒数 `1/z`（stable / naive 双路径、实虚分离入口、"
         "自定义反向），替代 NPU 上走 Ai_Cpu 的 `aclnnReciprocal` |",
+        "| 9 | interpolate | 2D/3D 线性插值；5D fp32 trilinear 按空间轴拆成批量 Cube GEMM，"
+        "支持一阶 autograd、大张量分块与 CPU 回退，4D 使用原生实现 |",
         "",
         "`attention_core(q, k, v, bias1, bias2)` 为 FusedBiasSoftmax 与 FusedSoftmaxGrad 按 openfold "
         "注意力语义的组合封装，随上述融合算子一并验证。",
@@ -488,9 +657,11 @@ def section_conclusion(conclusion: str, total: int, ok: bool, rate: str) -> list
     ]
 
 
-def section_features(features: list[tuple[str, str, str, str, str, str, str]],
-                     cases: list[tuple[str, str, str]],
-                     doc_status: str) -> list[str]:
+def section_features(
+    features: list[tuple[str, str, str, str, str, str, str]],
+    cases: list[tuple[str, str, str]],
+    doc_status: str,
+) -> list[str]:
     lines = [
         "## 4. 特性质量评估",
         "",
@@ -500,7 +671,15 @@ def section_features(features: list[tuple[str, str, str, str, str, str, str]],
         "| 序号 | 特性 | 测试结论 | 功能 | 精度 | 性能 | 可靠性 | 兼容性 |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
-    for i, (name, overall, func, accuracy, performance, reliability, compat) in enumerate(features, 1):
+    for i, (
+        name,
+        overall,
+        func,
+        accuracy,
+        performance,
+        reliability,
+        compat,
+    ) in enumerate(features, 1):
         lines.append(
             f"| {i} | {name} | {verdict(overall)} | {cell(func)} | {cell(accuracy)} | "
             f"{cell(performance)} | {cell(reliability)} | {cell(compat)} |"
@@ -542,7 +721,8 @@ def section_security(st: Statuses) -> list[str]:
         "",
         "### 5.1 安全测试",
         "",
-        "版本整体安全测试结论：满足开源发布对安全声明与许可证的要求。" if st.docs == PASS
+        "版本整体安全测试结论：满足开源发布对安全声明与许可证的要求。"
+        if st.docs == PASS
         else "版本整体安全测试结论：文档/许可证门禁未通过。",
         "",
         "仓内提供 `SECURITY.md`、Apache 2.0 `LICENSE`；构建入口对非法参数拦截并提示。"
@@ -577,7 +757,7 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
         "### 5.3 性能测试",
         "",
         "该版本的性能按算子微基准测量：预热 5 次、计时 20 次取均值，加速比 = 同设备 Torch 小算子时延 / 本算子时延。"
-        f"测试环境为 Atlas A2 / CANN 9.0.0，不绑定具体主机。四类算子均于 {date} 对同设备 Torch 标杆复测。",
+        f"测试环境为 Atlas A2 / CANN 9.0.0，不绑定具体主机。各算子均于 {date} 对同设备 Torch 标杆复测。",
         "",
         "| 场景 | 模型 | 特性 | Torch 小算子标杆 | 性能指标 | 测试环境 | 测试结果 | 遗留风险 |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -591,10 +771,14 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
         f"bf16 {speedup_span(perf.bwd_bf16)}，fp32 {speedup_span(perf.bwd_fp32)} | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_fused)} | 无 |",
         "| 算子微基准 | 不涉及 | real_rfft / real_irfft | 同设备 `torch.fft.rfft` / `irfft`，"
-        f"`norm=\"ortho\"` | {perf.fft_metric} | Atlas A2 + CANN 9.0.0 | {cell(st.fft_p)} | 无 |",
+        f'`norm="ortho"` | {perf.fft_metric} | Atlas A2 + CANN 9.0.0 | {cell(st.fft_p)} | 无 |',
         "| 算子微基准 | 不涉及 | complex_reciprocal | 同设备 torch `1/z`（aclnnReciprocal）与先构造 complex64 的原始写法 | "
         f"前向 {speedup_span(perf.crecip_fwd)}；端到端融合 {speedup_span(perf.crecip_e2e)} | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_crecip)} | 无 |",
+        "| 算子微基准 | 不涉及 | interpolate | 同设备 `F.interpolate`（5D fp32 trilinear） | "
+        f"前向 {speedup_span(perf.interp_fwd)}，反向 {speedup_span(perf.interp_bwd)}，"
+        f"fwd+bwd {speedup_span(perf.interp_fwdbwd)} | "
+        f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_interp)} | 无 |",
         "| 算子微基准 | 不涉及 | Conv3d / conv3d | 同设备 `nn.Conv3d` / `F.conv3d`（测试脚本列出的形态） | "
         f"前向 {speedup_span(perf.conv3d_fwd)}，fwd+bwd {speedup_span(perf.conv3d_fwdbwd)}（特定大 kernel depthwise "
         "case 仅验证分步反向可避开已观察到的原生 L1 限制） | "
@@ -607,13 +791,39 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
 
 
 def section_perf_tables(perf: PerfSummary) -> list[str]:
-    lines = perf_md_table("complex_reciprocal 前向（相对同设备 torch 1/z）", perf.crecip_fwd)
-    lines += perf_md_table("complex_reciprocal 端到端融合（相对先构造 complex64 的原始写法）", perf.crecip_e2e)
-    lines += perf_md_table("Conv3d / conv3d 前向（相对同设备 nn.Conv3d，测试脚本列出的形态）", perf.conv3d_fwd)
-    lines += perf_md_table("Conv3d / conv3d fwd+bwd（相对同设备 nn.Conv3d autograd）", perf.conv3d_fwdbwd)
-    lines += perf_md_table("ComplexMul / ComplexMulGrad（相对同设备逐元素公式）", perf.cm_rows)
-    lines += perf_md_table("FusedBiasSoftmax（相对同设备 fp32 `softmax`）", perf.fused_fwd)
-    lines += perf_md_table("FusedSoftmaxGrad（相对同设备 `matmul` + softmax JVP）", perf.fused_bwd)
+    lines = perf_md_table(
+        "complex_reciprocal 前向（相对同设备 torch 1/z）", perf.crecip_fwd
+    )
+    lines += perf_md_table(
+        "complex_reciprocal 端到端融合（相对先构造 complex64 的原始写法）",
+        perf.crecip_e2e,
+    )
+    lines += perf_md_table(
+        "interpolate 前向（相对同设备 F.interpolate，5D fp32 trilinear）",
+        perf.interp_fwd,
+    )
+    lines += perf_md_table(
+        "interpolate 反向（相对同设备 F.interpolate autograd）", perf.interp_bwd
+    )
+    lines += perf_md_table(
+        "interpolate fwd+bwd（相对同设备 F.interpolate autograd）", perf.interp_fwdbwd
+    )
+    lines += perf_md_table(
+        "Conv3d / conv3d 前向（相对同设备 nn.Conv3d，测试脚本列出的形态）",
+        perf.conv3d_fwd,
+    )
+    lines += perf_md_table(
+        "Conv3d / conv3d fwd+bwd（相对同设备 nn.Conv3d autograd）", perf.conv3d_fwdbwd
+    )
+    lines += perf_md_table(
+        "ComplexMul / ComplexMulGrad（相对同设备逐元素公式）", perf.cm_rows
+    )
+    lines += perf_md_table(
+        "FusedBiasSoftmax（相对同设备 fp32 `softmax`）", perf.fused_fwd
+    )
+    lines += perf_md_table(
+        "FusedSoftmaxGrad（相对同设备 `matmul` + softmax JVP）", perf.fused_bwd
+    )
     lines += [
         "**real_rfft / real_irfft 常规形态（相对同设备 `torch.fft`）**",
         "",
@@ -644,7 +854,11 @@ def section_perf_tables(perf: PerfSummary) -> list[str]:
 
 
 def section_compat(st: Statuses, env: dict[str, str], has_npu: bool) -> list[str]:
-    npu_cell = "pass" if has_npu and st.install == PASS else ("fail" if st.install == FAIL else "未执行")
+    npu_cell = (
+        "pass"
+        if has_npu and st.install == PASS
+        else ("fail" if st.install == FAIL else "未执行")
+    )
     compat_ok = st.install == PASS and st.api == PASS
     return [
         "",
@@ -741,7 +955,9 @@ def section_issues(failed: list[tuple[str, str, str]]) -> list[str]:
         "| --- | --- | --- | --- | --- |",
     ]
     for name, status, _ in failed:
-        lines.append(f"| 不涉及 | `{name}` {status} | 主要 | 见 `test_result/test_report.md` | 打开 |")
+        lines.append(
+            f"| 不涉及 | `{name}` {status} | 主要 | 见 `test_result/test_report.md` | 打开 |"
+        )
     lines.append("")
     return lines
 
@@ -796,7 +1012,11 @@ def write_opensource_report(payload: dict, out: Path) -> Path:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--from-json", default=str(DEFAULT_JSON), help="bash build.sh -u 落盘的 test_results.json")
+    p.add_argument(
+        "--from-json",
+        default=str(DEFAULT_JSON),
+        help="bash build.sh -u 落盘的 test_results.json",
+    )
     p.add_argument("--out", default=str(DEFAULT_OUT), help="开源测试报告输出路径")
     return p.parse_args(argv)
 

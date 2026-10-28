@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/op_list.md)
 
-当前仓库交付 4 个 AscendC/CANN OPP 算子、3 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
+当前仓库交付 4 个 AscendC/CANN OPP 算子、4 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
 
@@ -15,6 +15,7 @@
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 实数正向 FFT：`x → (xr, xi)` | NPU kernel 为 `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 半谱重建实数：`(xr, xi), n → y` | NPU kernel 为 `float32` | Ascend 910B |
 | `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | 复数倒数 `1/z`（`z` 或 `xr, xi`） | NPU kernel 为 `complex64` | Ascend 910B |
+| `interpolate` | Triton-Ascend | `oil_gas_ops_prospect.interpolate.interpolate` | [`triton-ascend/interpolate/`](../../triton-ascend/interpolate/) | 2D/3D 线性插值；5D fp32 走 Cube GEMM，4D 走原生 | 5D `float32`；4D 由原生实现支持 | Ascend 910B |
 | `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | 支持参数域内的 `nn.Conv3d` / `F.conv3d` 兼容实现（自定义前/反向） | 底层 PyTorch 后端支持且经本仓测试的 dtype | PyTorch 后端支持；已测 CPU / Ascend 910B |
 
 命名约定：
@@ -317,6 +318,58 @@ w = \frac{1}{z} = \frac{\bar{z}}{|z|^2} = \frac{a - ib}{a^2 + b^2}
 - 支持 autograd（自定义 backward kernel）与双入口（交错 / 实虚分离）。
 
 实现与说明详见 [`triton-ascend/complex_reciprocal/README.md`](../../triton-ascend/complex_reciprocal/README.md)。
+
+---
+
+### interpolate
+
+2D/3D 线性插值。5D `float32` `trilinear` 将每个空间轴的一次批量 GEMM 交给 Cube；4D `bilinear` 与其余签名回退 `F.interpolate`。
+
+#### 数学定义
+
+对单个轴，线性插值可写成矩阵乘：
+
+\[
+Y = X W,\qquad W\in\mathbb{R}^{n_{\text{in}}\times n_{\text{out}}}
+\]
+
+其中 \(W\) 的每一列只有两个非零元素（`align_corners=False` 时）：
+
+\[
+W_{i_0,j}=1-w_j,\qquad W_{i_1,j}=w_j
+\]
+
+3D 三线性插值是三个轴的可分离组合：
+
+\[
+Y = \bigl((X W_w) W_h\bigr) W_d
+\]
+
+实现上按 `W -> H -> D` 顺序执行三次批量 GEMM：
+`M = batch × 其余空间维`，`K = 输入轴长度`，`N = 输出轴长度`。
+每个 pass 使用 `num_aicore` 的 persistent grid，每个核循环处理多个 tile；
+shape / stride 参数走 `tl.constexpr` 特化。
+权重矩阵由 PyTorch 自身对单位阵做一次 `F.interpolate` 生成，因此与原生实现的 fp32 权重一致。
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `x` | 输入特征 | 4D `[B,C,H,W]` 或 5D `[B,C,D,H,W]` | NPU kernel 为 `float32` |
+| 输入 | `size` | 目标空间尺寸 | 2 或 3 元组 | `int` |
+| 输入 | `mode` | 插值模式 | `"bilinear"`（4D）或 `"trilinear"`（5D） | `str` |
+| 输入 | `align_corners` | 对齐方式 | `False` / `True` | `bool` |
+| 输出 | `y` | 插值结果 | `size` 替换空间维，其余不变 | 与 `x` 相同 |
+
+#### 约束
+
+- NPU 快路径仅 5D `float32` `trilinear`，`align_corners` 两种取值都支持；4D、`nearest`、`bicubic`、`scale_factor`、`antialias`、fp16/bf16/fp64 均回退 `F.interpolate`。
+- 仅当 `size` 精确给出目标尺寸时启用快路径；`scale_factor` 走原生。
+- 输出小于 128 MiB 时使用原生 kernel；该阈值和单次 launch 的 1 GiB 分块预算均为内部实现细节，不提供公开环境变量。
+- 支持一阶 autograd；反向是三个轴上的转置权重 GEMM。4D 使用原生 `F.interpolate` autograd。
+- 验证记录见 [`tests/triton/interpolate/report/`](../../tests/triton/interpolate/report/)。
+
+实现、环境变量与调试说明详见 [`triton-ascend/interpolate/README.md`](../../triton-ascend/interpolate/README.md)。
 
 ---
 
