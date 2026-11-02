@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/op_list.md)
 
-This repository currently delivers 6 AscendC/CANN OPP operators, 5 Triton-Ascend Python operators and 1 Composite-Torch (pure PyTorch) operator. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
+This repository currently delivers 7 AscendC/CANN OPP operators, 5 Triton-Ascend Python operators and 1 Composite-Torch (pure PyTorch) operator. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
 
 ## Overview
 
@@ -14,6 +14,7 @@ This repository currently delivers 6 AscendC/CANN OPP operators, 5 Triton-Ascend
 | `FusedSoftmaxGrad` | AscendC | `aclnnFusedSoftmaxGrad` / `fused_softmax_grad` | [`ascendc/operators/fused_softmax_grad/`](../../ascendc/operators/fused_softmax_grad/) | attention softmax JVP, overwrites probs for contiguous inputs that successfully enter the fused path | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
 | `Conv3DGelu` | AscendC | `aclnnConv3dGeluCustom` / `conv3d_gelu` | [`ascendc/operators/conv3d_gelu/`](../../ascendc/operators/conv3d_gelu/) | `gelu_tanh(conv3d(x, weight, bias))` | `float32` / `NCDHW` | Ascend 910B |
 | `Conv3DGeluGrad` | AscendC | `aclnnConv3dGeluGrad` (called by `conv3d_gelu` autograd) | [`ascendc/operators/conv3d_gelu_grad/`](../../ascendc/operators/conv3d_gelu_grad/) | recompute conv3d, then GELU backward, then conv3d backward | `float32` / `NCDHW` | Ascend 910B |
+| `CustomGRUV2` | AscendC | `aclnnCustomGRUV2` / `custom_gru_v2` | [`ascendc/operators/custom_gru_v2/`](../../ascendc/operators/custom_gru_v2/) | single-layer fused GRU kernel (gate order [r; z; n] matches PyTorch nn.GRU, tanh uses the 2·sigmoid(2x)−1 stable form), unidirectional/bidirectional, backward handled by Python autograd | `float32` / `ND` | Ascend 910B |
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | real forward FFT: `x → (xr, xi)` | the NPU kernel is `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | real reconstruction from a half spectrum: `(xr, xi), n → y` | the NPU kernel is `float32` | Ascend 910B |
 | `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | complex reciprocal `1/z` (`z` or `xr, xi`) | the NPU kernel is `complex64` | Ascend 910B |
@@ -218,6 +219,45 @@ For 1×1 kernels with stride 1, padding 0, at least 8 input channels and at most
 - `float32` and `groups=1` only. `groups` other than 1, or a `stride` / `padding` / `dilation` whose length is not 1 or 3, raises `ValueError`. When `padding_mode` is not `zeros`, Python pads first.
 - Precision is checked against CPU `F.gelu(F.conv3d(...), approximate="tanh")` with `torch_npu.npu.conv.allow_hf32` off, and the relative error must be `< 1e-5`. See [`tests/ascendc/conv3d_gelu/`](../../tests/ascendc/conv3d_gelu/).
 - Required shapes match the original `oil_gas_ops` conv3d_gelu cases, including `(2, 32, 160, 160, 160)` with a `3×3×3` kernel.
+
+### CustomGRUV2
+
+A fused NPU kernel for a single-layer GRU with gate order `[r; z; n]` matching PyTorch `nn.GRU`. The forward writes the full-time-step hidden sequence `y` and the final hidden state `output_h`; no custom backward kernel is written — the backward is carried by Python autograd (a computation graph built from native PyTorch operators). tanh uses the `2·sigmoid(2x)−1` stable form.
+
+#### Mathematical Definition
+
+For time step \(t\) (\(h_{t-1} \to h_t\), gate order `[r; z; n]`):
+
+\[
+\begin{aligned}
+r_t &= \sigma(W_{ir} x_t + b_{ir} + W_{hr} h_{t-1} + b_{hr}) \\
+z_t &= \sigma(W_{iz} x_t + b_{iz} + W_{hz} h_{t-1} + b_{hz}) \\
+n_t &= \tanh(W_{in} x_t + b_{in} + r_t \odot (W_{hn} h_{t-1} + b_{hn})) \\
+h_t &= (1 - z_t) \odot n_t + z_t \odot h_{t-1}
+\end{aligned}
+\]
+
+#### Inputs and Outputs
+
+| Direction | Name | Meaning | shape | dtype |
+|-----------|------|---------|-------|-------|
+| input | `x` | input sequence | `[B, T, F]` | `float32` / `ND` |
+| input | `weight_ih` | input-hidden weights (stacked in gate order `[r; z; n]`) | `[3H, F]`; bidirectional `[2, 3H, F]` | `float32` / `ND` |
+| input | `weight_hh` | hidden-hidden weights | `[3H, H]`; bidirectional `[2, 3H, H]` | `float32` / `ND` |
+| input (optional) | `bias_ih` | input-side bias | `[3H]`; bidirectional `[2, 3H]` | `float32` / `ND` |
+| input (optional) | `bias_hh` | hidden-side bias (always passed on the aclnn side; the Python wrapper fills zeros when `None`) | `[3H]`; bidirectional `[2, 3H]` | `float32` / `ND` |
+| output | `y` | hidden sequence at every time step | `[num_dirs, B, T, H]` | `float32` / `ND` |
+| output | `output_h` | final-time-step hidden state | `[num_dirs, B, H]` | `float32` / `ND` |
+
+#### Constraints
+
+- `float32` and `ND` only.
+- The gate order is `[r; z; n]`, matching `torch.nn.GRU` (the `weight_ih` layout is identical to `nn.GRU.weight_ih_l0`).
+- tanh is computed with the `2·sigmoid(2x)−1` stable form.
+- Precision acceptance against `nn.GRU`: forward threshold `0.003` (`tests/ascendc/custom_gru_v2/unit/test_forward_precision.py:67`); `gradcheck` thresholds `atol=1e-4, rtol=1e-3, eps=1e-6` (`tests/ascendc/custom_gru_v2/unit/test_manual_backward_gradcheck.py:154`); stability requires 10 repeated runs with identical input to be fully `torch.equal` (`tests/ascendc/custom_gru_v2/test_plan.md:234`).
+- Performance quota shapes: `B=1, T=1000, H=24` (single long sequence) and `B=32, T=100, H=24` (batch), see `tests/ascendc/custom_gru_v2/performance/bench_forward.py` (`test_perf_fwd_001_single_long_seq` / `test_perf_fwd_002_batch`).
+- Test entry point: [`tests/ascendc/custom_gru_v2/`](../../tests/ascendc/custom_gru_v2/) (`run_test.sh` / `run_all_tests.sh`).
+- Performance bottleneck analysis and the follow-up optimization plan: [`tests/reports/custom_gru_v2_precision_perf.md`](../../tests/reports/custom_gru_v2_precision_perf.md) (§性能定位与后续优化计划).
 
 ---
 

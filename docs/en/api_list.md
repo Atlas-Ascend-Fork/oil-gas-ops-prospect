@@ -9,6 +9,7 @@ oil_gas_ops_prospect
 ├── complex_mul           # complex_mul, torch_complex_mul, torch_complex_mul_grad
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
 ├── conv3d_gelu           # conv3d_gelu
+├── custom_gru_v2         # custom_gru_v2, CustomGRU
 ├── real_fft              # real_rfft, real_irfft, make_basis
 ├── complex_reciprocal    # complex_reciprocal (either z or xr, xi)
 ├── complex_exp           # complex_exp
@@ -163,6 +164,44 @@ def torch_fused_softmax_grad(
 ```
 
 Both compute in the fp32 domain, are not in place, and write back in the original dtype. They exist for comparison and CPU testing.
+
+---
+
+## `oil_gas_ops_prospect.custom_gru_v2`
+
+### `custom_gru_v2`
+
+```python
+from oil_gas_ops_prospect.custom_gru_v2 import custom_gru_v2
+
+def custom_gru_v2(
+    x: torch.Tensor,
+    weight_ih: torch.Tensor,
+    weight_hh: torch.Tensor,
+    bias_ih: torch.Tensor | None,
+    bias_hh: torch.Tensor | None,
+    hidden_size: int,
+    bidirectional: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]
+```
+
+Single-layer GRU forward with gate order `[r; z; n]` matching `torch.nn.GRU`; tanh uses the `2·sigmoid(2x)−1` stable form. Returns `(y, output_h)`: `y` has shape `[num_dirs, B, T, H]` and `output_h` has shape `[num_dirs, B, H]`; with `bidirectional=True`, `num_dirs = 2` and the reverse direction walks the time axis backwards.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `x` | `torch.Tensor` | input sequence `[B, T, F]`, `float32` |
+| `weight_ih` | `torch.Tensor` | input-hidden weights `[3H, F]`; bidirectional `[2, 3H, F]`. Layout matches `nn.GRU.weight_ih_l0` |
+| `weight_hh` | `torch.Tensor` | hidden-hidden weights `[3H, H]`; bidirectional `[2, 3H, H]` |
+| `bias_ih` | `torch.Tensor \| None` | input-side bias `[3H]` (bidirectional `[2, 3H]`); the wrapper fills zeros when `None` |
+| `bias_hh` | `torch.Tensor \| None` | hidden-side bias `[3H]` (bidirectional `[2, 3H]`); the wrapper fills zeros when `None` |
+| `hidden_size` | `int` | hidden dimension `H` |
+| `bidirectional` | `bool` | default `False`; `True` enables bidirectional mode |
+
+**Implementation selection**: for non-NPU tensors, or when the pybind extension `custom_gru_v2_npu` is unavailable, it falls back to a pure PyTorch reference implementation (a per-time-step loop, with autograd); for NPU tensors with the extension available it runs `aclnnCustomGRUV2`. Setting the environment variable `OIL_GAS_OPS_REQUIRE_ASCENDC_CUSTOM_GRU_V2=1` disables silent fallback: a non-NPU input or a failed extension import raises `RuntimeError` directly.
+
+For the mathematical definition, shape / dtype constraints and precision thresholds see the [Operator List](op_list.md#customgruv2).
+
+The module also exports the nn.Module `CustomGRU(input_size, hidden_size, bidirectional=False, bias=True)`: `weight_ih` / `weight_hh` are top-level parameters, and `forward(x)` returns `(y, output_h)` with the same semantics as the functional entry point.
 
 ---
 

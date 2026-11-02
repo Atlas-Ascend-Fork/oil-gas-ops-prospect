@@ -54,6 +54,10 @@
     {
       "op": "interpolate",
       "script": "tests/triton/interpolate/verify_interpolate.py"
+    },
+    {
+      "op": "custom_gru_v2",
+      "script": "tests/ascendc/custom_gru_v2/unit/test_forward_precision.py"
     }
   ],
   "examples": [
@@ -76,6 +80,10 @@
     {
       "op": "conv3d_gelu",
       "run": "examples/aclnn/conv3d_gelu/run.sh"
+    },
+    {
+      "op": "custom_gru_v2",
+      "run": "examples/aclnn/custom_gru_v2/run.sh"
     }
   ]
 }

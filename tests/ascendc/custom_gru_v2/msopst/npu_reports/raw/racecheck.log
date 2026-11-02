@@ -1,0 +1,2 @@
+racecheck batch32: y.shape=torch.Size([1, 32, 100, 24])
+racecheck: PASSED

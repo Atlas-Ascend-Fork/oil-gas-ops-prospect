@@ -1,0 +1,131 @@
+{
+    "op": "CustomGRUV2",
+    "device": "ascend910b",
+    "input_desc": [
+        {
+            "name": "x",
+            "format": "ND",
+            "dtype": "float",
+            "shape": [1, 100, 3]
+        },
+        {
+            "name": "weight_ih",
+            "format": "ND",
+            "dtype": "float",
+            "shape": [72, 3]
+        },
+        {
+            "name": "weight_hh",
+            "format": "ND",
+            "dtype": "float",
+            "shape": [72, 24]
+        },
+        {
+            "name": "bias_ih",
+            "format": "ND",
+            "dtype": "float",
+            "shape": [72]
+        },
+        {
+            "name": "bias_hh",
+            "format": "ND",
+            "dtype": "float",
+            "shape": [72]
+        }
+    ],
+    "output_desc": [
+        {
+            "name": "y",
+            "format": "ND",
+            "dtype": "float",
+            "shape": [1, 1, 100, 24]
+        },
+        {
+            "name": "output_h",
+            "format": "ND",
+            "dtype": "float",
+            "shape": [1, 1, 24]
+        }
+    ],
+    "attr": [
+        {
+            "name": "bidirectional",
+            "type": "bool",
+            "value": false
+        }
+    ],
+    "case_num": 5,
+    "cases": [
+        {
+            "name": "standard_shape",
+            "input": [
+                {"shape": [1, 100, 3], "dtype": "float", "data": "random"},
+                {"shape": [72, 3], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [72, 24], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [72], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [72], "dtype": "float", "data": "random", "scale": 0.1}
+            ],
+            "expect": {
+                "output_0": {"shape": [1, 1, 100, 24], "dtype": "float", "check": "no_nan"},
+                "output_1": {"shape": [1, 1, 24], "dtype": "float", "check": "no_nan"}
+            }
+        },
+        {
+            "name": "batch32",
+            "input": [
+                {"shape": [32, 100, 3], "dtype": "float", "data": "random"},
+                {"shape": [72, 3], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [72, 24], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [72], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [72], "dtype": "float", "data": "random", "scale": 0.1}
+            ],
+            "expect": {
+                "output_0": {"shape": [1, 32, 100, 24], "dtype": "float", "check": "no_nan"},
+                "output_1": {"shape": [1, 32, 24], "dtype": "float", "check": "no_nan"}
+            }
+        },
+        {
+            "name": "bidirectional",
+            "input": [
+                {"shape": [1, 50, 3], "dtype": "float", "data": "random"},
+                {"shape": [48, 3], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [48, 8], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [48], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [48], "dtype": "float", "data": "random", "scale": 0.1}
+            ],
+            "attr": [{"name": "bidirectional", "value": true}],
+            "expect": {
+                "output_0": {"shape": [2, 1, 50, 8], "dtype": "float", "check": "no_nan"},
+                "output_1": {"shape": [2, 1, 8], "dtype": "float", "check": "no_nan"}
+            }
+        },
+        {
+            "name": "single_step",
+            "input": [
+                {"shape": [1, 1, 3], "dtype": "float", "data": "random"},
+                {"shape": [24, 3], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [24, 8], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [24], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [24], "dtype": "float", "data": "random", "scale": 0.1}
+            ],
+            "expect": {
+                "output_0": {"shape": [1, 1, 1, 8], "dtype": "float", "check": "no_nan"},
+                "output_1": {"shape": [1, 1, 8], "dtype": "float", "check": "no_nan"}
+            }
+        },
+        {
+            "name": "no_bias",
+            "input": [
+                {"shape": [1, 10, 3], "dtype": "float", "data": "random"},
+                {"shape": [24, 3], "dtype": "float", "data": "random", "scale": 0.1},
+                {"shape": [24, 8], "dtype": "float", "data": "random", "scale": 0.1},
+                null,
+                null
+            ],
+            "expect": {
+                "output_0": {"shape": [1, 1, 10, 8], "dtype": "float", "check": "no_nan"},
+                "output_1": {"shape": [1, 1, 8], "dtype": "float", "check": "no_nan"}
+            }
+        }
+    ]
+}

@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/op_list.md)
 
-当前仓库交付 6 个 AscendC/CANN OPP 算子、5 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
+当前仓库交付 7 个 AscendC/CANN OPP 算子、5 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
 
@@ -14,6 +14,7 @@
 | `FusedSoftmaxGrad` | AscendC | `aclnnFusedSoftmaxGrad` / `fused_softmax_grad` | [`ascendc/operators/fused_softmax_grad/`](../../ascendc/operators/fused_softmax_grad/) | 注意力 softmax JVP，连续输入成功进入融合路径时覆写 probs | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
 | `Conv3DGelu` | AscendC | `aclnnConv3dGeluCustom` / `conv3d_gelu` | [`ascendc/operators/conv3d_gelu/`](../../ascendc/operators/conv3d_gelu/) | `gelu_tanh(conv3d(x, weight, bias))` | `float32` / `NCDHW` | Ascend 910B |
 | `Conv3DGeluGrad` | AscendC | `aclnnConv3dGeluGrad`（由 `conv3d_gelu` 的反向调用） | [`ascendc/operators/conv3d_gelu_grad/`](../../ascendc/operators/conv3d_gelu_grad/) | `dz = dy * gelu'(z)`。反向先重算 conv3d，再调本算子，再做 conv3d 反向 | `float32` / `ND` | Ascend 910B |
+| `CustomGRUV2` | AscendC | `aclnnCustomGRUV2` / `custom_gru_v2` | [`ascendc/operators/custom_gru_v2/`](../../ascendc/operators/custom_gru_v2/) | 单层 GRU 融合 kernel（gate 行序 [r; z; n] 与 PyTorch nn.GRU 一致，tanh 用 2·sigmoid(2x)−1 稳定形式），单向/双向，反向由 Python autograd 承担 | `float32` / `ND` | Ascend 910B |
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 实数正向 FFT：`x → (xr, xi)` | NPU kernel 为 `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 半谱重建实数：`(xr, xi), n → y` | NPU kernel 为 `float32` | Ascend 910B |
 | `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | 复数倒数 `1/z`（`z` 或 `xr, xi`） | NPU kernel 为 `complex64` | Ascend 910B |
@@ -218,6 +219,45 @@ y = \text{gelu}_{\tanh}(\text{conv3d}(x, W, b))
 - 只支持 `float32`、`groups=1`。`groups` 不是 1，或 `stride` / `padding` / `dilation` 的长度不是 1 或 3，会抛 `ValueError`。`padding_mode` 不是 `zeros` 时由 Python 先做 pad。
 - 精度验收相对 CPU `F.gelu(F.conv3d(...), approximate="tanh")`，且关闭 `torch_npu.npu.conv.allow_hf32`，相对误差 `< 1e-5`。见 [`tests/ascendc/conv3d_gelu/`](../../tests/ascendc/conv3d_gelu/)。
 - 必测 shape 与原 `oil_gas_ops` conv3d_gelu 用例一致，包含 `(2, 32, 160, 160, 160)`、kernel `3×3×3`。
+
+### CustomGRUV2
+
+单层 GRU 的 NPU 融合 kernel，gate 行序 `[r; z; n]` 与 PyTorch `nn.GRU` 一致。前向写出全部时刻的隐状态序列 `y` 与最后时刻隐状态 `output_h`；反向不写自定义 kernel，由 Python 侧 autograd（PyTorch 原生算子构成的计算图）承担。tanh 用 `2·sigmoid(2x)−1` 稳定形式。
+
+#### 数学定义
+
+对时刻 \(t\)（\(h_{t-1} \to h_t\)，门行序 `[r; z; n]`）：
+
+\[
+\begin{aligned}
+r_t &= \sigma(W_{ir} x_t + b_{ir} + W_{hr} h_{t-1} + b_{hr}) \\
+z_t &= \sigma(W_{iz} x_t + b_{iz} + W_{hz} h_{t-1} + b_{hz}) \\
+n_t &= \tanh(W_{in} x_t + b_{in} + r_t \odot (W_{hn} h_{t-1} + b_{hn})) \\
+h_t &= (1 - z_t) \odot n_t + z_t \odot h_{t-1}
+\end{aligned}
+\]
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `x` | 输入序列 | `[B, T, F]` | `float32` / `ND` |
+| 输入 | `weight_ih` | 输入-隐层权重（按门序 `[r; z; n]` 堆叠） | `[3H, F]`；双向 `[2, 3H, F]` | `float32` / `ND` |
+| 输入 | `weight_hh` | 隐-隐层权重 | `[3H, H]`；双向 `[2, 3H, H]` | `float32` / `ND` |
+| 输入（可选） | `bias_ih` | 输入侧偏置 | `[3H]`；双向 `[2, 3H]` | `float32` / `ND` |
+| 输入（可选） | `bias_hh` | 隐状态侧偏置（aclnn 侧恒传，`None` 时由 Python 包装层补零） | `[3H]`；双向 `[2, 3H]` | `float32` / `ND` |
+| 输出 | `y` | 各时刻隐状态序列 | `[num_dirs, B, T, H]` | `float32` / `ND` |
+| 输出 | `output_h` | 最后时刻隐状态 | `[num_dirs, B, H]` | `float32` / `ND` |
+
+#### 约束
+
+- 只支持 `float32`、`ND`。
+- gate 行序为 `[r; z; n]`，与 `torch.nn.GRU` 一致（`weight_ih` 布局与 `nn.GRU.weight_ih_l0` 相同）。
+- tanh 用 `2·sigmoid(2x)−1` 稳定形式计算。
+- 精度验收相对 `nn.GRU`：前向阈值 `0.003`（`tests/ascendc/custom_gru_v2/unit/test_forward_precision.py:67`）；`gradcheck` 阈值 `atol=1e-4, rtol=1e-3, eps=1e-6`（`tests/ascendc/custom_gru_v2/unit/test_manual_backward_gradcheck.py:154`）；稳定性为同输入 10 次 `torch.equal` 完全一致（`tests/ascendc/custom_gru_v2/test_plan.md:234`）。
+- 性能定额两 shape：`B=1, T=1000, H=24`（单长序列）与 `B=32, T=100, H=24`（批量），见 `tests/ascendc/custom_gru_v2/performance/bench_forward.py`（`test_perf_fwd_001_single_long_seq` / `test_perf_fwd_002_batch`）。
+- 测试入口：[`tests/ascendc/custom_gru_v2/`](../../tests/ascendc/custom_gru_v2/)（`run_test.sh` / `run_all_tests.sh`）。
+- 性能瓶颈定位与后续优化计划见 [`tests/reports/custom_gru_v2_precision_perf.md`](../../tests/reports/custom_gru_v2_precision_perf.md)（§性能定位与后续优化计划）。
 
 ---
 

@@ -9,6 +9,7 @@ oil_gas_ops_prospect
 ├── complex_mul           # complex_mul, torch_complex_mul, torch_complex_mul_grad
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
 ├── conv3d_gelu           # conv3d_gelu
+├── custom_gru_v2         # custom_gru_v2, CustomGRU
 ├── real_fft              # real_rfft, real_irfft, make_basis
 ├── complex_reciprocal   # complex_reciprocal（z 或 xr, xi 两种形式）
 ├── complex_exp          # complex_exp
@@ -163,6 +164,44 @@ def torch_fused_softmax_grad(
 ```
 
 均在 fp32 域计算、非原地，写回原 dtype。供对拍与 CPU 测试。
+
+---
+
+## `oil_gas_ops_prospect.custom_gru_v2`
+
+### `custom_gru_v2`
+
+```python
+from oil_gas_ops_prospect.custom_gru_v2 import custom_gru_v2
+
+def custom_gru_v2(
+    x: torch.Tensor,
+    weight_ih: torch.Tensor,
+    weight_hh: torch.Tensor,
+    bias_ih: torch.Tensor | None,
+    bias_hh: torch.Tensor | None,
+    hidden_size: int,
+    bidirectional: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]
+```
+
+单层 GRU 前向，gate 行序 `[r; z; n]` 与 `torch.nn.GRU` 一致，tanh 用 `2·sigmoid(2x)−1` 稳定形式。返回 `(y, output_h)`：`y` shape `[num_dirs, B, T, H]`，`output_h` shape `[num_dirs, B, H]`；`bidirectional=True` 时 `num_dirs = 2`，反向方向沿时间轴逆序。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `x` | `torch.Tensor` | 输入序列 `[B, T, F]`，`float32` |
+| `weight_ih` | `torch.Tensor` | 输入-隐层权重 `[3H, F]`；双向为 `[2, 3H, F]`。布局与 `nn.GRU.weight_ih_l0` 一致 |
+| `weight_hh` | `torch.Tensor` | 隐-隐层权重 `[3H, H]`；双向为 `[2, 3H, H]` |
+| `bias_ih` | `torch.Tensor \| None` | 输入侧偏置 `[3H]`（双向 `[2, 3H]`）；`None` 时由包装层补零 |
+| `bias_hh` | `torch.Tensor \| None` | 隐状态侧偏置 `[3H]`（双向 `[2, 3H]`）；`None` 时由包装层补零 |
+| `hidden_size` | `int` | 隐层维度 `H` |
+| `bidirectional` | `bool` | 默认 `False`；`True` 时双向 |
+
+**实现选择**：非 NPU 张量或 pybind 扩展 `custom_gru_v2_npu` 不可用时，回退纯 PyTorch 参考实现（逐时间步循环，含 autograd）；NPU 张量且扩展可用时走 `aclnnCustomGRUV2`。置环境变量 `OIL_GAS_OPS_REQUIRE_ASCENDC_CUSTOM_GRU_V2=1` 时禁止静默回退：输入不在 NPU 或扩展导入失败直接抛 `RuntimeError`。
+
+数学定义、shape / dtype 约束与精度阈值见[算子列表](op_list.md#customgruv2)。
+
+同模块另导出 nn.Module `CustomGRU(input_size, hidden_size, bidirectional=False, bias=True)`：`weight_ih` / `weight_hh` 为顶层参数，`forward(x)` 返回 `(y, output_h)`，语义与函数入口一致。
 
 ---
 

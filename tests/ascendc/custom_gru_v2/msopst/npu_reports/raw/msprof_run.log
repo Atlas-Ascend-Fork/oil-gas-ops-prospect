@@ -1,0 +1,47 @@
+=== msprof: CustomGRUV2 profiling ===
+[1/2] Single sequence (B=1, T=1000, H=24)
+Tue 04 Aug 2026 08:53:32 [INFO] [MSVP] [174125] msprof_export.py: There is no timeline data to export for "/tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/single/PROF_000001_20260804085322458_CFKJPNKELBFNDRJB/host"
+Tue 04 Aug 2026 08:53:32 [INFO] [MSVP] [174297] msprof_export.py: The data in "/tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/single/PROF_000001_20260804085322458_CFKJPNKELBFNDRJB/host" has been analyzed. Parsing phase will be skipped.
+Tue 04 Aug 2026 08:53:32 [INFO] [MSVP] [174297] msprof_export.py: The data in "/tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/single/PROF_000001_20260804085322458_CFKJPNKELBFNDRJB/device_0" has been analyzed. Parsing phase will be skipped.
+Tue 04 Aug 2026 08:53:32 [INFO] [MSVP] [174297] msprof_export.py: All collected data will be exported, path is: /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/single/PROF_000001_20260804085322458_CFKJPNKELBFNDRJB/device_0.
+Tue 04 Aug 2026 08:53:32 [INFO] [MSVP] [174297] msprof_export.py: There is no summary data to export for "/tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/single/PROF_000001_20260804085322458_CFKJPNKELBFNDRJB/host"
+Tue 04 Aug 2026 08:53:32 [INFO] [MSVP] [174297] msprof_export.py: All collected data will be exported, path is: /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/single/PROF_000001_20260804085322458_CFKJPNKELBFNDRJB/device_0.
+Tue 04 Aug 2026 08:53:32 [INFO] [MSVP] [174297] msprof_export.py: There is no summary data to export for "/tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/single/PROF_000001_20260804085322458_CFKJPNKELBFNDRJB/device_0"
+Tue 04 Aug 2026 08:53:32 [INFO] [MSVP] [174297] msprof_common.py: Start exporting summary output_file.
+Tue 04 Aug 2026 08:53:32 [INFO] [MSVP] [174297] msprof_common.py: End exporting summary output_file.The file is stored in the /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/single/PROF_000001_20260804085322458_CFKJPNKELBFNDRJB/mindstudio_profiler_output path.
+[INFO] Export all data in PROF_000001_20260804085322458_CFKJPNKELBFNDRJB done.
+[INFO] Start query data in PROF_000001_20260804085322458_CFKJPNKELBFNDRJB.
+Job Info	Device ID	Dir Name	Collection Time           	Model ID	Iteration Number	Top Time Iteration	Rank ID
+
+NA      	         	host    	2026-08-04 08:53:22.461350	N/A     	N/A             	N/A               	-1
+
+NA      	0        	device_0	2026-08-04 08:53:23.197761	N/A     	N/A             	N/A               	-1
+
+[INFO] Query all data in PROF_000001_20260804085322458_CFKJPNKELBFNDRJB done.
+[INFO] Profiling finished.
+[INFO] Process profiling data complete. Data is saved in /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/single/PROF_000001_20260804085322458_CFKJPNKELBFNDRJB
+
+[2/2] Batch (B=32, T=100, H=24) — multi-core
+Tue 04 Aug 2026 08:53:52 [INFO] [MSVP] [174459] msprof_export.py: There is no timeline data to export for "/tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/batch/PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA/host"
+Tue 04 Aug 2026 08:53:52 [INFO] [MSVP] [174631] msprof_export.py: The data in "/tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/batch/PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA/host" has been analyzed. Parsing phase will be skipped.
+Tue 04 Aug 2026 08:53:52 [INFO] [MSVP] [174631] msprof_export.py: The data in "/tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/batch/PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA/device_0" has been analyzed. Parsing phase will be skipped.
+Tue 04 Aug 2026 08:53:52 [INFO] [MSVP] [174631] msprof_export.py: All collected data will be exported, path is: /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/batch/PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA/device_0.
+Tue 04 Aug 2026 08:53:52 [INFO] [MSVP] [174631] msprof_export.py: There is no summary data to export for "/tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/batch/PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA/host"
+Tue 04 Aug 2026 08:53:52 [INFO] [MSVP] [174631] msprof_export.py: All collected data will be exported, path is: /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/batch/PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA/device_0.
+Tue 04 Aug 2026 08:53:52 [INFO] [MSVP] [174631] msprof_export.py: There is no summary data to export for "/tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/batch/PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA/device_0"
+Tue 04 Aug 2026 08:53:52 [INFO] [MSVP] [174631] msprof_common.py: Start exporting summary output_file.
+Tue 04 Aug 2026 08:53:52 [INFO] [MSVP] [174631] msprof_common.py: End exporting summary output_file.The file is stored in the /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/batch/PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA/mindstudio_profiler_output path.
+[INFO] Export all data in PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA done.
+[INFO] Start query data in PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA.
+Job Info	Device ID	Dir Name	Collection Time           	Model ID	Iteration Number	Top Time Iteration	Rank ID
+
+NA      	         	host    	2026-08-04 08:53:43.559108	N/A     	N/A             	N/A               	-1
+
+NA      	0        	device_0	2026-08-04 08:53:44.313664	N/A     	N/A             	N/A               	-1
+
+[INFO] Query all data in PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA done.
+[INFO] Profiling finished.
+[INFO] Process profiling data complete. Data is saved in /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/batch/PROF_000001_20260804085343556_IQDEBOBCKCRNMLQA
+
+=== msprof complete. Results in /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/ ===
+View with: msprof --export=on --output=/tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_prof/single

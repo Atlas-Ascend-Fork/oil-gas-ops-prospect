@@ -1,0 +1,5 @@
+serialNo:0, type:MALLOC, coreId:-1, srcAddr:0x0, dstAddr:0x12c041200000, memInfoSrc:RT, srcSpace:GM, dstSpace:GM, memSize:2097152, moduleId:-1, lineNo:0, fileName:
+memcheck standard: y.shape=torch.Size([1, 1, 100, 24]), h.shape=torch.Size([1, 1, 24])
+memcheck bidir: y2.shape=torch.Size([2, 1, 50, 8]), h2.shape=torch.Size([2, 1, 8])
+memcheck single_step: y3.shape=torch.Size([1, 1, 1, 8])
+memcheck: ALL PASSED

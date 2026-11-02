@@ -86,4 +86,17 @@ aclnnStatus aclnnFusedSoftmaxGrad(void* workspace, uint64_t workspaceSize, aclOp
 }
 #endif
 
+#if __has_include("aclnn_custom_gruv2.h")
+#include "aclnn_custom_gruv2.h"
+#else
+// CustomGRUV2：自研单层 GRU 融合算子（tanh=2·sigmoid(2x)−1 稳定形式），单向/双向。
+extern "C" {
+aclnnStatus aclnnCustomGRUV2GetWorkspaceSize(const aclTensor* x, const aclTensor* weightIh, const aclTensor* weightHh,
+                                             const aclTensor* biasIh, const aclTensor* biasHh, bool bidirectional,
+                                             const aclTensor* y, const aclTensor* outputH, uint64_t* workspaceSize,
+                                             aclOpExecutor** executor);
+aclnnStatus aclnnCustomGRUV2(void* workspace, uint64_t workspaceSize, aclOpExecutor* executor, aclrtStream stream);
+}
+#endif
+
 #endif // OG_ACLNN_DECLS_H

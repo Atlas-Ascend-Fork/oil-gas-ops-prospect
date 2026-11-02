@@ -1,0 +1,9 @@
+{
+    "run_cmd": "/usr/local/Ascend/cann-8.5.0/bin/msopst run -i /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/custom_gruv2_test.json -soc Ascend910B2 -out /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_msopst",
+    "report_list": [],
+    "summary": {
+        "test case count": 0,
+        "success count": 0,
+        "failed count": 0
+    }
+}

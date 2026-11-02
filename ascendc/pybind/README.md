@@ -13,13 +13,16 @@ ascendc/pybind/
 ├── complex_mul.py           # oil_gas_ops_prospect.complex_mul
 ├── fused_bias_softmax.py    # oil_gas_ops_prospect.fused_bias_softmax
 ├── conv3d_gelu.py           # oil_gas_ops_prospect.conv3d_gelu
+├── custom_gru_v2.py         # oil_gas_ops_prospect.custom_gru_v2
 ├── csrc/
 │   ├── complex_mul/
 │   │   └── bindings.cpp     # 直调 aclnnComplexMul / aclnnComplexMulGrad
 │   ├── fused_bias_softmax/
 │   │   └── bindings.cpp     # 直调 aclnnFusedBiasSoftmax / aclnnFusedSoftmaxGrad
-│   └── conv3d_gelu/
-│       └── bindings.cpp     # 直调 aclnnConv3dGeluCustom
+│   ├── conv3d_gelu/
+│   │   └── bindings.cpp     # 直调 aclnnConv3dGeluCustom
+│   └── custom_gru_v2/
+│       └── bindings.cpp     # 直调 aclnnCustomGRUV2
 └── README.md
 ```
 

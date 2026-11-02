@@ -1,0 +1,18 @@
+=== mssanitizer memcheck: CustomGRUV2 ===
+[1/2] memcheck (UB overflow + GM out-of-bounds)
+[mssanitizer] logging to file: ./mindstudio_sanitizer_log/mssanitizer_20260804085231_173805.log
+[mssanitizer] WARNING: Current file or dir permission is 0755, which poses a security risk. It's recommended to chmod /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_sanitizer permission to the 0750.
+[mssanitizer] WARNING: Current file or dir permission is 0644, which poses a security risk. It's recommended to chmod /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_sanitizer/memcheck.log permission to the 0640.
+memcheck standard: y.shape=torch.Size([1, 1, 100, 24]), h.shape=torch.Size([1, 1, 24])
+memcheck bidir: y2.shape=torch.Size([2, 1, 50, 8]), h2.shape=torch.Size([2, 1, 8])
+memcheck single_step: y3.shape=torch.Size([1, 1, 1, 8])
+memcheck: ALL PASSED
+
+[2/2] racecheck (multi-core data race detection)
+[mssanitizer] logging to file: ./mindstudio_sanitizer_log/mssanitizer_20260804085247_173904.log
+[mssanitizer] WARNING: Current file or dir permission is 0755, which poses a security risk. It's recommended to chmod /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_sanitizer permission to the 0750.
+[mssanitizer] WARNING: Current file or dir permission is 0644, which poses a security risk. It's recommended to chmod /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_sanitizer/racecheck.log permission to the 0640.
+racecheck batch32: y.shape=torch.Size([1, 32, 100, 24])
+racecheck: PASSED
+
+=== mssanitizer complete. Results in /tmp/oil-gas-ops-prospect/ascendc/operators/custom_gru_v2/testplan/msopst/results_sanitizer/ ===

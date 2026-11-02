@@ -1,0 +1,4 @@
+Device_id,OP Type,Core Type,Count,Total Time(us),Min Time(us),Avg Time(us),Max Time(us),Ratio(%)
+0,CustomGRUV2,AI_VECTOR_CORE,25,63271.32,2517.18,2530.852,2534.28,99.967
+0,Mul,AI_VECTOR_CORE,4,11.96,1.66,2.99,3.5,0.019
+0,DSARandomNormal,DSA_SQE,5,8.86,1.22,1.772,3.44,0.014

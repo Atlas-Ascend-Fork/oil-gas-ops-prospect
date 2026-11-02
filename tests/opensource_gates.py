@@ -101,9 +101,12 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "conv3d",
             "Conv3DGelu",
             "Conv3DGeluGrad",
+            "CustomGRUV2",
+            "custom_gru_v2",
+            "aclnnCustomGRUV2",
             "数学定义",
         ),
-        "12 个已交付算子的数学定义、输入输出与约束",
+        "13 个已交付算子的数学定义、输入输出与约束",
     ),
     (
         "docs/zh/api_list.md",
@@ -123,6 +126,8 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "conv3d_gelu",
             "aclnnComplexMul",
             "aclnnConv3dGeluCustom",
+            "custom_gru_v2",
+            "aclnnCustomGRUV2",
         ),
         "Python 公开接口与 aclnn 两段式入口、环境变量",
     ),
@@ -282,6 +287,14 @@ def check_api() -> int:
     else:
         return _fail("conv3d_gelu groups!=1 should raise")
 
+    from oil_gas_ops_prospect.custom_gru_v2 import CustomGRU
+    gru = CustomGRU(4, 8)
+    yo, ho = gru(torch.randn(2, 6, 4))
+    if yo.shape != (1, 2, 6, 8):
+        return _fail("custom_gru_v2 y shape")
+    if ho.shape != (1, 2, 8):
+        return _fail("custom_gru_v2 h shape")
+
     ur = torch.randn(4, 8)
     ui, vr, vi = torch.randn_like(ur), torch.randn_like(ur), torch.randn_like(ur)
     wr, wi = complex_mul(ur, ui, vr, vi)
@@ -313,7 +326,7 @@ def check_api() -> int:
     print(
         "PASS public API CPU fallback: complex_mul fused_bias_softmax "
         "fused_softmax_grad attention_core real_rfft real_irfft complex_reciprocal "
-        "complex_exp interpolate Conv3d conv3d conv3d_gelu"
+        "complex_exp interpolate Conv3d conv3d conv3d_gelu custom_gru_v2"
     )
     return 0
 

@@ -1,0 +1,11 @@
+============================================================
+msOpST CustomGRUV2 — Recompiled Kernel (Round 4)
+============================================================
+  [PASS] standard_shape: y=torch.Size([1, 1, 100, 24]), h=torch.Size([1, 1, 24])
+  [PASS] batch32: y=torch.Size([1, 32, 100, 24]), h=torch.Size([1, 32, 24])
+  [PASS] bidirectional: y=torch.Size([2, 1, 50, 8]), h=torch.Size([2, 1, 8])
+  [PASS] single_step: y=torch.Size([1, 1, 1, 8]), h=torch.Size([1, 1, 8])
+  [PASS] no_bias: y=torch.Size([1, 1, 10, 8]), h=torch.Size([1, 1, 8])
+
+Total: 5/5 PASS
+============================================================
