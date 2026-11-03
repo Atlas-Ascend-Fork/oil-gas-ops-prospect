@@ -121,12 +121,13 @@ Operator precision, performance and device memory on the NPU must be verified on
 
 ## 📖 Supported API List
 
-The current delivery contains 6 AscendC operators, 5 Triton-Ascend operators and 1 Composite-Torch operator:
+The current delivery contains 7 AscendC operators, 5 Triton-Ascend operators and 1 Composite-Torch operator:
 
 | Name / OpType | Backend / Deliverable | Function | dtype / format |
 |---------------|-----------------------|----------|----------------|
 | [`ComplexMul`](ascendc/operators/complex_mul/) | AscendC / OPP `.run` (AIV-only) | complex element-wise multiply: `(ur, ui), (vr, vi) -> (wr, wi)` | `float32` / `ND`, all tensors share a shape |
 | [`ComplexMulGrad`](ascendc/operators/complex_mul_grad/) | AscendC / OPP `.run` (AIV-only) | backward of `ComplexMul` | `float32` / `ND`, all tensors share a shape |
+| [`CustomGRUV2`](ascendc/operators/custom_gru_v2/) | AscendC / OPP `.run` | fused GRU kernel (tanh uses the numerically stable 2·sigmoid(2x)−1 form), unidirectional / bidirectional | `float32` / `ND` |
 | [`FusedBiasSoftmax`](ascendc/operators/fused_bias_softmax/) | AscendC / OPP `.run` | `softmax(x + bias1 + bias2, -1)`, in-place for contiguous inputs that successfully enter the fused path | `fp32` / `fp16` / `bf16`, `ND` |
 | [`FusedSoftmaxGrad`](ascendc/operators/fused_softmax_grad/) | AscendC / OPP `.run` (may use MIX) | attention softmax JVP, overwriting contiguous probs that successfully enter the fused path | `fp32` / `fp16` / `bf16`, `ND` |
 | [`Conv3DGelu`](ascendc/operators/conv3d_gelu/) | AscendC / OPP `.run` (MIX cube+vector) | `gelu_tanh(conv3d(x, weight, bias))`, without retaining the pre-activation between the two ops | `float32` / `NCDHW` |
