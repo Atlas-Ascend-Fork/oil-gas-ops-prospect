@@ -74,33 +74,53 @@ def torch_complex_mul_grad(
     return gur, gui, gvr, gvi
 
 
-def _kernel_in(t: torch.Tensor, *, clone: bool = False) -> torch.Tensor:
-    t = t.detach().contiguous()
-    return t.clone() if clone else t
+def _kernel_in(t: torch.Tensor) -> torch.Tensor:
+    """转成 kernel 要求的连续张量。
+
+    ``contiguous()`` 对已连续张量零拷贝，对非连续 / stride 0 张量会物化。
+    不要在这里追加 ``clone()``：多出的整张量拷贝在 NPU 上退化为 AI_CPU 算子。
+    """
+    return t.detach().contiguous()
+
+
+def _split_outputs(packed) -> tuple[torch.Tensor, ...]:
+    """把 C++ 侧返回的 packed 输出切成相互独立的张量。
+
+    kernel 受 TBE 限制，把 2 路（反向 4 路）输出写进同一块缓冲，返回的 view
+    共享 storage。``autograd.Function`` 返回多个共享 storage 的 view 时，PyTorch
+    会拒绝对其做原地写，因此**前向**返回前必须 clone。
+
+    ``contiguous()`` 不能替代：packed 的每一路本来就连续，它是 no-op，别名仍在。
+    """
+    return tuple(t.clone() for t in packed)
 
 
 def _ascendc_forward(ur, ui, vr, vi):
     ext = _load_extension()
-    wr, wi = ext.complex_mul_forward(
+    packed = ext.complex_mul_forward(
         _kernel_in(ur),
         _kernel_in(ui),
         _kernel_in(vr),
         _kernel_in(vi),
     )
-    # pybind 把 std::vector 变成 list；autograd.Function 多输出必须是独立 tensor 的 tuple。
-    return wr.clone(), wi.clone()
+    return _split_outputs(packed)
 
 
 def _ascendc_backward(gwr, gwi, ur, ui, vr, vi):
     ext = _load_extension()
+    # gwr / gwi 可能互为同一张量的 view（如 ``(wr + wi).sum()``，其中一个带
+    # stride 0 广播布局）。``_kernel_in`` 的 contiguous() 已把它们物化成独立
+    # 缓冲，不需要再 clone。
     gur, gui, gvr, gvi = ext.complex_mul_backward(
-        _kernel_in(gwr, clone=True),
-        _kernel_in(gwi, clone=True),
+        _kernel_in(gwr),
+        _kernel_in(gwi),
         _kernel_in(ur),
         _kernel_in(ui),
         _kernel_in(vr),
         _kernel_in(vi),
     )
+    # 4 路梯度共享一块缓冲是允许的：autograd 直接累加 backward 返回值，不走
+    # 「用户可见多 view」的原地写检查。
     return gur, gui, gvr, gvi
 
 

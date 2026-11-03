@@ -23,6 +23,7 @@
 
 ### Fixed
 
+- `complex_mul` 的反向不再重复 clone 梯度输入与输出。`gwr` / `gwi` 在 `(wr + wi).sum()` 这类调用下互为同一张量的 view（可能是 stride 0 的广播布局），`_kernel_in` 的 `contiguous()` 已把它们物化成独立缓冲，额外 `clone()` 只是多一次整张量拷贝。前向仍保留 clone：kernel 把两路输出写进同一块缓冲，不 clone 会让 `autograd.Function` 返回共享 storage 的多 view，下游原地写报错。
 - `complex_exp` 的数值语义对齐 `torch.exp(complex64)`（`cexpf`）：纯实数上溢不再得到 `inf+nanj`，`exp(a)` 溢出带内（如 `89+1j`）实部不再丢失为 `inf`，`b` 为 `±inf`/NaN 时按 `cexpf` 特判；补上二阶导（`create_graph=True`）与 conjugate-view 梯度；AOT 门禁补齐反向 int64 分支。
 - `complex_mul` 的 Python autograd 接线，反向梯度可正确回传到输入。
 - `bash build.sh -u` 单 flag 入口无法进入测试的问题。

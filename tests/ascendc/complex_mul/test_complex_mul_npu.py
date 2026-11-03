@@ -199,6 +199,47 @@ def check_autograd(tensors) -> list[float]:
     return errs
 
 
+def check_autograd_alias(tensors) -> list[float]:
+    """前向输出必须互不共享 storage：写一路不能污染另一路。
+
+    C++ 侧把两路输出写进同一块 packed 缓冲，封装层需在返回前 clone 断开别名。
+    若被误删，PyTorch 会在下游原地写时报
+    ``Output 0 ... is a view and is being modified inplace``。
+    """
+    os.environ["OIL_GAS_OPS_COMPLEX_MUL_IMPL"] = "ascendc"
+    os.environ["OIL_GAS_OPS_REQUIRE_ASCENDC_COMPLEX_MUL"] = "1"
+
+    from oil_gas_ops_prospect.complex_mul import complex_mul
+
+    ur, ui, vr, vi, _, _ = tensors
+    wr, wi = complex_mul(
+        *(t.detach().requires_grad_(True) for t in (ur, ui, vr, vi))
+    )
+    shared = wr.untyped_storage().data_ptr() == wi.untyped_storage().data_ptr()
+    if shared:
+        raise RuntimeError("complex_mul forward 的两路输出共享 storage")
+
+    before = wi.detach().clone()
+    wr.detach().add_(1.0)
+    torch.npu.synchronize()
+    if not torch.equal(wi.detach(), before):
+        raise RuntimeError("写 wr 污染了 wi：输出别名未断开")
+
+    # 反向必须能处理「两路 grad 互为同一 view」的调用形态。
+    leaves = [t.detach().requires_grad_(True) for t in (ur, ui, vr, vi)]
+    wr2, wi2 = complex_mul(*leaves)
+    torch.autograd.backward((wr2, wi2), (torch.ones_like(wr2), torch.ones_like(wi2)))
+    torch.npu.synchronize()
+    missing = [n for n, t in zip(("gur", "gui", "gvr", "gvi"), leaves) if t.grad is None]
+    if missing:
+        raise RuntimeError(f"autograd missing grad for {missing}")
+    if not all(torch.isfinite(t.grad).all() for t in leaves):
+        raise RuntimeError("autograd 产生了非有限梯度")
+
+    print("[autograd] 输出别名已断开，反向梯度有限")
+    return [0.0]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.build_ext:
@@ -217,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode in ("all", "precision"):
         errs = check_accuracy(ext, tensors, shape)
         errs.extend(check_autograd(tensors))
+        errs.extend(check_autograd_alias(tensors))
     if args.mode in ("all", "perf"):
         for perf_shape in PERF_SHAPES:
             report_perf(ext, make_inputs(perf_shape, device), perf_shape)
