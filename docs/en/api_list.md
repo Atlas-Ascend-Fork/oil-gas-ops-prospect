@@ -414,7 +414,7 @@ class Conv3d(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor
 ```
 
-A pure PyTorch composition that is mathematically consistent with `torch.nn.Conv3d` within the supported parameter domain below; `forward(x)` returns \((N, C_{out}, D_{out}, H_{out}, W_{out})\). The current constructor does not provide the `device` / `dtype` keyword arguments of `nn.Conv3d`.
+A pure PyTorch composition that is mathematically consistent with `torch.nn.Conv3d` within the supported parameter domain below; `forward(x)` accepts batched \((N, C_{in}, D, H, W)\) or unbatched \((C_{in}, D, H, W)\) inputs and returns \((N, C_{out}, D_{out}, H_{out}, W_{out})\) or \((C_{out}, D_{out}, H_{out}, W_{out})\), respectively. Input gradients retain the input shape. The current constructor does not provide the `device` / `dtype` keyword arguments of `nn.Conv3d`.
 
 - **Parameter range**: `kernel_size`, `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence (tuple or list); `groups` is an `int`. The string padding values `"same"` / `"valid"` are supported and are converted to explicit padding before the convolution; `"same"` requires a stride of 1, otherwise `ValueError` is raised.
 - **state_dict interoperability**: the keys match those of `nn.Conv3d`, so `load_state_dict` works in both directions (strict).
@@ -438,7 +438,7 @@ def conv3d(
 ) -> torch.Tensor
 ```
 
-A pure PyTorch functional compatibility implementation whose forward/backward is always organized by the internal `_Conv3dFunction` (a `torch.autograd.Function`). `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence (tuple or list), and `groups` is an `int`; the string padding values `"same"` / `"valid"` are converted to explicit padding before the convolution (`"same"` requires a stride of 1). It is mathematically consistent with `F.conv3d` for these supported parameters and data types supported by the underlying PyTorch backend and tested in this repository. For the nn.Module form and NPU fallback logic, see `Conv3d`.
+A pure PyTorch functional compatibility implementation whose forward/backward is always organized by the internal `_Conv3dFunction` (a `torch.autograd.Function`). `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence (tuple or list), and `groups` is an `int`; the string padding values `"same"` / `"valid"` are converted to explicit padding before the convolution (`"same"` requires a stride of 1). It is mathematically consistent with `F.conv3d` for these supported parameters and data types supported by the underlying PyTorch backend and tested in this repository. Both batched 5D and unbatched 4D inputs are supported; the output preserves the batch-dimension convention and input gradients retain the input shape. For the nn.Module form and NPU fallback logic, see `Conv3d`.
 
 ---
 

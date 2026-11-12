@@ -518,14 +518,15 @@ where \(\widetilde{\text{grad\_out}}\) is the zero-dilated grad_output (with \(s
 
 | Direction | Name | Meaning | shape | dtype |
 |-----------|------|---------|-------|-------|
-| input | `x` | input features | \((N, C_{in}, D, H, W)\) | data types supported by the underlying PyTorch backend and tested in this repository |
-| output | `output` | output features | \((N, C_{out}, D_{out}, H_{out}, W_{out})\) | same as the input |
+| input | `x` | input features | \((N, C_{in}, D, H, W)\) or unbatched \((C_{in}, D, H, W)\) | data types supported by the underlying PyTorch backend and tested in this repository |
+| output | `output` | output features | \((N, C_{out}, D_{out}, H_{out}, W_{out})\) or unbatched \((C_{out}, D_{out}, H_{out}, W_{out})\) | same as the input |
 
 `kernel_size`, `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence (tuple or list), and `groups` is an `int`. The module's `padding_mode` supports `zeros` / `reflect` / `replicate` / `circular`. The string padding values `"same"` / `"valid"` are supported and are converted to explicit padding before the convolution; `"same"` requires a stride of 1, otherwise `ValueError` is raised. The current `Conv3d` constructor does not have the `device` / `dtype` keyword arguments of `nn.Conv3d`.
 
 #### Constraints and Behavior
 
 - `use_custom` is enabled by default when the `torch.npu` interface is detected; tests may force `module.use_custom = True` to drive the custom path on CPU.
+- Both batched 5D and unbatched 4D inputs are supported. The output preserves the input rank and input gradients retain the input shape.
 - Arguments accept only the supported types and values above; mathematical consistency applies only to this parameter domain and combinations covered by this repository.
 - With `padding_mode != 'zeros'`, the input goes through `F.pad` first and then enters the custom Function with `conv_padding=0`; gradients propagate through the autograd of `F.pad`.
 - The weight/bias state_dict keys interoperate with `nn.Conv3d`.

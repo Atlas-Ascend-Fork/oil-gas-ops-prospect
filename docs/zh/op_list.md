@@ -516,14 +516,15 @@ shape / stride 参数走 `tl.constexpr` 特化。
 
 | 方向 | 名称 | 含义 | shape | dtype |
 |------|------|------|-------|-------|
-| 输入 | `x` | 输入特征 | \((N, C_{in}, D, H, W)\) | 底层 PyTorch 后端支持且经本仓测试的 dtype |
-| 输出 | `output` | 输出特征 | \((N, C_{out}, D_{out}, H_{out}, W_{out})\) | 与输入相同 |
+| 输入 | `x` | 输入特征 | \((N, C_{in}, D, H, W)\) 或无 batch 的 \((C_{in}, D, H, W)\) | 底层 PyTorch 后端支持且经本仓测试的 dtype |
+| 输出 | `output` | 输出特征 | \((N, C_{out}, D_{out}, H_{out}, W_{out})\) 或无 batch 的 \((C_{out}, D_{out}, H_{out}, W_{out})\) | 与输入相同 |
 
 `kernel_size`、`stride`、数值 `padding`、`dilation` 支持 `int` 或 3 元素序列（元组或列表），`groups` 为 `int`。模块的 `padding_mode` 支持 `zeros` / `reflect` / `replicate` / `circular`。字符串 `padding="same"` / `"valid"` 受支持，会在卷积前换算为显式补边；`"same"` 要求 stride 为 1，否则抛 `ValueError`。当前 `Conv3d` 构造器没有 `nn.Conv3d` 的 `device` / `dtype` 关键字。
 
 #### 约束与行为
 
 - `use_custom` 在检测到 `torch.npu` 接口时默认开启；测试可强制 `module.use_custom = True` 在 CPU 上驱动自定义路径。
+- 支持含 batch 的 5D 与无 batch 的 4D 输入，输出保留输入维数，输入梯度保留输入 shape。
 - 参数只接受上述受支持类型与取值；数学一致性结论仅适用于该参数域和仓内覆盖的组合。
 - `padding_mode != 'zeros'` 时先 `F.pad`，再以 `conv_padding=0` 进入自定义 Function，梯度经 `F.pad` 的 autograd 回传。
 - weight/bias 的 state_dict key 与 `nn.Conv3d` 互通。

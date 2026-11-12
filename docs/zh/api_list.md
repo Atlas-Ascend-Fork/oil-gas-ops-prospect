@@ -414,7 +414,7 @@ class Conv3d(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor
 ```
 
-纯 PyTorch 组合实现，在下述支持参数域内与 `torch.nn.Conv3d` 数学一致；`forward(x)` 返回 \((N, C_{out}, D_{out}, H_{out}, W_{out})\)。当前构造器不提供 `nn.Conv3d` 的 `device` / `dtype` 关键字。
+纯 PyTorch 组合实现，在下述支持参数域内与 `torch.nn.Conv3d` 数学一致；`forward(x)` 接受五维 \((N, C_{in}, D, H, W)\) 或无 batch 的四维 \((C_{in}, D, H, W)\) 输入，分别返回 \((N, C_{out}, D_{out}, H_{out}, W_{out})\) 或 \((C_{out}, D_{out}, H_{out}, W_{out})\)。当前构造器不提供 `nn.Conv3d` 的 `device` / `dtype` 关键字。
 
 - **参数范围**：`kernel_size`、`stride`、数值 `padding`、`dilation` 支持 `int` 或 3 元素序列（元组或列表）；`groups` 为 `int`。字符串 `padding="same"` / `"valid"` 受支持，会在卷积前换算为显式补边；`"same"` 要求 stride 为 1，否则抛 `ValueError`。
 - **state_dict 互通**：key 与 `nn.Conv3d` 一致，可双向 `load_state_dict`（strict）。

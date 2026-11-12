@@ -24,6 +24,8 @@ from oil_gas_ops_prospect.conv3d_custom.functional import conv3d  # 本仓替换
 - 复数输入的反向对权重取共轭，权重梯度由实部/虚部的实数卷积梯度组合；
   复数精度回归在 NPU 上暂时关闭 HF32，完成后恢复原设置。默认 HF32 下的累加误差不按完整 FP32 阈值验收。
 
+输入可为五维 `(N, C_in, D, H, W)` 或无 batch 的四维 `(C_in, D, H, W)`；输出保持对应维数，梯度与相应输入、weight、bias 的形状一致。
+
 ## 验证
 
 - 精度用例：[`tests/composite/conv3d_custom/`](../../tests/composite/conv3d_custom/)（仓内列出的参数组合、训练调用形态与性能基准）；

@@ -60,6 +60,11 @@ class _Conv3dFunction(Function):
     def backward(ctx, grad_output):
         # 获取保存的输入、权重和偏置
         x, weight, bias = ctx.saved_tensors
+        # F.conv3d 接受无 batch 的 4D 输入；反向统一使用 5D 张量。
+        unbatched = x.dim() == 4
+        if unbatched:
+            x = x.unsqueeze(0)
+            grad_output = grad_output.unsqueeze(0)
         stride = ctx.stride
         padding = ctx.padding
         dilation = ctx.dilation
@@ -137,6 +142,9 @@ class _Conv3dFunction(Function):
         if bias is not None and ctx.needs_input_grad[2]:
             # 对除通道维度外的所有维度求和
             grad_bias = grad_output.sum(dim=[0, 2, 3, 4])
+
+        if unbatched and grad_input is not None:
+            grad_input = grad_input.squeeze(0)
 
         return (grad_input, grad_weight, grad_bias, None, None, None, None)
 
