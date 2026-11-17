@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/op_list.md)
 
-This repository currently delivers 7 AscendC/CANN OPP operators, 5 Triton-Ascend Python operators and 1 Composite-Torch (pure PyTorch) operator. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
+This repository currently delivers 7 AscendC/CANN OPP operators, 5 Triton-Ascend Python operators and 2 Composite-Torch (pure PyTorch) operators. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
 
 ## Overview
 
@@ -21,6 +21,7 @@ This repository currently delivers 7 AscendC/CANN OPP operators, 5 Triton-Ascend
 | `complex_exp` | Triton-Ascend | `oil_gas_ops_prospect.complex_exp.complex_exp` | [`triton-ascend/complex_exp/`](../../triton-ascend/complex_exp/) | complex exponential `e^z` | the NPU kernel is `complex64` | Ascend 910B |
 | `interpolate` | Triton-Ascend | `oil_gas_ops_prospect.interpolate.interpolate` | [`triton-ascend/interpolate/`](../../triton-ascend/interpolate/) | 2D/3D linear interpolation; 5D fp32 uses Cube GEMM, 4D uses the native kernel | `float32` for 5D; 4D is supported by the native path | Ascend 910B |
 | `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | compatible `nn.Conv3d` / `F.conv3d` implementation within the supported parameter domain (custom forward/backward) | dtypes supported by the underlying PyTorch backend and tested here | supported by the PyTorch backend; tested on CPU / Ascend 910B |
+| `complex_addcmul` | Composite-Torch | `oil_gas_ops_prospect.complex_addcmul.complex_addcmul` | [`composite-torch/complex_addcmul/`](../../composite-torch/complex_addcmul/) | complex three-input elementwise `input + value*tensor1*tensor2`, works around the missing complex dtypes in NPU `torch.addcmul` | `complex64` / `complex128` | supported by the PyTorch backend; tested on Ascend 910B |
 
 Naming conventions:
 
@@ -541,3 +542,37 @@ where \(\widetilde{\text{grad\_out}}\) is the zero-dilated grad_output (with \(s
 - The complex NPU cases run with `torch.npu.conv.allow_hf32 = False` (restored afterwards). Under the default HF32 setting some gradients show a relative error of roughly `2e-4`, which is not accepted against the full fp32 threshold.
 
 For implementation and usage notes see [`composite-torch/conv3d_custom/README.md`](../../composite-torch/conv3d_custom/README.md) (Chinese).
+
+### complex_addcmul
+
+Complex three-input elementwise operator, implemented purely by composing PyTorch ops, to work around the missing complex dtype support in NPU `torch.addcmul`.
+
+#### Definition
+
+\[
+\text{out} = \text{input} + \text{value} \cdot \text{tensor1} \cdot \text{tensor2}
+\]
+
+Complex multiplication follows \((a+bi)(c+di) = (ac-bd) + (ad+bc)i\), numerically equivalent to `torch.addcmul` within the domain where all three inputs are complex.
+
+#### Inputs / Output
+
+| Direction | Name | Meaning | Shape | dtype |
+|-----------|------|---------|-------|-------|
+| Input | `input` | Addend | any rank | `complex64` / `complex128` |
+| Input | `tensor1`, `tensor2` | Multiplicands, broadcastable | may differ from `input` | `complex64` / `complex128`; promoted via `torch.promote_types` when they differ from `input` |
+| Input | `value` | Scalar multiplier, default `1.0` | scalar | real or complex scalar, or a 0-dim tensor (no `requires_grad`) |
+| Output | — | Broadcast shape of the three inputs | broadcast result | promoted via `torch.promote_types` |
+
+#### Constraints
+
+- All three inputs must be complex; real inputs should use `torch.addcmul` directly, this operator raises `TypeError`. The native `torch.addcmul` also accepts mixed forms on CPU (e.g. a complex addend with real multiplicands); that input domain is **not** covered here.
+- The three dtypes may differ (e.g. `complex64` mixed with `complex128`); they are promoted via `torch.promote_types` before computing.
+- Follows PyTorch broadcasting; backward reduces gradients back to each input's original shape.
+- Complex multiplication is delegated to [`complex_mul`](#complexmul). `ComplexMul` accepts `float32` only, so only `complex64` maps onto the AscendC kernel (on NPU with `OIL_GAS_OPS_COMPLEX_MUL_IMPL=ascendc`); `complex128` always uses the torch expression.
+- Accuracy: versus CPU `torch.addcmul`, the max absolute error is <= 1e-5 for `complex64` and <= 2e-14 for `complex128` in both forward and backward (floating-point rounding, not bit-exact).
+
+See [`composite-torch/complex_addcmul/README.md`](../../composite-torch/complex_addcmul/README.md) for implementation and usage notes (Chinese).
+
+The operator can be removed once upstream adds complex dtype support to `aclnnAddcmul`; see
+[cann/oil-gas-ops-prospect#29](https://gitcode.com/cann/oil-gas-ops-prospect/issues/29).

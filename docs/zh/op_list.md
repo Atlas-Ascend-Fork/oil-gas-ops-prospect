@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/op_list.md)
 
-当前仓库交付 7 个 AscendC/CANN OPP 算子、5 个 Triton-Ascend Python 算子和 1 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
+当前仓库交付 7 个 AscendC/CANN OPP 算子、5 个 Triton-Ascend Python 算子和 2 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
 
@@ -21,6 +21,7 @@
 | `complex_exp` | Triton-Ascend | `oil_gas_ops_prospect.complex_exp.complex_exp` | [`triton-ascend/complex_exp/`](../../triton-ascend/complex_exp/) | 复数指数 `e^z` | NPU kernel 为 `complex64` | Ascend 910B |
 | `interpolate` | Triton-Ascend | `oil_gas_ops_prospect.interpolate.interpolate` | [`triton-ascend/interpolate/`](../../triton-ascend/interpolate/) | 2D/3D 线性插值；5D fp32 走 Cube GEMM，4D 走原生 | 5D `float32`；4D 由原生实现支持 | Ascend 910B |
 | `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | 支持参数域内的 `nn.Conv3d` / `F.conv3d` 兼容实现（自定义前/反向） | 底层 PyTorch 后端支持且经本仓测试的 dtype | PyTorch 后端支持；已测 CPU / Ascend 910B |
+| `complex_addcmul` | Composite-Torch | `oil_gas_ops_prospect.complex_addcmul.complex_addcmul` | [`composite-torch/complex_addcmul/`](../../composite-torch/complex_addcmul/) | 复数三输入逐元素 `input + value*tensor1*tensor2`，规避 NPU 上 `torch.addcmul` 缺失复数 dtype | `complex64` / `complex128` | PyTorch 后端支持；已测 Ascend 910B |
 
 命名约定：
 
@@ -539,3 +540,37 @@ shape / stride 参数走 `tl.constexpr` 特化。
 - 复数 NPU 用例在 `torch.npu.conv.allow_hf32 = False` 下执行（结束后恢复原值）。默认 HF32 设置下部分梯度相对误差约 `2e-4`，不按完整 fp32 阈值验收。
 
 实现与使用说明详见 [`composite-torch/conv3d_custom/README.md`](../../composite-torch/conv3d_custom/README.md)。
+
+### complex_addcmul
+
+复数三输入逐元素算子，纯 PyTorch 组合实现，用于规避 NPU 上 `torch.addcmul` 不支持复数 dtype 的限制。
+
+#### 数学定义
+
+\[
+\text{out} = \text{input} + \text{value} \cdot \text{tensor1} \cdot \text{tensor2}
+\]
+
+复数乘按 \((a+bi)(c+di) = (ac-bd) + (ad+bc)i\) 展开，在「三路输入均为复数」的输入域内与 `torch.addcmul` 数值等价。
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `input` | 被加项 | 任意 rank | `complex64` / `complex128` |
+| 输入 | `tensor1`, `tensor2` | 两个乘数，支持广播 | 可与 `input` 不同 | `complex64` / `complex128`，不与 `input` 相同时按 `torch.promote_types` 提升 |
+| 输入 | `value` | 乘数标量，默认 `1.0` | 标量 | 实数或复数标量，或 0 维张量（不支持 `requires_grad`） |
+| 输出 | — | 三者广播后 shape | 广播结果 | 三者按 `torch.promote_types` 提升 |
+
+#### 约束
+
+- 三个输入必须都是复数；实数输入应直接用 `torch.addcmul`，本算子抛 `TypeError`。原生 `torch.addcmul` 在 CPU 上还允许「复数被加项 × 实数乘数」等混合形态，该输入域**不在**本算子支持范围内。
+- 三路 dtype 可不同（如 `complex64` 与 `complex128` 混合），按 `torch.promote_types` 提升后计算。
+- 支持 PyTorch 广播规则；反向按标准广播规则把梯度归约回各输入原 shape。
+- 复数乘法委托 [`complex_mul`](#complexmul)。`ComplexMul` 只接受 `float32`，因此仅 `complex64` 在 NPU 且 `OIL_GAS_OPS_COMPLEX_MUL_IMPL=ascendc` 时落到 AscendC 算子；`complex128` 始终走 torch 表达式。
+- 精度：对拍 CPU 原生 `torch.addcmul`，前向/反向最大绝对误差 `complex64` ≤ 1e-5、`complex128` ≤ 2e-14（浮点舍入级，非逐位一致）。
+
+实现与使用说明详见 [`composite-torch/complex_addcmul/README.md`](../../composite-torch/complex_addcmul/README.md)。
+
+上游补齐 `aclnnAddcmul` 的复数 dtype 后本算子可移除，相关需求见
+[cann/oil-gas-ops-prospect#29](https://gitcode.com/cann/oil-gas-ops-prospect/issues/29)。

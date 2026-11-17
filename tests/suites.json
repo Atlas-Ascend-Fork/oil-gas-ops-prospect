@@ -44,6 +44,10 @@
       "script": "tests/composite/conv3d_custom/bench_conv3d_custom_perf.py"
     },
     {
+      "op": "complex_addcmul",
+      "script": "tests/composite/complex_addcmul/verify_complex_addcmul.py"
+    },
+    {
       "op": "complex_reciprocal",
       "script": "tests/triton/complex_reciprocal/verify_complex_reciprocal.py"
     },

@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/api_list.md)
 
-All public APIs are exposed by the Python package `oil_gas_ops_prospect`. That directory does not exist in the source tree: at packaging time `setup.py` explicitly maps `ascendc/pybind/`, `triton-ascend/real_fft/`, `triton-ascend/complex_reciprocal/`, `triton-ascend/complex_exp/`, `triton-ascend/interpolate/`, and `composite-torch/conv3d_custom/` under the same package name, while when running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` discovers them automatically and provides the same import path.
+All public APIs are exposed by the Python package `oil_gas_ops_prospect`. That directory does not exist in the source tree: at packaging time `setup.py` explicitly maps `ascendc/pybind/`, `triton-ascend/real_fft/`, `triton-ascend/complex_reciprocal/`, `triton-ascend/complex_exp/`, `triton-ascend/interpolate/`, `composite-torch/conv3d_custom/`, and `composite-torch/complex_addcmul/` under the same package name, while when running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` discovers them automatically and provides the same import path.
 
 ```text
 oil_gas_ops_prospect
@@ -14,7 +14,8 @@ oil_gas_ops_prospect
 ├── complex_reciprocal    # complex_reciprocal (either z or xr, xi)
 ├── complex_exp           # complex_exp
 ├── interpolate           # interpolate, bilinear, trilinear
-└── conv3d_custom         # Conv3d; functional submodule: conv3d
+├── conv3d_custom         # Conv3d; functional submodule: conv3d
+└── complex_addcmul       # complex_addcmul
 ```
 
 For mathematical definitions, shape / dtype constraints and precision thresholds see the [Operator List](op_list.md).
@@ -548,3 +549,40 @@ Some tests of `triton-ascend/real_fft` can cross-validate against an implementat
 | `OIL_GAS_OPS_SPECTRAL_CONV` | `<module>:<class>` | selects the spectral conv implementation to compare against |
 
 For details see [`triton-ascend/real_fft/README.md`](../../triton-ascend/real_fft/README.md) (Chinese).
+
+---
+
+## `oil_gas_ops_prospect.complex_addcmul`
+
+### `complex_addcmul`
+
+```python
+from oil_gas_ops_prospect.complex_addcmul import complex_addcmul
+
+def complex_addcmul(
+    input: torch.Tensor,
+    tensor1: torch.Tensor,
+    tensor2: torch.Tensor,
+    value: float = 1.0,
+) -> torch.Tensor
+```
+
+Complex three-input elementwise operator `input + value * tensor1 * tensor2`, semantically equivalent to `torch.addcmul`. Implemented purely by composing PyTorch ops; complex multiplication is delegated to [`complex_mul`](#oil_gas_ops_prospectcomplex_mul).
+
+Intended as a workaround for the missing complex dtype support in NPU `torch.addcmul` (`aclnnAddcmul` reports `161002`; `DT_COMPLEX64` is not in its supported dtype list).
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `input` | `torch.Tensor` | Addend, `complex64` / `complex128` |
+| `tensor1`, `tensor2` | `torch.Tensor` | Multiplicands; may differ in shape from `input` (standard PyTorch broadcasting) |
+| `value` | real or complex scalar / 0-dim `torch.Tensor` (no `requires_grad`) | Multiplier, default `1.0`; this operator returns no gradient for `value` |
+
+Returns the broadcast-shape complex tensor, with dtype promoted via `torch.promote_types`.
+
+- **Complex only**: for real dtypes use `torch.addcmul` directly; this operator raises `TypeError`. The mixed forms native `torch.addcmul` accepts (e.g. complex times real) are not covered either. The three dtypes may differ and are promoted via `torch.promote_types`.
+- **autograd**: backward follows the PyTorch complex convention `dL/dt = conj(value) * grad_output * conj(t)`, reducing broadcast dimensions back to each input's original shape.
+- **Implementation path**: multiplication is delegated to `complex_mul`. `ComplexMul` accepts `float32` only, so only `complex64` lands on the AscendC kernel (on NPU with `OIL_GAS_OPS_COMPLEX_MUL_IMPL=ascendc` or `auto`); `complex128` and all other cases use the equivalent torch expression.
+- **Accuracy**: versus CPU `torch.addcmul`, the max absolute error is <= 1e-5 for `complex64` and <= 2e-14 for `complex128` in forward and backward (floating-point rounding, not bit-exact).
+
+This operator can be removed once upstream adds complex dtype support to `aclnnAddcmul`; see
+[cann/oil-gas-ops-prospect#29](https://gitcode.com/cann/oil-gas-ops-prospect/issues/29).

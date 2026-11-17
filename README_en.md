@@ -121,7 +121,7 @@ Operator precision, performance and device memory on the NPU must be verified on
 
 ## 📖 Supported API List
 
-The current delivery contains 7 AscendC operators, 5 Triton-Ascend operators and 1 Composite-Torch operator:
+The current delivery contains 7 AscendC operators, 5 Triton-Ascend operators and 2 Composite-Torch operators:
 
 | Name / OpType | Backend / Deliverable | Function | dtype / format |
 |---------------|-----------------------|----------|----------------|
@@ -138,6 +138,7 @@ The current delivery contains 7 AscendC operators, 5 Triton-Ascend operators and
 | [`complex_exp`](triton-ascend/complex_exp/) | Triton-Ascend / Python whl | complex exponential `e^z` (custom backward) | the NPU kernel is `complex64`; falls back to PyTorch outside an NPU environment |
 | [`interpolate`](triton-ascend/interpolate/) | Triton-Ascend / Python whl | 2D/3D linear interpolation; 5D fp32 uses Cube GEMM, 4D uses the native kernel | `float32` for 5D; 4D is supported by the native path |
 | [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | compatible with `nn.Conv3d` within the supported parameter domain (custom forward/backward, interoperable state_dict keys) | dtypes supported by the underlying PyTorch backend and tested here |
+| [`complex_addcmul`](composite-torch/complex_addcmul/) | Composite-Torch / Python whl | complex three-input `input + value*t1*t2`, works around the missing complex dtypes in NPU `torch.addcmul` | `complex64` / `complex128` |
 
 For `Conv3d` / `conv3d`, `kernel_size`, `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence, and `groups` is an `int`; the module supports `zeros` / `reflect` / `replicate` / `circular`. The string padding values `"same"` / `"valid"` are supported (`"same"` requires a stride of 1), while the constructor does not provide the `device` / `dtype` keyword arguments of native `nn.Conv3d`.
 
@@ -159,7 +160,8 @@ oil-gas-ops-prospect/
 │   ├── interpolate/        #   interpolate (5D Cube GEMM, 4D native)
 │   └── tools/              #   AOT compilation check
 ├── composite-torch/        # Composite-Torch operators (pure PyTorch composition, packaged as oil_gas_ops_prospect.<op>)
-│   └── conv3d_custom/      #   Conv3d (compatible with nn.Conv3d within the supported parameter domain)
+│   ├── conv3d_custom/      #   Conv3d (compatible with nn.Conv3d within the supported parameter domain)
+│   └── complex_addcmul/    #   complex_addcmul (complex three-input elementwise)
 ├── tests/                   # UT / ST / Python precision and performance; operators/ no longer holds tests
 │   ├── ut/op_host/         #   tiling googletest
 │   ├── st/aclnn<OpType>/   #   two-phase aclnn system tests
@@ -171,7 +173,8 @@ oil-gas-ops-prospect/
 │   ├── triton/complex_reciprocal/ # complex reciprocal precision (CPU fallback + NPU verify)
 │   ├── triton/complex_exp/ # complex exponential precision (CPU fallback + NPU verify)
 │   ├── triton/interpolate/ #   2D/3D interpolation verification (CPU fallback + NPU verify + report)
-│   └── composite/conv3d_custom/   # Conv3d / conv3d precision and performance baseline
+│   ├── composite/conv3d_custom/   # Conv3d / conv3d precision and performance baseline
+│   └── composite/complex_addcmul/ # complex_addcmul precision and backward
 ├── examples/               # Python examples + C++ samples under examples/aclnn/<op>/
 ├── scripts/                # helper scripts
 ├── SKILLS/                 # reusable operator development skills (optimization / diagnosis / repair), split by backend

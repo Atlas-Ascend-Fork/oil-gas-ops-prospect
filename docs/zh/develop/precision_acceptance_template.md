@@ -85,7 +85,7 @@
 | Triton CPU 回退精度 | `python3 -m pytest tests/triton/real_fft -q` | | | |
 | Triton AOT 编译检查 | `python3 triton-ascend/tools/aot_compile_check.py` | | | |
 | Composite-Torch CPU 精度 | `bash build.sh -u --composite` | | | |
-| Composite-Torch NPU 精度 / 性能 | `python3 tests/composite/conv3d_custom/bench_conv3d_custom_perf.py --mode all` | | | |
+| Composite-Torch NPU 精度 / 性能 | `python3 tests/composite/conv3d_custom/bench_conv3d_custom_perf.py --mode all`<br>`python3 tests/composite/complex_addcmul/verify_complex_addcmul.py --mode all` | | | |
 
 要求：全量 UT 通过且日志无 ERROR。
 

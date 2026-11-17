@@ -72,10 +72,14 @@ oil-gas-ops-prospect/
 │
 ├── composite-torch/                            # ★ Composite-Torch 算子（纯 PyTorch 组合，打包为 oil_gas_ops_prospect.<op>）
 │   ├── README.md                               #   轨道说明与接入约定
-│   └── conv3d_custom/                          #   Conv3d / conv3d（支持参数域内兼容 nn.Conv3d / F.conv3d）
-│       ├── __init__.py                         #     对外导出 Conv3d
-│       ├── conv3d.py                           #     Conv3d 模块（nn.Module 形态，NPU 回退）
-│       ├── functional.py                       #     conv3d 函数式入口 + autograd 实现
+│   ├── conv3d_custom/                          #   Conv3d / conv3d（支持参数域内兼容 nn.Conv3d / F.conv3d）
+│   │   ├── __init__.py                         #     对外导出 Conv3d
+│   │   ├── conv3d.py                           #     Conv3d 模块（nn.Module 形态，NPU 回退）
+│   │   ├── functional.py                       #     conv3d 函数式入口 + autograd 实现
+│   │   └── README.md                           #     算子说明
+│   └── complex_addcmul/                        #   complex_addcmul（复数三输入逐元素）
+│       ├── __init__.py                         #     对外导出 complex_addcmul
+│       ├── complex_addcmul.py                  #     autograd.Function 封装 + 公开 API
 │       └── README.md                           #     算子说明
 │
 ├── tests/                                       # ★ 全部测试（operators/ 不再放 tests）
@@ -93,6 +97,7 @@ oil-gas-ops-prospect/
 │   │   ├── complex_mul/                        #   NPU 精度/性能对比测试
 │   │   └── fused_bias_softmax/                 #   融合注意力 NPU 精度/性能对比
 │   ├── composite/conv3d_custom/                #   Conv3d / conv3d CPU 精度与性能基准
+│   ├── composite/complex_addcmul/              #   complex_addcmul CPU/NPU 精度与反向
 │   └── triton/
 │       ├── real_fft/                           #   rFFT / iRFFT 精度（含 CPU 回退路径）
 │       ├── complex_reciprocal/                 #   复数倒数精度（CPU 回退 + NPU verify）
@@ -148,6 +153,7 @@ oil-gas-ops-prospect/
 - `oil_gas_ops_prospect.complex_reciprocal` → `triton-ascend/complex_reciprocal/`
 - `oil_gas_ops_prospect.complex_exp` → `triton-ascend/complex_exp/`
 - `oil_gas_ops_prospect.conv3d_custom` → `composite-torch/conv3d_custom/`
+- `oil_gas_ops_prospect.complex_addcmul` → `composite-torch/complex_addcmul/`
 
 直接用仓内源码跑、没装 whl 时，`scripts/local_pkg.py`（examples / pytest `conftest.py` 会自动激活）把上述目录挂到同一导入名下，因此装包与不装包时调用方式一致；`composite-torch/` 下的算子由该脚本自动发现，无需手工登记。验证已安装 whl 时置 `OIL_GAS_OPS_WHL_TEST=1`（`tests/run_whl_tests.sh` 已处理），避免测到仓内源码。
 

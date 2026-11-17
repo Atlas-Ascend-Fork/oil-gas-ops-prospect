@@ -38,7 +38,7 @@ bash build.sh --opensource-report
 | **pybind 单测** | 封装层不变量（输出别名、输入物化等），monkeypatch 扩展，pytest 直跑 | `tests/ascendc/<op>/test_*_pybind_alias.py` 等 | 否 |
 | **性能** | Python 计时、加速比 | 同上 `--mode perf` | **是** |
 | **Triton CPU** | rFFT / 复数倒数 / 复数指数 / 插值 CPU 回退精度（pytest） | `tests/triton/real_fft/`、`tests/triton/complex_reciprocal/`、`tests/triton/complex_exp/`、`tests/triton/interpolate/` | 否 |
-| **Composite CPU** | Conv3d / conv3d 前反向精度与取值组合（pytest） | `tests/composite/conv3d_custom/` | 否 |
+| **Composite CPU** | Conv3d / conv3d、complex_addcmul 前反向精度与取值组合（pytest） | `tests/composite/conv3d_custom/`、`tests/composite/complex_addcmul/` | 否 |
 | **Triton AOT** | kernel 分支能编译 | `triton-ascend/tools/aot_compile_check.py` | 否 |
 | **Triton 大形态 / 微基准** | `128^3` 与业务 5D 精度，以及开源报告 5.3 的 FFT 计时 | `tests/triton/real_fft/verify_triton_fft_real_128_3d.py`、`bench_opensource_perf.py` | **是** |
 | **开源门禁** | 文档清单与章节关键词、`build.sh -h`、OPP vendor、公开接口 CPU 冒烟 | `tests/opensource_gates.py` | 安装痕迹要 CANN |
@@ -48,11 +48,13 @@ bash build.sh --opensource-report
 - **UT** = UT-host + UT-device。切分不依赖 NPU；「UT 要上板」指的是 UT-device 必须在 NPU 上把算子跑起来。
 - **ST** 比 UT-device 更重：按 `cases.json` 循环多个 shape，并和 golden 比。
 - **精度 / 性能** 走 Python API（pybind），不是 C++ aclnn 那条路径。脚本按算子登记在
-  `tests/suites.json` 的 `npu_python`，并且必须接受 `--mode precision|perf` 与 `--build-ext`。
+  `tests/suites.json` 的 `npu_python`，并且必须接受 `--mode {all,precision,perf}`（至少 precision 与 perf）与 `--build-ext`；
+  精度结论必须能通过退出码反映（任一 case 超阈值即返回非 0）。
   `conv3d_gelu` 登记为 `tests/ascendc/conv3d_gelu/test_conv3d_gelu_npu.py`：
   `--mode precision` 只查精度并以精度决定退出码，`--mode perf` 只计时且退出码为 0。
   composite 算子经同一协议接入
-  （如 `tests/composite/conv3d_custom/bench_conv3d_custom_perf.py`）。
+  （如 `tests/composite/conv3d_custom/bench_conv3d_custom_perf.py`、
+  `tests/composite/complex_addcmul/verify_complex_addcmul.py`）。
   `ACLNN_CACHE_LIMIT=0` 必须在启动 Python 之前设置，不能等 `conv3d_gelu` 被 import 再补。
 - Python 示例 `examples/*.py`、whl 冒烟见文末。Triton 大形态已纳入全量 `-u`。
 
@@ -129,7 +131,8 @@ tests/
 ├── triton/real_fft/                     # Triton CPU（及可选 NPU verify）
 ├── triton/interpolate/                  # 2D/3D 插值 CPU 回退 + NPU verify
 │   └── report/                          # 精度/性能结果、机型与复现命令
-└── composite/conv3d_custom/             # Composite CPU（Conv3d / conv3d）
+├── composite/conv3d_custom/             # Composite CPU（Conv3d / conv3d）
+└── composite/complex_addcmul/           # Composite CPU/NPU（complex_addcmul 精度与反向）
 
 examples/aclnn/<op>/                     # UT-device（C++ 两段式小 launch）
 ```

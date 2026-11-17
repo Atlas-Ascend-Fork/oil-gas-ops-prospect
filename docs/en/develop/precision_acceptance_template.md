@@ -85,7 +85,7 @@ Measurement notes (warm-up count, iteration count, whether synchronized):
 | Triton CPU fallback precision | `python3 -m pytest tests/triton/real_fft -q` | | | |
 | Triton AOT compile check | `python3 triton-ascend/tools/aot_compile_check.py` | | | |
 | Composite-Torch CPU precision | `bash build.sh -u --composite` | | | |
-| Composite-Torch NPU precision / performance | `python3 tests/composite/conv3d_custom/bench_conv3d_custom_perf.py --mode all` | | | |
+| Composite-Torch NPU precision / performance | `python3 tests/composite/conv3d_custom/bench_conv3d_custom_perf.py --mode all`<br>`python3 tests/composite/complex_addcmul/verify_complex_addcmul.py --mode all` | | | |
 
 Requirement: the full UT set passes and the logs contain no ERROR.
 

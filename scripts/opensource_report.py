@@ -210,6 +210,7 @@ class Statuses:
     prec_gelu: str = NA
     prec_interp: str = NA
     prec_cexp: str = NA
+    prec_caddcmul: str = NA
     perf_cm: str = NA
     perf_fused: str = NA
     perf_conv3d: str = NA
@@ -217,6 +218,7 @@ class Statuses:
     perf_gelu: str = NA
     perf_interp: str = NA
     perf_cexp: str = NA
+    perf_caddcmul: str = NA
     fft_v: str = NA
     fft_p: str = NA
     docs: str = NA
@@ -249,6 +251,7 @@ class PerfSummary:
     interp_bwd: list[PerfRow] = field(default_factory=list)
     interp_fwdbwd: list[PerfRow] = field(default_factory=list)
     cexp_fwd: list[PerfRow] = field(default_factory=list)
+    caddcmul_fwd: list[PerfRow] = field(default_factory=list)
     gmean_txt: str = "未解析"
     fft_metric: str = ""
 
@@ -276,6 +279,7 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
         prec_gelu=job_status(jobs, "conv3d_gelu_precision"),
         prec_interp=job_status(jobs, "interpolate_precision"),
         prec_cexp=job_status(jobs, "complex_exp_precision"),
+        prec_caddcmul=job_status(jobs, "complex_addcmul_precision"),
         perf_cm=job_status(jobs, "complex_mul_perf"),
         perf_fused=job_status(jobs, "fused_bias_softmax_perf"),
         perf_conv3d=job_status(jobs, "conv3d_custom_perf"),
@@ -283,6 +287,7 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
         perf_gelu=job_status(jobs, "conv3d_gelu_perf"),
         perf_interp=job_status(jobs, "interpolate_perf"),
         perf_cexp=job_status(jobs, "complex_exp_perf"),
+        perf_caddcmul=job_status(jobs, "complex_addcmul_perf"),
         fft_v=combine(
             job_status(jobs, "fft_npu_verify"), job_status(jobs, "fft_npu_verify_5d")
         ),
@@ -313,6 +318,7 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
     gelu_rows = parse_perf_rows(job_log(jobs, "conv3d_gelu_perf"))
     interp_rows = parse_perf_rows(job_log(jobs, "interpolate_perf"))
     cexp_rows = parse_perf_rows(job_log(jobs, "complex_exp_perf"))
+    caddcmul_rows = parse_perf_rows(job_log(jobs, "complex_addcmul_perf"))
     fused_fwd = [r for r in fused_rows if r[0].startswith("fwd ")]
     fused_bwd = [r for r in fused_rows if r[0].startswith("bwd ")]
     gmean = geo_mean(speedup_vals(fft_rows))
@@ -343,6 +349,7 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
             r for r in interp_rows if r[0].startswith("interpolate fwd+bwd ")
         ],
         cexp_fwd=[r for r in cexp_rows if r[0].startswith("exp fwd")],
+        caddcmul_fwd=[r for r in caddcmul_rows if r[0].startswith("addcmul fwd")],
         gmean_txt=f"{gmean:.2f}x" if gmean else "未解析",
         fft_metric=fft_metric_text(fft_rows),
     )
@@ -430,6 +437,15 @@ def build_features(st: Statuses) -> list[tuple[str, str, str, str, str, str, str
             st.prec_cexp,
             st.perf_cexp,
             st.triton,
+            st.install,
+        ),
+        (
+            "complex_addcmul",
+            combine(st.composite, st.prec_caddcmul, st.perf_caddcmul, st.api, st.install),
+            st.composite,
+            st.prec_caddcmul,
+            st.perf_caddcmul,
+            st.composite,
             st.install,
         ),
         (
@@ -544,6 +560,13 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
             'NPU 相对 CPU `F.gelu(F.conv3d, approximate="tanh")` 相对误差 `< 1e-5`，输入梯度最大绝对误差 `< 1e-4`',
         ),
         (
+            "complex_addcmul 前反向精度",
+            combine(st.composite, st.prec_caddcmul),
+            "对拍 CPU 原生 `torch.addcmul`（同 shape / 广播 / 4D 体数据，`value` 取实数与复数）："
+            "前向与反向最大绝对误差 `complex64` <= 1e-5、`complex128` <= 2e-14；"
+            "`complex128` 与各梯度路径均覆盖",
+        ),
+        (
             "Conv3d / conv3d NPU 精度与性能",
             combine(st.prec_conv3d, st.perf_conv3d),
             "测试脚本列出的 NPU float32 形态对拍：支持参数域内的自定义前/反向 vs 原生（L2 相对误差阈值 `1e-5`；"
@@ -575,7 +598,7 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
         (
             "公开接口冒烟",
             st.api,
-            "`complex_mul` / `fused_bias_softmax` / `fused_softmax_grad` / `conv3d_gelu` / `real_rfft` / `real_irfft` 可导入；"
+            "`complex_mul` / `fused_bias_softmax` / `fused_softmax_grad` / `conv3d_gelu` / `real_rfft` / `real_irfft` / `complex_addcmul` 可导入；"
             "CPU 回退前反向可跑通",
         ),
         (
@@ -642,6 +665,9 @@ def section_overview(cmd: str, ok: bool, rate: str) -> list[str]:
         "支持一阶 autograd、大张量分块与 CPU 回退，4D 使用原生实现 |",
         "| 11 | Conv3DGelu | `gelu_tanh(conv3d(x, weight, bias))`，`float32` / `NCDHW`，`groups=1`；"
         "1×1 直写，其余形状按一个输出平面切，反向不保存预激活 |",
+        "| 12 | complex_addcmul | 复数三输入逐元素 `input + value*t1*t2`（纯 PyTorch 组合，"
+        "复数乘委托 `ComplexMul`），规避 NPU 上 `torch.addcmul` 缺复数 dtype；"
+        "支持广播、实数/复数 `value` 与 autograd |",
         "",
         "`attention_core(q, k, v, bias1, bias2)` 为 FusedBiasSoftmax 与 FusedSoftmaxGrad 按 openfold "
         "注意力语义的组合封装，随上述融合算子一并验证。",
@@ -828,6 +854,10 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
         "| 算子微基准 | 不涉及 | complex_exp | 同设备 torch `exp`（aclnnExp） | "
         f"前向 {speedup_span(perf.cexp_fwd)} | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_cexp)} | 无 |",
+        "| 算子微基准 | 不涉及 | complex_addcmul | 同设备等价 torch 表达式 `input + value*t1*t2`"
+        "（NPU 原生 `torch.addcmul` 对复数报错） | "
+        f"前向 {speedup_span(perf.caddcmul_fwd)} | "
+        f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_caddcmul)} | 多次 torch 小算子组合，非融合 kernel |",
         "| 算子微基准 | 不涉及 | complex_reciprocal | 同设备 torch `1/z`（aclnnReciprocal）与先构造 complex64 的原始写法 | "
         f"前向 {speedup_span(perf.crecip_fwd)}；端到端融合 {speedup_span(perf.crecip_e2e)} | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_crecip)} | 无 |",
@@ -852,6 +882,9 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
 def section_perf_tables(perf: PerfSummary) -> list[str]:
     lines = perf_md_table(
         "complex_exp 前向（相对同设备 torch exp）", perf.cexp_fwd
+    )
+    lines += perf_md_table(
+        "complex_addcmul 前向（相对同设备等价 torch 表达式）", perf.caddcmul_fwd
     )
     lines += perf_md_table(
         "complex_reciprocal 前向（相对同设备 torch 1/z）", perf.crecip_fwd

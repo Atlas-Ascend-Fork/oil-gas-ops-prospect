@@ -121,7 +121,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 
 ## 📖 接口支持清单
 
-当前交付 7 个 AscendC 算子、5 个 Triton-Ascend 算子和 1 个 Composite-Torch 算子：
+当前交付 7 个 AscendC 算子、5 个 Triton-Ascend 算子和 2 个 Composite-Torch 算子：
 
 | 名称 / OpType | 后端 / 交付物 | 功能 | dtype / format |
 |---------------|---------------|------|----------------|
@@ -138,6 +138,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 | [`complex_exp`](triton-ascend/complex_exp/) | Triton-Ascend / Python whl | 复数指数 `e^z`（自定义反向） | NPU kernel 为 `complex64`，非 NPU 环境回退到 PyTorch |
 | [`interpolate`](triton-ascend/interpolate/) | Triton-Ascend / Python whl | 2D/3D 线性插值；5D fp32 走 Cube GEMM，4D 走原生 | 5D `float32`；4D 由原生实现支持 |
 | [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | 支持参数域内兼容 `nn.Conv3d`（自定义前/反向，state_dict key 互通） | 底层 PyTorch 后端支持且经本仓测试的 dtype |
+| [`complex_addcmul`](composite-torch/complex_addcmul/) | Composite-Torch / Python whl | 复数三输入 `input + value*t1*t2`，规避 NPU 上 `torch.addcmul` 缺复数 dtype | `complex64` / `complex128` |
 
 `Conv3d` / `conv3d` 的 `kernel_size`、`stride`、数值 `padding`、`dilation` 支持 `int` 或 3 元素序列，`groups` 为 `int`；模块支持 `zeros` / `reflect` / `replicate` / `circular`。字符串 `padding="same"` / `"valid"` 受支持（`"same"` 要求 stride 为 1），构造器不提供原生 `nn.Conv3d` 的 `device` / `dtype` 关键字。
 
@@ -159,7 +160,8 @@ oil-gas-ops-prospect/
 │   ├── interpolate/        #   interpolate（5D Cube GEMM，4D 原生）
 │   └── tools/              #   AOT 编译检查
 ├── composite-torch/        # Composite-Torch 算子（纯 PyTorch 组合，打包为 oil_gas_ops_prospect.<op>）
-│   └── conv3d_custom/      #   Conv3d（支持参数域内兼容 nn.Conv3d）
+│   ├── conv3d_custom/      #   Conv3d（支持参数域内兼容 nn.Conv3d）
+│   └── complex_addcmul/    #   complex_addcmul（复数三输入逐元素）
 ├── tests/                   # UT / ST / Python 精度性能；operators/ 不再放测试
 │   ├── ut/op_host/         #   tiling googletest
 │   ├── st/aclnn<OpType>/   #   两段式 aclnn 系统测试
@@ -171,7 +173,8 @@ oil-gas-ops-prospect/
 │   ├── triton/complex_reciprocal/ # 复数倒数精度（CPU 回退 + NPU verify）
 │   ├── triton/complex_exp/ # 复数指数精度（CPU 回退 + NPU verify）
 │   ├── triton/interpolate/ #   2D/3D 插值验证（CPU 回退 + NPU verify + report）
-│   └── composite/conv3d_custom/   # Conv3d / conv3d 精度与性能基准
+│   ├── composite/conv3d_custom/   # Conv3d / conv3d 精度与性能基准
+│   └── composite/complex_addcmul/ # complex_addcmul 精度与反向
 ├── examples/               # Python 示例 + examples/aclnn/<op>/ C++ 样例
 ├── scripts/                # 辅助脚本
 ├── SKILLS/                 # 可复用的算子开发技能（优化 / 定位 / 修复），按后端拆开

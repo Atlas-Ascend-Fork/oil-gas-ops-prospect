@@ -104,9 +104,10 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "CustomGRUV2",
             "custom_gru_v2",
             "aclnnCustomGRUV2",
+            "complex_addcmul",
             "数学定义",
         ),
-        "13 个已交付算子的数学定义、输入输出与约束",
+        "14 个已交付算子的数学定义、输入输出与约束",
     ),
     (
         "docs/zh/api_list.md",
@@ -128,6 +129,7 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "aclnnConv3dGeluCustom",
             "custom_gru_v2",
             "aclnnCustomGRUV2",
+            "complex_addcmul",
         ),
         "Python 公开接口与 aclnn 两段式入口、环境变量",
     ),
@@ -251,6 +253,7 @@ def check_api() -> int:
     from oil_gas_ops_prospect.complex_exp import complex_exp
     from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
     from oil_gas_ops_prospect.interpolate import interpolate
+    from oil_gas_ops_prospect.complex_addcmul import complex_addcmul
     from oil_gas_ops_prospect.real_fft import real_irfft, real_rfft
 
     zc = torch.randn(2, 3) + 1j * torch.randn(2, 3)
@@ -323,10 +326,17 @@ def check_api() -> int:
     rec = real_irfft(xr, xi, n=32, dim=-1, norm="ortho")
     if rec.shape != sig.shape:
         return _fail("real_irfft shape")
+
+    za = torch.randn(2, 3) + 1j * torch.randn(2, 3)
+    zc = complex_addcmul(za, za, za, value=1 + 2j)
+    ref = torch.addcmul(za, za, za, value=1 + 2j)
+    if zc.shape != ref.shape or not torch.allclose(zc, ref, rtol=0, atol=1e-5):
+        return _fail("complex_addcmul cpu forward")
     print(
         "PASS public API CPU fallback: complex_mul fused_bias_softmax "
         "fused_softmax_grad attention_core real_rfft real_irfft complex_reciprocal "
-        "complex_exp interpolate Conv3d conv3d conv3d_gelu custom_gru_v2"
+        "complex_exp interpolate Conv3d conv3d conv3d_gelu custom_gru_v2 "
+        "complex_addcmul"
     )
     return 0
 

@@ -6,6 +6,7 @@
 
 ### Added
 
+- Composite-Torch：`complex_addcmul`，复数三输入逐元素 `input + value*tensor1*tensor2`，纯 PyTorch 组合实现，复数乘委托 `complex_mul`。用于规避 NPU 上 `torch.addcmul` 不支持 `complex64` / `complex128` 的限制（`aclnnAddcmul` 报 `161002`，`DT_COMPLEX64` 不在支持列表内），支持广播、`value` 取实数或复数标量与 autograd（`value` 本身不参与求导）；`complex128` 按 `torch.promote_types` 与 `complex64` 混合提升。对拍 CPU 原生 `torch.addcmul` 的最大绝对误差：`complex64` ≤ 1e-5、`complex128` ≤ 2e-14（均为浮点舍入级，非逐位一致）。
 - AscendC：`Conv3DGelu`，cube conv3d 与 vector tanh-GELU 融合，float32 / NCDHW。前向不保存二者之间的预激活。反向是 `Conv3DGeluGrad`：重算 conv3d，再做 GELU 反向，再做 conv3d 反向。
 - 融合注意力算子 `FusedBiasSoftmax` / `FusedSoftmaxGrad`，以及组合接口 `attention_core`。
 - 新增 Triton-Ascend 复数算子 `complex_reciprocal`（复数倒数 `1/z`，支持实虚分离入口与自定义反向）与 `complex_exp`（复数指数 `e^z`，自定义反向），替代 NPU 上走 Ai_Cpu 的 `aclnnReciprocal` / `aclnnExp`。

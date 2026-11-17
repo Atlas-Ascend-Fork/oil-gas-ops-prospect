@@ -72,10 +72,14 @@ oil-gas-ops-prospect/
 │
 ├── composite-torch/                            # ★ Composite-Torch operators (pure PyTorch composition, packaged as oil_gas_ops_prospect.<op>)
 │   ├── README.md                               #   track overview and integration conventions
-│   └── conv3d_custom/                          #   Conv3d / conv3d (compatible with nn.Conv3d / F.conv3d within the supported parameter domain)
-│       ├── __init__.py                         #     exports Conv3d
-│       ├── conv3d.py                           #     Conv3d module (nn.Module form, NPU fallback)
-│       ├── functional.py                       #     conv3d functional entry + autograd implementation
+│   ├── conv3d_custom/                          #   Conv3d / conv3d (compatible with nn.Conv3d / F.conv3d within the supported parameter domain)
+│   │   ├── __init__.py                         #     exports Conv3d
+│   │   ├── conv3d.py                           #     Conv3d module (nn.Module form, NPU fallback)
+│   │   ├── functional.py                       #     conv3d functional entry + autograd implementation
+│   │   └── README.md                           #     operator notes
+│   └── complex_addcmul/                        #   complex_addcmul (complex three-input elementwise)
+│       ├── __init__.py                         #     exports complex_addcmul
+│       ├── complex_addcmul.py                  #     autograd.Function wrapper + public API
 │       └── README.md                           #     operator notes
 │
 ├── tests/                                       # ★ all tests (operators/ no longer holds tests)
@@ -93,6 +97,7 @@ oil-gas-ops-prospect/
 │   │   ├── complex_mul/                        #   NPU precision/performance comparison tests
 │   │   └── fused_bias_softmax/                 #   fused attention NPU precision/performance comparison
 │   ├── composite/conv3d_custom/                #   Conv3d / conv3d CPU precision and performance baseline
+│   ├── composite/complex_addcmul/              #   complex_addcmul CPU/NPU precision and backward
 │   └── triton/
 │       ├── real_fft/                           #   rFFT / iRFFT precision (includes the CPU fallback path)
 │       ├── complex_reciprocal/                 #   complex reciprocal precision (CPU fallback + NPU verify)
@@ -148,6 +153,7 @@ All three are exposed through the unified Python package `oil_gas_ops_prospect` 
 - `oil_gas_ops_prospect.complex_reciprocal` → `triton-ascend/complex_reciprocal/`
 - `oil_gas_ops_prospect.complex_exp` → `triton-ascend/complex_exp/`
 - `oil_gas_ops_prospect.conv3d_custom` → `composite-torch/conv3d_custom/`
+- `oil_gas_ops_prospect.complex_addcmul` → `composite-torch/complex_addcmul/`
 
 When running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` (activated automatically by the examples and by the pytest `conftest.py`) maps those directories onto the same import name, so call sites are identical whether or not the package is installed. Operators under `composite-torch/` are discovered automatically by that script and need no manual registration. When validating an installed whl, set `OIL_GAS_OPS_WHL_TEST=1` (`tests/run_whl_tests.sh` already handles this) so the in-repo sources are not tested by accident.
 

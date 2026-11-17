@@ -66,6 +66,7 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     from oil_gas_ops_prospect.complex_mul import complex_mul, torch_complex_mul, torch_complex_mul_grad
     from oil_gas_ops_prospect.complex_exp import complex_exp
     from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
+    from oil_gas_ops_prospect.complex_addcmul import complex_addcmul
     from oil_gas_ops_prospect.conv3d_custom import Conv3d
     from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
     from oil_gas_ops_prospect.fused_bias_softmax import (
@@ -85,6 +86,7 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     assert callable(complex_exp)
     assert callable(Conv3d)
     assert callable(conv3d)
+    assert callable(complex_addcmul)
     assert callable(fused_bias_softmax)
     assert callable(fused_softmax_grad)
     assert callable(attention_core)
@@ -288,6 +290,38 @@ def test_conv3d_custom_whl_cpu_forward_backward():
     assert y.shape == (1, 4, 5, 5, 5)
     assert xm.grad is not None and xm.grad.shape == xm.shape
     assert m.weight.grad is not None and m.weight.grad.shape == m.weight.shape
+
+
+def test_complex_addcmul_whl_cpu_forward_backward():
+    """CPU 上验证 complex_addcmul 前反向接线与数学一致性。"""
+    from oil_gas_ops_prospect.complex_addcmul import complex_addcmul
+
+    torch.manual_seed(15)
+
+    def _mk(shape, dtype):
+        rd = torch.float32 if dtype == torch.complex64 else torch.float64
+        return torch.complex(
+            torch.randn(shape, dtype=rd), torch.randn(shape, dtype=rd)
+        )
+
+    for dtype in (torch.complex64, torch.complex128):
+        tol = 1e-5 if dtype == torch.complex64 else 2e-14
+        leaves = [_mk((2, 3), dtype) for _ in range(3)]
+        ref_leaves = [t.detach().clone().requires_grad_(True) for t in leaves]
+        ref = torch.addcmul(*ref_leaves, value=1 + 2j)
+        out = complex_addcmul(*leaves, value=1 + 2j)
+        assert out.dtype == dtype and out.shape == ref.shape
+        assert torch.allclose(out, ref, rtol=0, atol=tol)
+
+        gout = _mk((2, 3), dtype)
+        got_leaves = [t.detach().clone().requires_grad_(True) for t in leaves]
+        got_grads = torch.autograd.grad(
+            complex_addcmul(*got_leaves, value=1 + 2j), got_leaves, gout
+        )
+        ref_grads = torch.autograd.grad(ref, ref_leaves, gout)
+        for g, w in zip(got_grads, ref_grads):
+            assert g.shape == w.shape
+            assert torch.allclose(g, w, rtol=0, atol=tol)
 
 
 def test_complex_mul_npu_extension_import_when_required():
