@@ -17,15 +17,11 @@
 
 ::
 
-    forward:  y = softmax(x + bias1(广播/全尺寸) + bias2, -1)
-    backward: g = go @ V^T; probs ← probs ⊙ (g − rowsum(probs⊙g))
+    forward:  y = softmax(x + bias1(广播/全尺寸) + bias2, -1)，原地写回 x
+    backward: g = go @ V^T; probs ← probs ⊙ (g − rowsum(probs⊙g))，原地覆写 probs
     attention_core: 上述两算子按 openfold attention_core 语义的组合封装
 
-仅当调用者输入连续且成功进入 NPU AscendC 融合路径时，前向原地写回调用者的 ``x``，
-反向原地覆写调用者的 ``probs``。非连续输入只会覆写 ``contiguous()`` 副本，参考回退非原地。
-
 环境变量：
-
 - ``OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL=torch|ascendc|auto``（默认 torch）
 - ``OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX=1`` 强制要求自定义算子
 """
@@ -84,27 +80,58 @@ def torch_fused_softmax_grad(probs, grad_output, values):
 
 def _ascendc_fused_bias_softmax(x, bias1, bias2):
     ext = _load_extension()
+    x_work = x.contiguous()
+    out = torch.empty_like(x_work)
+    ext.fused_bias_softmax_forward_out(
+        x_work,
+        out,
+        None if bias1 is None else bias1.contiguous(),
+        None if bias2 is None else bias2.contiguous(),
+    )
+    return out
+
+
+def _ascendc_fused_softmax_grad(probs, grad_output, values):
+    ext = _load_extension()
+    probs_work = probs.contiguous()
+    out = torch.empty_like(probs_work)
+    ext.fused_softmax_grad_backward_out(
+        probs_work,
+        grad_output.contiguous(),
+        values.contiguous(),
+        out,
+    )
+    return out
+
+
+def _ascendc_fused_bias_softmax_(x, bias1, bias2):
+    if not x.is_contiguous():
+        raise ValueError("fused_bias_softmax_: x must be contiguous")
+    ext = _load_extension()
     return ext.fused_bias_softmax_forward(
-        x.contiguous(),
+        x,
         None if bias1 is None else bias1.contiguous(),
         None if bias2 is None else bias2.contiguous(),
     )
 
 
-def _ascendc_fused_softmax_grad(probs, grad_output, values):
+def _ascendc_fused_softmax_grad_(probs, grad_output, values):
+    if not probs.is_contiguous():
+        raise ValueError("fused_softmax_grad_: probs must be contiguous")
     ext = _load_extension()
     return ext.fused_softmax_grad_backward(
-        probs.contiguous(), grad_output.contiguous(), values.contiguous()
+        probs,
+        grad_output.contiguous(),
+        values.contiguous(),
     )
 
 
 def fused_bias_softmax(x: torch.Tensor, bias1: torch.Tensor | None = None,
     bias2: torch.Tensor | None = None) -> torch.Tensor:
-    """前向融合：softmax(x + bias1 + bias2, -1)。
+    """前向融合：softmax(x + bias1 + bias2, -1)，始终返回新张量且不修改 x。
 
-    仅当调用者的 x 连续且成功进入 NPU AscendC 融合路径时，才会原地写回调用者的 x；
-    非连续输入只会写回 contiguous() 副本，融合失败后的参考回退非原地。
-    bias1: [B,H,1,S] 广播或 [B,H,Q,S] 全尺寸；bias2: [B,H,Q,S]；均可为 None。
+    连续与非连续输入均可用。bias1: [B,H,1,S] 广播或 [B,H,Q,S] 全尺寸；
+    bias2: [B,H,Q,S]；均可为 None。
     """
     impl = _impl()
     use_ascendc = impl in ("ascendc", "auto") and _is_npu(x)
@@ -112,20 +139,37 @@ def fused_bias_softmax(x: torch.Tensor, bias1: torch.Tensor | None = None,
         raise RuntimeError("OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL=ascendc requires NPU tensors")
     if use_ascendc:
         try:
-            return _ascendc_fused_bias_softmax(x.contiguous(), bias1, bias2)
+            return _ascendc_fused_bias_softmax(x, bias1, bias2)
         except Exception:
             if _require_custom():
                 raise
     return torch_fused_bias_softmax(x, bias1, bias2)
 
 
+def fused_bias_softmax_(x: torch.Tensor, bias1: torch.Tensor | None = None,
+    bias2: torch.Tensor | None = None) -> torch.Tensor:
+    """原地计算 softmax(x + bias1 + bias2, -1)，只接受连续 x 并返回 x。"""
+    if not x.is_contiguous():
+        raise ValueError("fused_bias_softmax_: x must be contiguous")
+    impl = _impl()
+    use_ascendc = impl in ("ascendc", "auto") and _is_npu(x)
+    if impl == "ascendc" and not _is_npu(x) and _require_custom():
+        raise RuntimeError("OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL=ascendc requires NPU tensors")
+    if use_ascendc:
+        try:
+            return _ascendc_fused_bias_softmax_(x, bias1, bias2)
+        except Exception:
+            if _require_custom():
+                raise
+    return x.copy_(torch_fused_bias_softmax(x, bias1, bias2))
+
+
 def fused_softmax_grad(probs: torch.Tensor, grad_output: torch.Tensor,
     values: torch.Tensor) -> torch.Tensor:
-    """反向融合：g = go@V^T 融合 softmax JVP。
+    """反向融合：g = go@V^T 融合 softmax JVP，始终返回新张量且不修改 probs。
 
-    仅当调用者的 probs 连续且成功进入 NPU AscendC 融合路径时，才会原地覆写调用者的 probs；
-    非连续输入只会覆写 contiguous() 副本，融合失败后的参考回退非原地。
-    probs: [B,H,Q,S]（Q≠S 合法）；grad_output: [B,H,Q,D]；values: [B,H,S,D]。
+    连续与非连续输入均可用。probs: [B,H,Q,S]（Q≠S 合法）；
+    grad_output: [B,H,Q,D]；values: [B,H,S,D]。
     """
     impl = _impl()
     use_ascendc = impl in ("ascendc", "auto") and _is_npu(probs)
@@ -133,12 +177,29 @@ def fused_softmax_grad(probs: torch.Tensor, grad_output: torch.Tensor,
         raise RuntimeError("OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL=ascendc requires NPU tensors")
     if use_ascendc:
         try:
-            return _ascendc_fused_softmax_grad(probs.contiguous(), grad_output.contiguous(),
-                values.contiguous())
+            return _ascendc_fused_softmax_grad(probs, grad_output, values)
         except Exception:
             if _require_custom():
                 raise
     return torch_fused_softmax_grad(probs, grad_output, values)
+
+
+def fused_softmax_grad_(probs: torch.Tensor, grad_output: torch.Tensor,
+    values: torch.Tensor) -> torch.Tensor:
+    """原地计算 softmax JVP，只接受连续 probs 并返回 probs。"""
+    if not probs.is_contiguous():
+        raise ValueError("fused_softmax_grad_: probs must be contiguous")
+    impl = _impl()
+    use_ascendc = impl in ("ascendc", "auto") and _is_npu(probs)
+    if impl == "ascendc" and not _is_npu(probs) and _require_custom():
+        raise RuntimeError("OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL=ascendc requires NPU tensors")
+    if use_ascendc:
+        try:
+            return _ascendc_fused_softmax_grad_(probs, grad_output, values)
+        except Exception:
+            if _require_custom():
+                raise
+    return probs.copy_(torch_fused_softmax_grad(probs, grad_output, values))
 
 
 # ── openfold attention_core 语义的组合封装（autograd）────────────────
@@ -148,8 +209,7 @@ class _FusedAttentionCoreFn(torch.autograd.Function):
 
     forward:  probs = softmax(qk^T + bias1 + bias2, -1); o = probs @ v
     backward: grad_v 先于 probs 覆写计算（与原版 CUDA 时序一致）；
-              AscendC 融合分支原地覆写传入扩展的连续内部 probs，再求 bias/q/k 梯度；
-              参考分支非原地。
+              probs 被融合算子原地覆写为 dL/dlogits 后再求 bias/q/k 梯度。
     """
 
     @staticmethod
@@ -160,7 +220,7 @@ class _FusedAttentionCoreFn(torch.autograd.Function):
         k = k.contiguous()
         logits = torch.matmul(q, k.transpose(-1, -2))
         if use_ascendc:
-            logits = _ascendc_fused_bias_softmax(logits, bias1, bias2)
+            logits = _ascendc_fused_bias_softmax_(logits, bias1, bias2)
         else:
             logits = torch_fused_bias_softmax(logits, bias1, bias2)
         ctx.save_for_backward(q, k, v, logits)
@@ -176,7 +236,7 @@ class _FusedAttentionCoreFn(torch.autograd.Function):
         grad_v = torch.matmul(probs.transpose(-1, -2), grad_output)
         go = grad_output.contiguous()
         if ctx.use_ascendc:
-            g_logits = _ascendc_fused_softmax_grad(probs, go, v)
+            g_logits = _ascendc_fused_softmax_grad_(probs, go, v)
         else:
             g_logits = torch_fused_softmax_grad(probs, go, v)
 

@@ -88,18 +88,22 @@ import torch_npu  # noqa: F401
 from oil_gas_ops_prospect.fused_bias_softmax import (
     attention_core,
     fused_bias_softmax,
+    fused_bias_softmax_,
     fused_softmax_grad,
+    fused_softmax_grad_,
 )
 
 b, h, q, s, d = 2, 4, 64, 128, 32
 logits = torch.randn(b, h, q, s, device="npu")
 bias1 = torch.randn(b, h, 1, s, device="npu")   # broadcast
 bias2 = torch.randn(b, h, q, s, device="npu")   # full size
-probs = fused_bias_softmax(logits, bias1, bias2)  # writes back when the input is contiguous and the fused NPU path succeeds
+probs = fused_bias_softmax(logits, bias1, bias2)  # always out of place; accepts non-contiguous logits
+fused_bias_softmax_(logits, bias1, bias2)         # in place; logits must be contiguous
 
 go = torch.randn(b, h, q, d, device="npu")
 values = torch.randn(b, h, s, d, device="npu")
-g_logits = fused_softmax_grad(probs, go, values)  # overwrites probs when the input is contiguous and the fused NPU path succeeds
+g_logits = fused_softmax_grad(probs, go, values)  # always out of place; accepts non-contiguous probs
+fused_softmax_grad_(probs, go, values)             # in place; probs must be contiguous
 
 q_t = torch.randn(b, h, q, d, device="npu", requires_grad=True)
 k_t = torch.randn(b, h, s, d, device="npu", requires_grad=True)
@@ -108,7 +112,7 @@ out = attention_core(q_t, k_t, v_t, bias1, bias2)
 out.sum().backward()
 ```
 
-A non-contiguous input is copied through `contiguous()`, so the output aliases only that contiguous copy and does not overwrite the caller's original tensor. The PyTorch reference fallback is also not in place.
+The names without a trailing underscore are always out of place and do not modify their inputs. The underscore variants require contiguous inputs and update them in place. The PyTorch reference fallback is also out of place.
 
 Constraint summary: the inputs must be 4D; `fused_bias_softmax` requires `S ≤ 4096`; `fused_softmax_grad` allows `Q ≠ S`. For the full set of constraints see the [Operator List](../op_list.md).
 

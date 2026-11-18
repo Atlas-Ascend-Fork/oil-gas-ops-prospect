@@ -10,8 +10,8 @@ This repository currently delivers 7 AscendC/CANN OPP operators, 7 Triton-Ascend
 |---------------|---------|----------------|--------|----------|----------------|---------------|
 | `ComplexMul` | AscendC | `aclnnComplexMul` / `complex_mul` | [`ascendc/operators/complex_mul/`](../../ascendc/operators/complex_mul/) | complex element-wise multiply | `float32` / `ND` | Ascend 910B |
 | `ComplexMulGrad` | AscendC | `aclnnComplexMulGrad` (the backward is driven by the autograd of `complex_mul`) | [`ascendc/operators/complex_mul_grad/`](../../ascendc/operators/complex_mul_grad/) | backward of `ComplexMul` | `float32` / `ND` | Ascend 910B |
-| `FusedBiasSoftmax` | AscendC | `aclnnFusedBiasSoftmax` / `fused_bias_softmax` | [`ascendc/operators/fused_bias_softmax/`](../../ascendc/operators/fused_bias_softmax/) | `softmax(x + bias1 + bias2, -1)`, in-place for contiguous inputs that successfully enter the fused path | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
-| `FusedSoftmaxGrad` | AscendC | `aclnnFusedSoftmaxGrad` / `fused_softmax_grad` | [`ascendc/operators/fused_softmax_grad/`](../../ascendc/operators/fused_softmax_grad/) | attention softmax JVP, overwrites probs for contiguous inputs that successfully enter the fused path | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
+| `FusedBiasSoftmax` | AscendC | `aclnnFusedBiasSoftmax` / `fused_bias_softmax` / `fused_bias_softmax_` | [`ascendc/operators/fused_bias_softmax/`](../../ascendc/operators/fused_bias_softmax/) | `softmax(x + bias1 + bias2, -1)`; Python APIs provide out-of-place and in-place forms | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
+| `FusedSoftmaxGrad` | AscendC | `aclnnFusedSoftmaxGrad` / `fused_softmax_grad` / `fused_softmax_grad_` | [`ascendc/operators/fused_softmax_grad/`](../../ascendc/operators/fused_softmax_grad/) | attention softmax JVP; Python APIs provide out-of-place and in-place forms | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
 | `Conv3DGelu` | AscendC | `aclnnConv3dGeluCustom` / `conv3d_gelu` | [`ascendc/operators/conv3d_gelu/`](../../ascendc/operators/conv3d_gelu/) | `gelu_tanh(conv3d(x, weight, bias))` | `float32` / `NCDHW` | Ascend 910B |
 | `Conv3DGeluGrad` | AscendC | `aclnnConv3dGeluGrad` (called by `conv3d_gelu` autograd) | [`ascendc/operators/conv3d_gelu_grad/`](../../ascendc/operators/conv3d_gelu_grad/) | recompute conv3d, then GELU backward, then conv3d backward | `float32` / `NCDHW` | Ascend 910B |
 | `CustomGRUV2` | AscendC | `aclnnCustomGRUV2` / `custom_gru_v2` | [`ascendc/operators/custom_gru_v2/`](../../ascendc/operators/custom_gru_v2/) | single-layer fused GRU kernel (gate order [r; z; n] matches PyTorch nn.GRU, tanh uses the 2·sigmoid(2x)−1 stable form), unidirectional/bidirectional, backward handled by Python autograd | `float32` / `ND` | Ascend 910B |
@@ -128,7 +128,7 @@ Both \(b_1\) and \(b_2\) may be absent (treated as 0). Non-`fp32` inputs are acc
 | input (optional) | `bias2` | full-size bias (for example a triangle bias) | `[B, H, Q, S]` | same as `x` |
 | output | `y` | softmax probabilities | same as `x` | same as `x` |
 
-The low-level aclnn API allows **`y` to alias `x`**. The Python wrapper shares storage with and writes back to the caller's original `x` only when `x` is contiguous and the fused NPU path is entered successfully. A non-contiguous input is copied through `contiguous()` first, so `y` aliases the copy and does not overwrite the original non-contiguous tensor. The PyTorch reference implementation `torch_fused_bias_softmax` is not in place.
+The Python `fused_bias_softmax` API is always out of place and accepts non-contiguous inputs. `fused_bias_softmax_` is the explicit in-place API and requires contiguous `x`. The PyTorch reference implementation is also out of place.
 
 #### Constraints
 
@@ -167,7 +167,7 @@ g &= \mathrm{grad\_output} \cdot V^{\top} \\
 | input | `values` | attention \(V\) | `[B, H, S, D]` | same as `probs` |
 | output | `out` | \(\partial L / \partial \mathrm{logits}\) | same as `probs` | same as `probs` |
 
-The low-level aclnn API allows **`out` to alias `probs`**. The Python wrapper shares storage with and overwrites the caller's original `probs` only when `probs` is contiguous and the fused NPU path is entered successfully. A non-contiguous input is copied through `contiguous()` first, so `out` aliases the copy and does not overwrite the original non-contiguous tensor. The PyTorch reference implementation `torch_fused_softmax_grad` is not in place.
+The Python `fused_softmax_grad` API is always out of place and accepts non-contiguous inputs. `fused_softmax_grad_` is the explicit in-place API and requires contiguous `probs`. The PyTorch reference implementation is also out of place.
 
 `Q ≠ S` is legal (the openfold MSA / triangle attention shapes).
 

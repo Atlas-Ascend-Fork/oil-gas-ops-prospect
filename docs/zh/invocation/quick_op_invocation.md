@@ -88,18 +88,22 @@ import torch_npu  # noqa: F401
 from oil_gas_ops_prospect.fused_bias_softmax import (
     attention_core,
     fused_bias_softmax,
+    fused_bias_softmax_,
     fused_softmax_grad,
+    fused_softmax_grad_,
 )
 
 b, h, q, s, d = 2, 4, 64, 128, 32
 logits = torch.randn(b, h, q, s, device="npu")
 bias1 = torch.randn(b, h, 1, s, device="npu")   # 广播
 bias2 = torch.randn(b, h, q, s, device="npu")   # 全尺寸
-probs = fused_bias_softmax(logits, bias1, bias2)  # 输入连续且成功进入 NPU 融合路径时写回 logits
+probs = fused_bias_softmax(logits, bias1, bias2)  # 始终非原地；允许非连续 logits
+fused_bias_softmax_(logits, bias1, bias2)         # 原地；logits 必须连续
 
 go = torch.randn(b, h, q, d, device="npu")
 values = torch.randn(b, h, s, d, device="npu")
-g_logits = fused_softmax_grad(probs, go, values)  # 输入连续且成功进入 NPU 融合路径时覆写 probs
+g_logits = fused_softmax_grad(probs, go, values)  # 始终非原地；允许非连续输入
+fused_softmax_grad_(probs, go, values)             # 原地；probs 必须连续
 
 q_t = torch.randn(b, h, q, d, device="npu", requires_grad=True)
 k_t = torch.randn(b, h, s, d, device="npu", requires_grad=True)

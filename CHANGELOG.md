@@ -18,6 +18,7 @@
 
 ### Changed
 
+- 融合注意力 Python API 将无下划线版本定义为非原地接口，并新增连续输入专用的下划线原地接口。
 - `Conv3DGelu`：1×1 直写只在输入通道不少于 8、输出通道不超过 64 时启用。其余形状的前向按一个输出平面切，私有格式缓冲不再按整幅分配。反向由 `Conv3DGeluGrad` 一次完成。
 - AscendC OpType 去掉 `Og` 后缀（`ComplexMul` 等）；Python 接口为蛇形命名，不加 `npu_` 前缀。
 - `operators/` 只保留实现；测试在 `tests/`，aclnn 样例在 `examples/aclnn/`。

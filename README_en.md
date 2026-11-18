@@ -128,8 +128,8 @@ The current delivery contains 7 AscendC operators, 7 Triton-Ascend operators and
 | [`ComplexMul`](ascendc/operators/complex_mul/) | AscendC / OPP `.run` (AIV-only) | complex element-wise multiply: `(ur, ui), (vr, vi) -> (wr, wi)` | `float32` / `ND`, all tensors share a shape |
 | [`ComplexMulGrad`](ascendc/operators/complex_mul_grad/) | AscendC / OPP `.run` (AIV-only) | backward of `ComplexMul` | `float32` / `ND`, all tensors share a shape |
 | [`CustomGRUV2`](ascendc/operators/custom_gru_v2/) | AscendC / OPP `.run` | fused GRU kernel (tanh uses the numerically stable 2·sigmoid(2x)−1 form), unidirectional / bidirectional | `float32` / `ND` |
-| [`FusedBiasSoftmax`](ascendc/operators/fused_bias_softmax/) | AscendC / OPP `.run` | `softmax(x + bias1 + bias2, -1)`, in-place for contiguous inputs that successfully enter the fused path | `fp32` / `fp16` / `bf16`, `ND` |
-| [`FusedSoftmaxGrad`](ascendc/operators/fused_softmax_grad/) | AscendC / OPP `.run` (may use MIX) | attention softmax JVP, overwriting contiguous probs that successfully enter the fused path | `fp32` / `fp16` / `bf16`, `ND` |
+| [`FusedBiasSoftmax`](ascendc/operators/fused_bias_softmax/) | AscendC / OPP `.run` | `softmax(x + bias1 + bias2, -1)`; Python APIs provide out-of-place and in-place forms | `fp32` / `fp16` / `bf16`, `ND` |
+| [`FusedSoftmaxGrad`](ascendc/operators/fused_softmax_grad/) | AscendC / OPP `.run` (may use MIX) | attention softmax JVP; Python APIs provide out-of-place and in-place forms | `fp32` / `fp16` / `bf16`, `ND` |
 | [`Conv3DGelu`](ascendc/operators/conv3d_gelu/) | AscendC / OPP `.run` (MIX cube+vector) | `gelu_tanh(conv3d(x, weight, bias))`, without retaining the pre-activation between the two ops | `float32` / `NCDHW` |
 | [`Conv3DGeluGrad`](ascendc/operators/conv3d_gelu_grad/) | AscendC / OPP `.run` (AIV + built-in conv3d backward) | recompute conv3d, then GELU backward, then conv3d backward | `float32` / `NCDHW` |
 | [`real_rfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | real forward FFT: `x -> (xr, xi)`, frequency axis length `n // 2 + 1` | the NPU kernel is `float32`; falls back to PyTorch outside an NPU environment |
@@ -141,6 +141,8 @@ The current delivery contains 7 AscendC operators, 7 Triton-Ascend operators and
 | [`interpolate`](triton-ascend/interpolate/) | Triton-Ascend / Python whl | 2D/3D linear interpolation; 5D fp32 uses Cube GEMM, 4D uses the native kernel | `float32` for 5D; 4D is supported by the native path |
 | [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | compatible with `nn.Conv3d` within the supported parameter domain (custom forward/backward, interoperable state_dict keys) | dtypes supported by the underlying PyTorch backend and tested here |
 | [`complex_addcmul`](composite-torch/complex_addcmul/) | Composite-Torch / Python whl | complex three-input `input + value*t1*t2`, works around the missing complex dtypes in NPU `torch.addcmul` | `complex64` / `complex128` |
+
+The Python fused attention wrappers have explicit semantics: the names without a trailing underscore are always out of place and accept non-contiguous inputs; the underscore variants require contiguous inputs and update them in place.
 
 For `Conv3d` / `conv3d`, `kernel_size`, `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence, and `groups` is an `int`; the module supports `zeros` / `reflect` / `replicate` / `circular`. The string padding values `"same"` / `"valid"` are supported (`"same"` requires a stride of 1), while the constructor does not provide the `device` / `dtype` keyword arguments of native `nn.Conv3d`.
 

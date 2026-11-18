@@ -16,9 +16,10 @@
 /**
  * FusedBiasSoftmax / FusedSoftmaxGrad 的 torch_npu pybind 绑定（fused_bias_softmax_npu）。
  *
- * 直接链接 opbuild autogen 的 aclnn 两段式入口，语义（均为原地写回）：
- *   forward:  y = softmax(x + bias1(广播/全尺寸, 可选) + bias2(可选), -1)，y 别名 x
- *   backward: g = go @ V^T; probs ← probs ⊙ (g − rowsum(probs⊙g))，out 别名 probs
+ * 直接链接 opbuild autogen 的 aclnn 两段式入口。原地入口由 _ 后缀标识；
+ * *_out 入口写入独立输出张量。
+ *   forward:  y = softmax(x + bias1(广播/全尺寸, 可选) + bias2(可选), -1)
+ *   backward: g = go @ V^T; out = probs ⊙ (g − rowsum(probs⊙g))
  *
  * 前反向均走自定义 kernel。反向 bf16（含未对齐 / Q=S=D）走 MIX Cube：未对齐
  * 或 M=N=K 时 AIV 先 pad 再 AIC 矩乘。CANN 9：换配置后第一次落到 e2e 碰撞
@@ -165,14 +166,14 @@ struct CachedFwd {
 
 // 按 (shape/dtype/bias) key 常驻 executor 与 aclTensor 壳。不缓存用户数据，
 // 不 DestroyExecutor。每次把本跳 data_ptr 写进同一组壳再 launch。
-void LaunchBiasSoftmax(at::Tensor& x, const std::optional<at::Tensor>& bias1, const std::optional<at::Tensor>& bias2,
-                       uint64_t key)
+void LaunchBiasSoftmax(const at::Tensor& x, const std::optional<at::Tensor>& bias1,
+                       const std::optional<at::Tensor>& bias2, const at::Tensor& y, uint64_t key)
 {
     thread_local std::unordered_map<uint64_t, CachedFwd> slots;
     CachedFwd& slot = slots[key];
     if (slot.executor == nullptr) {
         slot.xT = CreateNdTensor(ShapeOf(x), x.scalar_type(), x.data_ptr());
-        slot.yT = CreateNdTensor(ShapeOf(x), x.scalar_type(), x.data_ptr());
+        slot.yT = CreateNdTensor(ShapeOf(y), y.scalar_type(), y.data_ptr());
         slot.b1T = bias1.has_value() ? CreateNdTensor(ShapeOf(*bias1), bias1->scalar_type(), bias1->data_ptr()) :
                                        nullptr;
         slot.b2T = bias2.has_value() ? CreateNdTensor(ShapeOf(*bias2), bias2->scalar_type(), bias2->data_ptr()) :
@@ -190,7 +191,7 @@ void LaunchBiasSoftmax(at::Tensor& x, const std::optional<at::Tensor>& bias1, co
     if (slot.b2T != nullptr) {
         BindInputAddr(slot.executor, 2, slot.b2T, bias2->data_ptr());
     }
-    BindOutputAddr(slot.executor, 0, slot.yT, x.data_ptr());
+    BindOutputAddr(slot.executor, 0, slot.yT, y.data_ptr());
 
     void* workspace = nullptr;
     at::Tensor& workspaceTensor = StableWorkspace(false, slot.workspaceSize, x);
@@ -202,22 +203,24 @@ void LaunchBiasSoftmax(at::Tensor& x, const std::optional<at::Tensor>& bias1, co
     TORCH_CHECK(ret == ACL_SUCCESS, "aclnnFusedBiasSoftmax failed, ret=", static_cast<int>(ret));
 }
 
-void LaunchSoftmaxGrad(at::Tensor& probs, const at::Tensor& gradOutput, const at::Tensor& values)
+void LaunchSoftmaxGrad(const at::Tensor& probs, const at::Tensor& gradOutput, const at::Tensor& values,
+                       const at::Tensor& out)
 {
     auto probsT = CreateNdTensor(ShapeOf(probs), probs.scalar_type(), probs.data_ptr());
     auto goT = CreateNdTensor(ShapeOf(gradOutput), gradOutput.scalar_type(), gradOutput.data_ptr());
     auto vT = CreateNdTensor(ShapeOf(values), values.scalar_type(), values.data_ptr());
+    auto outT = CreateNdTensor(ShapeOf(out), out.scalar_type(), out.data_ptr());
 
     aclrtStream stream = c10_npu::getCurrentNPUStream().stream(false);
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor = nullptr;
-    auto ret = aclnnFusedSoftmaxGradGetWorkspaceSize(probsT, goT, vT, probsT, &workspaceSize, &executor);
+    auto ret = aclnnFusedSoftmaxGradGetWorkspaceSize(probsT, goT, vT, outT, &workspaceSize, &executor);
     TORCH_CHECK(ret == ACL_SUCCESS, "aclnnFusedSoftmaxGradGetWorkspaceSize failed, ret=", static_cast<int>(ret));
     MakeExecutorRepeatable(executor);
     BindInputAddr(executor, 0, probsT, probs.data_ptr());
     BindInputAddr(executor, 1, goT, gradOutput.data_ptr());
     BindInputAddr(executor, 2, vT, values.data_ptr());
-    BindOutputAddr(executor, 0, probsT, probs.data_ptr());
+    BindOutputAddr(executor, 0, outT, out.data_ptr());
 
     void* workspace = nullptr;
     at::Tensor& workspaceTensor = StableWorkspace(true, workspaceSize, probs);
@@ -230,12 +233,13 @@ void LaunchSoftmaxGrad(at::Tensor& probs, const at::Tensor& gradOutput, const at
     Destroy(probsT);
     Destroy(goT);
     Destroy(vT);
+    Destroy(outT);
 }
 
 } // namespace
 
-at::Tensor fused_bias_softmax_forward(const at::Tensor& x, std::optional<at::Tensor> bias1,
-                                      std::optional<at::Tensor> bias2)
+void CheckBiasSoftmaxInputs(const at::Tensor& x, const std::optional<at::Tensor>& bias1,
+                            const std::optional<at::Tensor>& bias2)
 {
     TORCH_CHECK(x.is_contiguous(), "fused_bias_softmax: x must be contiguous");
     if (bias1.has_value()) {
@@ -244,13 +248,40 @@ at::Tensor fused_bias_softmax_forward(const at::Tensor& x, std::optional<at::Ten
     if (bias2.has_value()) {
         TORCH_CHECK(bias2->is_contiguous(), "fused_bias_softmax: bias2 must be contiguous");
     }
+}
 
+void CheckBiasSoftmaxOutput(const at::Tensor& x, const at::Tensor& y)
+{
+    TORCH_CHECK(y.is_contiguous(), "fused_bias_softmax: y must be contiguous");
+    TORCH_CHECK(y.sizes() == x.sizes(), "fused_bias_softmax: y must have the same shape as x");
+    TORCH_CHECK(y.scalar_type() == x.scalar_type(), "fused_bias_softmax: y must have the same dtype as x");
+    TORCH_CHECK(y.device() == x.device(), "fused_bias_softmax: y must be on the same device as x");
+}
+
+at::Tensor fused_bias_softmax_forward(const at::Tensor& x, std::optional<at::Tensor> bias1,
+                                      std::optional<at::Tensor> bias2)
+{
+    CheckBiasSoftmaxInputs(x, bias1, bias2);
     at::Tensor y = x;
     const at::Tensor* b1 = bias1.has_value() ? &bias1.value() : nullptr;
     const at::Tensor* b2 = bias2.has_value() ? &bias2.value() : nullptr;
-    const uint64_t key = LaunchKey(y, /*backward=*/false, b1, b2);
-    NoteLaunchAndBreak(y, /*backward=*/false, key);
-    LaunchBiasSoftmax(y, bias1, bias2, key);
+    const uint64_t key = LaunchKey(x, /*backward=*/false, b1, b2);
+    NoteLaunchAndBreak(x, /*backward=*/false, key);
+    LaunchBiasSoftmax(x, bias1, bias2, y, key);
+    return y;
+}
+
+at::Tensor fused_bias_softmax_forward_out(const at::Tensor& x, const at::Tensor& y, std::optional<at::Tensor> bias1,
+                                          std::optional<at::Tensor> bias2)
+{
+    CheckBiasSoftmaxInputs(x, bias1, bias2);
+    CheckBiasSoftmaxOutput(x, y);
+    TORCH_CHECK(!x.is_alias_of(y), "fused_bias_softmax_forward_out: x and y must not alias");
+    const at::Tensor* b1 = bias1.has_value() ? &bias1.value() : nullptr;
+    const at::Tensor* b2 = bias2.has_value() ? &bias2.value() : nullptr;
+    const uint64_t key = LaunchKey(x, /*backward=*/false, b1, b2);
+    NoteLaunchAndBreak(x, /*backward=*/false, key);
+    LaunchBiasSoftmax(x, bias1, bias2, y, key);
     return y;
 }
 
@@ -261,7 +292,21 @@ at::Tensor fused_softmax_grad_backward(const at::Tensor& probs, const at::Tensor
 
     at::Tensor out = probs;
     NoteLaunchAndBreak(out, /*backward=*/true, LaunchKey(out, /*backward=*/true, &gradOutput, &values));
-    LaunchSoftmaxGrad(out, gradOutput, values);
+    LaunchSoftmaxGrad(probs, gradOutput, values, out);
+    return out;
+}
+
+at::Tensor fused_softmax_grad_backward_out(const at::Tensor& probs, const at::Tensor& gradOutput,
+                                           const at::Tensor& values, const at::Tensor& out)
+{
+    TORCH_CHECK(probs.is_contiguous() && gradOutput.is_contiguous() && values.is_contiguous() && out.is_contiguous(),
+                "fused_softmax_grad: probs/gradOutput/values/out must be contiguous");
+    TORCH_CHECK(out.sizes() == probs.sizes(), "fused_softmax_grad: out must have the same shape as probs");
+    TORCH_CHECK(out.scalar_type() == probs.scalar_type(), "fused_softmax_grad: out must have the same dtype as probs");
+    TORCH_CHECK(out.device() == probs.device(), "fused_softmax_grad: out must be on the same device as probs");
+    TORCH_CHECK(!probs.is_alias_of(out), "fused_softmax_grad_backward_out: probs and out must not alias");
+    NoteLaunchAndBreak(probs, /*backward=*/true, LaunchKey(probs, /*backward=*/true, &gradOutput, &values));
+    LaunchSoftmaxGrad(probs, gradOutput, values, out);
     return out;
 }
 
@@ -270,7 +315,13 @@ PYBIND11_MODULE(fused_bias_softmax_npu, m)
     m.def("fused_bias_softmax_forward", &fused_bias_softmax_forward,
           "y = softmax(x + bias1 + bias2, -1), in-place; args: x, bias1|None, bias2|None", py::arg("x"),
           py::arg("bias1") = std::nullopt, py::arg("bias2") = std::nullopt);
+    m.def("fused_bias_softmax_forward_out", &fused_bias_softmax_forward_out,
+          "y = softmax(x + bias1 + bias2, -1), out-of-place", py::arg("x"), py::arg("y"),
+          py::arg("bias1") = std::nullopt, py::arg("bias2") = std::nullopt);
     m.def("fused_softmax_grad_backward", &fused_softmax_grad_backward,
           "g = go @ V^T; probs <- probs*(g - rowsum(probs*g)), in-place", py::arg("probs"), py::arg("grad_output"),
           py::arg("values"));
+    m.def("fused_softmax_grad_backward_out", &fused_softmax_grad_backward_out,
+          "g = go @ V^T; out = probs*(g - rowsum(probs*g)), out-of-place", py::arg("probs"), py::arg("grad_output"),
+          py::arg("values"), py::arg("out"));
 }

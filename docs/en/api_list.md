@@ -89,7 +89,17 @@ def fused_bias_softmax(
 | `bias1` | `torch.Tensor` or `None` | `[B, H, 1, S]` broadcast or `[B, H, Q, S]` full size; `None` means no bias |
 | `bias2` | `torch.Tensor` or `None` | `[B, H, Q, S]`; `None` means no bias |
 
-Returns softmax probabilities with the same shape / dtype as `x`. When the fused NPU path is entered successfully, the result shares storage with and writes back to the caller's original `x` only if the supplied tensor is contiguous. For a non-contiguous input, the wrapper creates a `contiguous()` copy; the result aliases that copy and does not overwrite the caller's original non-contiguous tensor. The reference implementation is not in place.
+Returns softmax probabilities with the same shape / dtype as `x`. This API is always out of place and supports non-contiguous inputs without modifying `x`.
+
+### `fused_bias_softmax_`
+
+```python
+from oil_gas_ops_prospect.fused_bias_softmax import fused_bias_softmax_
+
+def fused_bias_softmax_(x, bias1=None, bias2=None) -> torch.Tensor
+```
+
+Computes the same result in place and returns `x`. The input must be contiguous.
 
 **Implementation selection**: PyTorch by default. AscendC is used when the tensors are on the NPU and `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` is `ascendc` or `auto`. Failures fall back silently unless `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX=1`.
 
@@ -113,7 +123,17 @@ Computes \(g = \mathrm{grad\_output} \cdot V^{\top}\) first, then the softmax JV
 | `grad_output` | `torch.Tensor` | \(\partial L / \partial o\), `[B, H, Q, D]` |
 | `values` | `torch.Tensor` | \(V\), `[B, H, S, D]` |
 
-The three inputs share a dtype (`fp32` / `fp16` / `bf16`). Returns a tensor with the same shape as `probs`. When the fused NPU path is entered successfully, the result shares storage with and overwrites the caller's original `probs` only if the supplied tensor is contiguous. For a non-contiguous input, the wrapper creates a `contiguous()` copy; the result aliases that copy and does not overwrite the caller's original non-contiguous tensor. The reference implementation is not in place. The implementation switch is shared with `fused_bias_softmax`.
+The three inputs share a dtype (`fp32` / `fp16` / `bf16`). Returns a tensor with the same shape as `probs`. This API is always out of place and supports non-contiguous inputs without modifying `probs`. The implementation switch is shared with `fused_bias_softmax`.
+
+### `fused_softmax_grad_`
+
+```python
+from oil_gas_ops_prospect.fused_bias_softmax import fused_softmax_grad_
+
+def fused_softmax_grad_(probs, grad_output, values) -> torch.Tensor
+```
+
+Computes the same result in place and returns `probs`. The input must be contiguous.
 
 ### `attention_core`
 
@@ -568,7 +588,7 @@ Custom environment variables all use the `OIL_GAS_OPS_` prefix.
 |----------------------|--------|---------|-------------|
 | `OIL_GAS_OPS_COMPLEX_MUL_IMPL` | `torch` / `ascendc` / `auto` | `torch` | implementation selection for `complex_mul` |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_COMPLEX_MUL` | `0` / `1` | `0` | set to `1` to forbid the PyTorch fallback and raise on an AscendC failure |
-| `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` | `torch` / `ascendc` / `auto` | `torch` | implementation selection for `fused_bias_softmax` / `fused_softmax_grad` / `attention_core` |
+| `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` | `torch` / `ascendc` / `auto` | `torch` | implementation selection for `fused_bias_softmax` / `fused_bias_softmax_` / `fused_softmax_grad` / `fused_softmax_grad_` / `attention_core` |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX` | `0` / `1` | `0` | set to `1` to forbid the PyTorch fallback and raise on an AscendC failure |
 | `OIL_GAS_OPS_CONV3D_GELU_IMPL` | `torch` / `ascendc` / `auto` | `auto` | implementation selection for `conv3d_gelu`. `auto` uses the fused operator on NPU |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_CONV3D_GELU` | `0` / `1` | `0` | set to `1` to forbid the PyTorch fallback |

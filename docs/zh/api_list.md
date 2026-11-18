@@ -89,7 +89,17 @@ def fused_bias_softmax(
 | `bias1` | `torch.Tensor` 或 `None` | `[B, H, 1, S]` 广播或 `[B, H, Q, S]` 全尺寸；`None` 表示不加 |
 | `bias2` | `torch.Tensor` 或 `None` | `[B, H, Q, S]`；`None` 表示不加 |
 
-返回与 `x` 同 shape / dtype 的 softmax 概率。成功进入 NPU 融合路径时，仅当传入张量连续，返回值才与调用者原始 `x` 共享 storage 并原地写回；非连续输入会由包装层 `contiguous()` 复制，输出与该副本别名，不会覆写调用者原始非连续张量。参考实现非原地。
+返回与 `x` 同 shape / dtype 的 softmax 概率。该 API 始终非原地：连续与非连续输入均可用，输入 `x` 不会被修改。AscendC 路径为输出分配独立张量；非连续输入会先转为连续张量供 kernel 读取。
+
+### `fused_bias_softmax_`
+
+```python
+from oil_gas_ops_prospect.fused_bias_softmax import fused_bias_softmax_
+
+def fused_bias_softmax_(x, bias1=None, bias2=None) -> torch.Tensor
+```
+
+与 `fused_bias_softmax` 计算相同结果，但原地写入并返回 `x`。`x` 必须连续；非连续输入会报错。
 
 **实现选择**：默认走 PyTorch。张量在 NPU 且 `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` 为 `ascendc` / `auto` 时走 AscendC。失败默认静默回退，除非 `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX=1`。
 
@@ -113,7 +123,17 @@ def fused_softmax_grad(
 | `grad_output` | `torch.Tensor` | \(\partial L / \partial o\)，`[B, H, Q, D]` |
 | `values` | `torch.Tensor` | \(V\)，`[B, H, S, D]` |
 
-三输入同 dtype（`fp32` / `fp16` / `bf16`）。返回与 `probs` 同 shape。成功进入 NPU 融合路径时，仅当传入张量连续，返回值才与调用者原始 `probs` 共享 storage 并原地覆写；非连续输入会由包装层 `contiguous()` 复制，输出与该副本别名，不会覆写调用者原始非连续张量。参考实现非原地。实现开关与 `fused_bias_softmax` 共用。
+三输入同 dtype（`fp32` / `fp16` / `bf16`）。返回与 `probs` 同 shape。该 API 始终非原地，连续与非连续输入均可用，`probs` 不会被修改。实现开关与 `fused_bias_softmax` 共用。
+
+### `fused_softmax_grad_`
+
+```python
+from oil_gas_ops_prospect.fused_bias_softmax import fused_softmax_grad_
+
+def fused_softmax_grad_(probs, grad_output, values) -> torch.Tensor
+```
+
+与 `fused_softmax_grad` 计算相同结果，但原地覆写并返回 `probs`。`probs` 必须连续；非连续输入会报错。
 
 ### `attention_core`
 
@@ -136,7 +156,7 @@ forward:   logits = q @ k^T
            probs  = softmax(logits + bias1 + bias2, -1)   # fused_bias_softmax
            o      = probs @ v
 backward:  grad_v = probs^T @ go                          # 先于 probs 覆写，与原版 CUDA 时序一致
-           g_logits = softmax_jvp(probs, go, v)           # AscendC 融合分支原地覆写传入扩展的连续内部 probs
+           g_logits = softmax_jvp(probs, go, v)           # fused_softmax_grad_，原地覆写 probs
            grad_bias* = 按 bias 广播维对 g_logits 求和
            grad_q = g_logits @ k
            grad_k = (q^T @ g_logits)^T
@@ -570,7 +590,7 @@ Triton 算子没有 aclnn 入口。
 |----------|------|------|------|
 | `OIL_GAS_OPS_COMPLEX_MUL_IMPL` | `torch` / `ascendc` / `auto` | `torch` | `complex_mul` 的实现选择 |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_COMPLEX_MUL` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch，AscendC 调用失败直接抛异常 |
-| `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` | `torch` / `ascendc` / `auto` | `torch` | `fused_bias_softmax` / `fused_softmax_grad` / `attention_core` 的实现选择 |
+| `OIL_GAS_OPS_FUSED_BIAS_SOFTMAX_IMPL` | `torch` / `ascendc` / `auto` | `torch` | `fused_bias_softmax` / `fused_bias_softmax_` / `fused_softmax_grad` / `fused_softmax_grad_` / `attention_core` 的实现选择 |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch，AscendC 调用失败直接抛异常 |
 | `OIL_GAS_OPS_CONV3D_GELU_IMPL` | `torch` / `ascendc` / `auto` | `auto` | `conv3d_gelu` 的实现选择。`auto` 在 NPU 上走融合算子 |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_CONV3D_GELU` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch |

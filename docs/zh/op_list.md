@@ -10,8 +10,8 @@
 |---------------|------|----------------|------|------|----------------|----------|
 | `ComplexMul` | AscendC | `aclnnComplexMul` / `complex_mul` | [`ascendc/operators/complex_mul/`](../../ascendc/operators/complex_mul/) | 复数逐点乘 | `float32` / `ND` | Ascend 910B |
 | `ComplexMulGrad` | AscendC | `aclnnComplexMulGrad`（反向由 `complex_mul` 的 autograd 调用） | [`ascendc/operators/complex_mul_grad/`](../../ascendc/operators/complex_mul_grad/) | `ComplexMul` 的反向 | `float32` / `ND` | Ascend 910B |
-| `FusedBiasSoftmax` | AscendC | `aclnnFusedBiasSoftmax` / `fused_bias_softmax` | [`ascendc/operators/fused_bias_softmax/`](../../ascendc/operators/fused_bias_softmax/) | `softmax(x + bias1 + bias2, -1)`，连续输入成功进入融合路径时原地写回 | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
-| `FusedSoftmaxGrad` | AscendC | `aclnnFusedSoftmaxGrad` / `fused_softmax_grad` | [`ascendc/operators/fused_softmax_grad/`](../../ascendc/operators/fused_softmax_grad/) | 注意力 softmax JVP，连续输入成功进入融合路径时覆写 probs | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
+| `FusedBiasSoftmax` | AscendC | `aclnnFusedBiasSoftmax` / `fused_bias_softmax` / `fused_bias_softmax_` | [`ascendc/operators/fused_bias_softmax/`](../../ascendc/operators/fused_bias_softmax/) | `softmax(x + bias1 + bias2, -1)`；Python API 有独立输出和原地两种形式 | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
+| `FusedSoftmaxGrad` | AscendC | `aclnnFusedSoftmaxGrad` / `fused_softmax_grad` / `fused_softmax_grad_` | [`ascendc/operators/fused_softmax_grad/`](../../ascendc/operators/fused_softmax_grad/) | 注意力 softmax JVP；Python API 有独立输出和原地两种形式 | `fp32` / `fp16` / `bf16` / `ND` | Ascend 910B |
 | `Conv3DGelu` | AscendC | `aclnnConv3dGeluCustom` / `conv3d_gelu` | [`ascendc/operators/conv3d_gelu/`](../../ascendc/operators/conv3d_gelu/) | `gelu_tanh(conv3d(x, weight, bias))` | `float32` / `NCDHW` | Ascend 910B |
 | `Conv3DGeluGrad` | AscendC | `aclnnConv3dGeluGrad`（由 `conv3d_gelu` 的反向调用） | [`ascendc/operators/conv3d_gelu_grad/`](../../ascendc/operators/conv3d_gelu_grad/) | `dz = dy * gelu'(z)`。反向先重算 conv3d，再调本算子，再做 conv3d 反向 | `float32` / `ND` | Ascend 910B |
 | `CustomGRUV2` | AscendC | `aclnnCustomGRUV2` / `custom_gru_v2` | [`ascendc/operators/custom_gru_v2/`](../../ascendc/operators/custom_gru_v2/) | 单层 GRU 融合 kernel（gate 行序 [r; z; n] 与 PyTorch nn.GRU 一致，tanh 用 2·sigmoid(2x)−1 稳定形式），单向/双向，反向由 Python autograd 承担 | `float32` / `ND` | Ascend 910B |
@@ -128,7 +128,7 @@ y = \mathrm{softmax}(x + b_1 + b_2,\; \mathrm{dim}=-1)
 | 输入（可选） | `bias2` | 全尺寸偏置（如 triangle bias） | `[B, H, Q, S]` | 与 `x` 相同 |
 | 输出 | `y` | softmax 概率 | 与 `x` 相同 | 与 `x` 相同 |
 
-底层 aclnn 接口允许 **`y` 与 `x` 别名**。Python 包装仅在传入 `x` 连续且成功进入 NPU 融合路径时与调用者原始 `x` 共享 storage 并原地写回；非连续输入会先经 `contiguous()` 复制，`y` 与副本别名，不会覆写原始非连续张量。PyTorch 参考实现 `torch_fused_bias_softmax` 非原地。
+底层 aclnn 接口支持独立输出与输入别名两种形式。Python `fused_bias_softmax` 始终非原地并支持非连续输入；`fused_bias_softmax_` 只接受连续输入并直接写回 `x`。PyTorch 参考实现也不修改输入。
 
 #### 约束
 
@@ -167,7 +167,7 @@ g &= \mathrm{grad\_output} \cdot V^{\top} \\
 | 输入 | `values` | 注意力的 \(V\) | `[B, H, S, D]` | 与 `probs` 相同 |
 | 输出 | `out` | \(\partial L / \partial \mathrm{logits}\) | 与 `probs` 相同 | 与 `probs` 相同 |
 
-底层 aclnn 接口允许 **`out` 与 `probs` 别名**。Python 包装仅在传入 `probs` 连续且成功进入 NPU 融合路径时与调用者原始 `probs` 共享 storage 并原地覆写；非连续输入会先经 `contiguous()` 复制，`out` 与副本别名，不会覆写原始非连续张量。PyTorch 参考实现 `torch_fused_softmax_grad` 非原地。
+底层 aclnn 接口支持独立输出与输入别名两种形式。Python `fused_softmax_grad` 始终非原地并支持非连续输入；`fused_softmax_grad_` 只接受连续输入并直接覆写 `probs`。PyTorch 参考实现也不修改输入。
 
 `Q ≠ S` 合法（openfold MSA / 三角注意力形态）。
 

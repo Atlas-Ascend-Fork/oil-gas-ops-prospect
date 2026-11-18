@@ -142,6 +142,8 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 | [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | 支持参数域内兼容 `nn.Conv3d`（自定义前/反向，state_dict key 互通） | 底层 PyTorch 后端支持且经本仓测试的 dtype |
 | [`complex_addcmul`](composite-torch/complex_addcmul/) | Composite-Torch / Python whl | 复数三输入 `input + value*t1*t2`，规避 NPU 上 `torch.addcmul` 缺复数 dtype | `complex64` / `complex128` |
 
+Python 融合注意力封装提供两种明确语义：无下划线版本始终非原地并支持非连续输入；带下划线版本只接受连续输入并原地更新。
+
 `Conv3d` / `conv3d` 的 `kernel_size`、`stride`、数值 `padding`、`dilation` 支持 `int` 或 3 元素序列，`groups` 为 `int`；模块支持 `zeros` / `reflect` / `replicate` / `circular`。字符串 `padding="same"` / `"valid"` 受支持（`"same"` 要求 stride 为 1），构造器不提供原生 `nn.Conv3d` 的 `device` / `dtype` 关键字。
 
 数学定义、约束与支持范围见[算子列表](docs/zh/op_list.md)；完整接口签名、参数与环境变量见[接口列表](docs/zh/api_list.md)。
