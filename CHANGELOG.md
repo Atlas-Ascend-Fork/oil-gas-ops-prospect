@@ -7,6 +7,7 @@
 ### Added
 
 - Composite-Torch：`complex_addcmul`，复数三输入逐元素 `input + value*tensor1*tensor2`，纯 PyTorch 组合实现，复数乘委托 `complex_mul`。用于规避 NPU 上 `torch.addcmul` 不支持 `complex64` / `complex128` 的限制（`aclnnAddcmul` 报 `161002`，`DT_COMPLEX64` 不在支持列表内），支持广播、`value` 取实数或复数标量与 autograd（`value` 本身不参与求导）；`complex128` 按 `torch.promote_types` 与 `complex64` 混合提升。对拍 CPU 原生 `torch.addcmul` 的最大绝对误差：`complex64` ≤ 1e-5、`complex128` ≤ 2e-14（均为浮点舍入级，非逐位一致）。
+- Triton-Ascend `real_fft`：新增二维组合接口 `real_rfft2` / `real_irfft2`，语义对齐 `torch.fft.rfft2` / `irfft2`，支持 `norm="backward"`（默认）与 `"ortho"` 及 autograd。由现有 1-D `real_rfft` / `real_irfft` 组合而成（线性 + 共轭反转 + Hermitian 半谱补全），不新增 kernel；非末轴且长度较大时把轴搬到末轴（正向、反向都内置），末轴半谱补全前先把该轴搬到 0 以避开 910B 上 stride-1 `flip` 的慢路径。返回实数 `(real, imag)` 对，不构造 complex dtype。非 NPU / Triton 不可用 / 非 `float32` 时回退 `torch.fft`。910B2 实测收益按行数 `numel/(h*w)` 分档：行数 ≲64 时慢 3~5 倍，约 256 行起反超（N=288 时 1.30×、N=576 时 1.17×）；收益来自实数输出表示与连续布局（原生 `rfft2` 返回非连续 `complex64`，其上逐点乘加约慢 200 倍），不是变换本身更快。
 - AscendC：`Conv3DGelu`，cube conv3d 与 vector tanh-GELU 融合，float32 / NCDHW。前向不保存二者之间的预激活。反向是 `Conv3DGeluGrad`：重算 conv3d，再做 GELU 反向，再做 conv3d 反向。
 - 融合注意力算子 `FusedBiasSoftmax` / `FusedSoftmaxGrad`，以及组合接口 `attention_core`。
 - 新增 Triton-Ascend 复数算子 `complex_reciprocal`（复数倒数 `1/z`，支持实虚分离入口与自定义反向）与 `complex_exp`（复数指数 `e^z`，自定义反向），替代 NPU 上走 Ai_Cpu 的 `aclnnReciprocal` / `aclnnExp`。

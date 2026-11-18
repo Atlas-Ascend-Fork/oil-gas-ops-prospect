@@ -94,6 +94,8 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "FusedSoftmaxGrad",
             "real_rfft",
             "real_irfft",
+            "real_rfft2",
+            "real_irfft2",
             "complex_reciprocal",
             "complex_exp",
             "interpolate",
@@ -107,7 +109,7 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "complex_addcmul",
             "数学定义",
         ),
-        "14 个已交付算子的数学定义、输入输出与约束",
+        "16 个已交付算子的数学定义、输入输出与约束",
     ),
     (
         "docs/zh/api_list.md",
@@ -119,6 +121,8 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "attention_core",
             "real_rfft",
             "real_irfft",
+            "real_rfft2",
+            "real_irfft2",
             "complex_reciprocal",
             "complex_exp",
             "interpolate",
@@ -254,7 +258,7 @@ def check_api() -> int:
     from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
     from oil_gas_ops_prospect.interpolate import interpolate
     from oil_gas_ops_prospect.complex_addcmul import complex_addcmul
-    from oil_gas_ops_prospect.real_fft import real_irfft, real_rfft
+    from oil_gas_ops_prospect.real_fft import real_irfft, real_irfft2, real_rfft, real_rfft2
 
     zc = torch.randn(2, 3) + 1j * torch.randn(2, 3)
     if not torch.equal(complex_reciprocal(zc), 1 / zc):
@@ -327,6 +331,13 @@ def check_api() -> int:
     if rec.shape != sig.shape:
         return _fail("real_irfft shape")
 
+    img = torch.randn(2, 8, 16)
+    f2r, f2i = real_rfft2(img, dim=(-2, -1))
+    if f2r.shape != (2, 8, 9) or f2i.shape != (2, 8, 9):
+        return _fail("real_rfft2 shape")
+    if real_irfft2(f2r, f2i, s=(8, 16)).shape != img.shape:
+        return _fail("real_irfft2 shape")
+
     za = torch.randn(2, 3) + 1j * torch.randn(2, 3)
     zc = complex_addcmul(za, za, za, value=1 + 2j)
     ref = torch.addcmul(za, za, za, value=1 + 2j)
@@ -334,9 +345,9 @@ def check_api() -> int:
         return _fail("complex_addcmul cpu forward")
     print(
         "PASS public API CPU fallback: complex_mul fused_bias_softmax "
-        "fused_softmax_grad attention_core real_rfft real_irfft complex_reciprocal "
-        "complex_exp interpolate Conv3d conv3d conv3d_gelu custom_gru_v2 "
-        "complex_addcmul"
+        "fused_softmax_grad attention_core real_rfft real_irfft real_rfft2 real_irfft2 "
+        "complex_reciprocal complex_exp interpolate Conv3d conv3d conv3d_gelu "
+        "custom_gru_v2 complex_addcmul"
     )
     return 0
 

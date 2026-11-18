@@ -121,7 +121,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 
 ## 📖 接口支持清单
 
-当前交付 7 个 AscendC 算子、5 个 Triton-Ascend 算子和 2 个 Composite-Torch 算子：
+当前交付 7 个 AscendC 算子、7 个 Triton-Ascend 算子和 2 个 Composite-Torch 算子：
 
 | 名称 / OpType | 后端 / 交付物 | 功能 | dtype / format |
 |---------------|---------------|------|----------------|
@@ -134,6 +134,8 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 | [`Conv3DGeluGrad`](ascendc/operators/conv3d_gelu_grad/) | AscendC / OPP `.run`（AIV + 内置 conv3d 反向） | 重算 conv3d，再 GELU 反向，再 conv3d 反向 | `float32` / `NCDHW` |
 | [`real_rfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 实数正向 FFT：`x -> (xr, xi)`，频率轴长度 `n // 2 + 1` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
 | [`real_irfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 从实部、虚部半谱重建实数：`(xr, xi), n -> y` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
+| [`real_rfft2`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 二维实数正向 FFT：`x -> (xr, xi)`，`dim[1]` 轴长度 `n // 2 + 1`；由 `real_rfft` 组合，无新 kernel | `float32`；非 NPU 环境回退到 PyTorch |
+| [`real_irfft2`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 二维半谱重建实数：`(xr, xi), s -> y`；由 `real_irfft` 组合，无新 kernel | `float32`；非 NPU 环境回退到 PyTorch |
 | [`complex_reciprocal`](triton-ascend/complex_reciprocal/) | Triton-Ascend / Python whl | 复数倒数 `1/z`（`z` 或 `xr, xi` 两种形式、自定义反向） | NPU kernel 为 `complex64`，非 NPU 环境回退到 PyTorch |
 | [`complex_exp`](triton-ascend/complex_exp/) | Triton-Ascend / Python whl | 复数指数 `e^z`（自定义反向） | NPU kernel 为 `complex64`，非 NPU 环境回退到 PyTorch |
 | [`interpolate`](triton-ascend/interpolate/) | Triton-Ascend / Python whl | 2D/3D 线性插值；5D fp32 走 Cube GEMM，4D 走原生 | 5D `float32`；4D 由原生实现支持 |
@@ -154,7 +156,7 @@ oil-gas-ops-prospect/
 │   ├── scripts/            #   msopgen 构建流程内部模块
 │   └── build.sh            #   AscendC 侧入口（--pkg 打包 / -u --ophost 跑 UT）
 ├── triton-ascend/          # Triton-Ascend 算子（按算子名打包为 oil_gas_ops_prospect.<op>）
-│   ├── real_fft/           #   real_rfft / real_irfft
+│   ├── real_fft/           #   real_rfft / real_irfft / real_rfft2 / real_irfft2
 │   ├── complex_reciprocal/ #   complex_reciprocal（多态：z 或 xr,xi）
 │   ├── complex_exp/        #   complex_exp
 │   ├── interpolate/        #   interpolate（5D Cube GEMM，4D 原生）

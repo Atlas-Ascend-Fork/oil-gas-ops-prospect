@@ -58,7 +58,7 @@ oil-gas-ops-prospect/
 │   └── _work/                                  #   msopgen 临时工程（构建产生，不纳入版本管理）
 │
 ├── triton-ascend/                              # ★ Triton-Ascend 算子（按算子名打包为 oil_gas_ops_prospect.<op>）
-│   ├── real_fft/                               #   real_rfft / real_irfft
+│   ├── real_fft/                               #   real_rfft / real_irfft / real_rfft2 / real_irfft2
 │   │   ├── triton_fft_real.py                  #     Triton kernel 与 autograd 封装
 │   │   └── README.md
 │   ├── complex_reciprocal/                     #   complex_reciprocal（z 或 xr, xi 两种形式）
@@ -99,7 +99,7 @@ oil-gas-ops-prospect/
 │   ├── composite/conv3d_custom/                #   Conv3d / conv3d CPU 精度与性能基准
 │   ├── composite/complex_addcmul/              #   complex_addcmul CPU/NPU 精度与反向
 │   └── triton/
-│       ├── real_fft/                           #   rFFT / iRFFT 精度（含 CPU 回退路径）
+│       ├── real_fft/                           #   rFFT / iRFFT / 2D 组合接口精度（含 CPU 回退路径）
 │       ├── complex_reciprocal/                 #   复数倒数精度（CPU 回退 + NPU verify）
 │       └── complex_exp/                        #   复数指数精度（CPU 回退 + NPU verify + report）
 │

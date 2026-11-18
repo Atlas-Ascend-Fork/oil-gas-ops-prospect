@@ -10,7 +10,7 @@ oil_gas_ops_prospect
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
 ├── conv3d_gelu           # conv3d_gelu
 ├── custom_gru_v2         # custom_gru_v2, CustomGRU
-├── real_fft              # real_rfft, real_irfft, make_basis
+├── real_fft              # real_rfft, real_irfft, real_rfft2, real_irfft2, make_basis
 ├── complex_reciprocal    # complex_reciprocal (either z or xr, xi)
 ├── complex_exp           # complex_exp
 ├── interpolate           # interpolate, bilinear, trilinear
@@ -262,6 +262,63 @@ Reconstructs a real signal of length `n` from the half-spectrum real part `xr` a
 | `block_k`, `block_m`, `block_n` | `int` or `None` | Triton kernel tiling |
 
 When not on an NPU, or when Triton is unavailable, it falls back to `torch.fft.irfft`.
+
+### `real_rfft2`
+
+```python
+from oil_gas_ops_prospect.real_fft import real_rfft2
+
+def real_rfft2(
+    x: torch.Tensor,
+    s: Sequence[int] | None = None,
+    dim: tuple[int, int] | Sequence[int] = (-2, -1),
+    norm: str = "backward",
+    block_n: int | None = None,
+    block_m: int | None = None,
+    block_k: int | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]
+```
+
+Two-dimensional real forward FFT, semantically identical to `torch.fft.rfft2(x, s=s, dim=dim, norm=norm)`: the `dim[1]` axis becomes `n // 2 + 1` while `dim[0]` keeps the full spectrum length. It returns the half-spectrum as two **real** tensors `(real, imag)` and never builds a complex dtype. autograd is supported.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `x` | `torch.Tensor` | input real tensor; the NPU path requires `float32` |
+| `s` | 2-element sequence or `None` | signal lengths of the two transformed axes; `None` keeps the input sizes. Length mismatches are truncated or zero-padded with the same semantics as `torch.fft` |
+| `dim` | 2-element sequence | the two transformed axes, which must be distinct; the half spectrum lives on `dim[1]` |
+| `norm` | `str` | `"backward"` (default, matching the torch default) or `"ortho"` |
+| `block_n`, `block_m`, `block_k` | `int` or `None` | tiling parameters forwarded to the 1-D kernels |
+
+The implementation composes `real_rfft` into a 2-D transform (linearity + conjugate reversal + Hermitian completion) and adds no new kernel. When not on an NPU, when Triton is unavailable, or when the input is not `float32`, it falls back to `torch.fft.rfft2`.
+
+### `real_irfft2`
+
+```python
+from oil_gas_ops_prospect.real_fft import real_irfft2
+
+def real_irfft2(
+    xr: torch.Tensor,
+    xi: torch.Tensor,
+    s: Sequence[int] | None = None,
+    dim: tuple[int, int] | Sequence[int] = (-2, -1),
+    norm: str = "backward",
+    block_k: int | None = None,
+    block_m: int | None = None,
+    block_n: int | None = None,
+) -> torch.Tensor
+```
+
+Two-dimensional real inverse FFT: rebuilds a real tensor from the half-spectrum `(xr, xi)`. It matches `torch.fft.irfft2(complex(xr, xi), s=s, dim=dim, norm=norm)`, including how `s` truncates or zero-pads the two spectrum axes. autograd is supported.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `xr`, `xi` | `torch.Tensor` | real and imaginary parts of the half spectrum; **their shapes must be identical**, otherwise `ValueError` is raised |
+| `s` | 2-element sequence or `None` | output lengths of the two axes; `None` uses `s = (xr.shape[dim[0]], (xr.shape[dim[1]] - 1) * 2)` |
+| `dim` | 2-element sequence | the two transformed axes, which must be distinct; the half spectrum lives on `dim[1]` |
+| `norm` | `str` | `"backward"` (default) or `"ortho"` |
+| `block_k`, `block_m`, `block_n` | `int` or `None` | tiling parameters forwarded to the 1-D kernels |
+
+For non-last-axis transforms of large length, `real_rfft2` / `real_irfft2` move the axis to last internally (an on-device transpose), so callers do not need to know the compile-time length limit of the 1-D kernels.
 
 ### `make_basis`
 
@@ -517,7 +574,7 @@ Custom environment variables all use the `OIL_GAS_OPS_` prefix.
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_CONV3D_GELU` | `0` / `1` | `0` | set to `1` to forbid the PyTorch fallback |
 | `OIL_GAS_OPS_RECIP_BLOCK` | positive integer (power of two) | `2048` | tile size of `complex_reciprocal` (rounded down to a power of two, clamped to `[16, 2048]`); an explicit `block_size` argument takes precedence |
 | `OIL_GAS_OPS_INTERPOLATE_IMPL` | `auto` / `triton` / `torch` | `auto` | implementation choice for `interpolate`; `auto` uses Cube for large 5D fp32 outputs and falls back natively for 4D, small outputs and non-fp32 inputs |
-| `OIL_GAS_OPS_FFT_BLOCK_M` | positive integer | `512` | row tile size of the DFT matmul in `real_rfft` / `real_irfft`, for performance tuning (sweep 128 / 256 / 512). Read once per process on first use, so set it before starting Python |
+| `OIL_GAS_OPS_FFT_BLOCK_M` | positive integer | `512` | row tile size of the DFT matmul in `real_rfft` / `real_irfft` (and in `real_rfft2` / `real_irfft2`, which compose them), for performance tuning (sweep 128 / 256 / 512). Read once per process on first use, so set it before starting Python |
 
 ### Build and Artifacts
 

@@ -5,7 +5,7 @@
 | 示例 | 说明 | 需要 NPU |
 |------|------|----------|
 | [`complex_mul_example.py`](complex_mul_example.py) | AscendC 四路 float 复数逐点乘的前向、反向与精度对拍 | 有 NPU 时走自定义算子，否则走 PyTorch 参考实现 |
-| [`real_fft_example.py`](real_fft_example.py) | Triton-Ascend 实数 FFT 的正反变换、往返重建与 autograd | 有 NPU 时走 Triton kernel，否则回退 `torch.fft` |
+| [`real_fft_example.py`](real_fft_example.py) | Triton-Ascend 实数 FFT 的正反变换（1D / 2D）、往返重建与 autograd | 有 NPU 时走 Triton kernel，否则回退 `torch.fft` |
 
 各 AscendC 算子还有对齐 ops-nn addmv 的 C++ 两段式样例：`examples/aclnn/<op>/test_aclnn_*.cpp`（需要 NPU + customize vendor）。
 

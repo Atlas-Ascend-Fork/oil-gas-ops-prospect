@@ -121,7 +121,7 @@ Operator precision, performance and device memory on the NPU must be verified on
 
 ## 📖 Supported API List
 
-The current delivery contains 7 AscendC operators, 5 Triton-Ascend operators and 2 Composite-Torch operators:
+The current delivery contains 7 AscendC operators, 7 Triton-Ascend operators and 2 Composite-Torch operators:
 
 | Name / OpType | Backend / Deliverable | Function | dtype / format |
 |---------------|-----------------------|----------|----------------|
@@ -134,6 +134,8 @@ The current delivery contains 7 AscendC operators, 5 Triton-Ascend operators and
 | [`Conv3DGeluGrad`](ascendc/operators/conv3d_gelu_grad/) | AscendC / OPP `.run` (AIV + built-in conv3d backward) | recompute conv3d, then GELU backward, then conv3d backward | `float32` / `NCDHW` |
 | [`real_rfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | real forward FFT: `x -> (xr, xi)`, frequency axis length `n // 2 + 1` | the NPU kernel is `float32`; falls back to PyTorch outside an NPU environment |
 | [`real_irfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | reconstructs a real signal from the half-spectrum real and imaginary parts: `(xr, xi), n -> y` | the NPU kernel is `float32`; falls back to PyTorch outside an NPU environment |
+| [`real_rfft2`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 2-D real forward FFT: `x -> (xr, xi)` with `dim[1]` length `n // 2 + 1`; composed from `real_rfft`, no new kernel | `float32`; falls back to PyTorch outside an NPU environment |
+| [`real_irfft2`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 2-D real reconstruction from a half spectrum: `(xr, xi), s -> y`; composed from `real_irfft`, no new kernel | `float32`; falls back to PyTorch outside an NPU environment |
 | [`complex_reciprocal`](triton-ascend/complex_reciprocal/) | Triton-Ascend / Python whl | complex reciprocal `1/z` (either `z` or `xr, xi`, with a custom backward) | the NPU kernel is `complex64`; falls back to PyTorch outside an NPU environment |
 | [`complex_exp`](triton-ascend/complex_exp/) | Triton-Ascend / Python whl | complex exponential `e^z` (custom backward) | the NPU kernel is `complex64`; falls back to PyTorch outside an NPU environment |
 | [`interpolate`](triton-ascend/interpolate/) | Triton-Ascend / Python whl | 2D/3D linear interpolation; 5D fp32 uses Cube GEMM, 4D uses the native kernel | `float32` for 5D; 4D is supported by the native path |
@@ -154,7 +156,7 @@ oil-gas-ops-prospect/
 │   ├── scripts/            #   internal modules of the msopgen build flow
 │   └── build.sh            #   AscendC-side entry (--pkg to package / -u --ophost to run UT)
 ├── triton-ascend/          # Triton-Ascend operators (packaged per operator as oil_gas_ops_prospect.<op>)
-│   ├── real_fft/           #   real_rfft / real_irfft
+│   ├── real_fft/           #   real_rfft / real_irfft / real_rfft2 / real_irfft2
 │   ├── complex_reciprocal/ #   complex_reciprocal (polymorphic: z or xr, xi)
 │   ├── complex_exp/        #   complex_exp
 │   ├── interpolate/        #   interpolate (5D Cube GEMM, 4D native)

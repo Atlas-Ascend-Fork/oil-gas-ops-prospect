@@ -154,6 +154,31 @@ print(x.grad.shape)
 OIL_GAS_OPS_FFT_BLOCK_M=256 python3 your_script.py
 ```
 
+### 二维实数 FFT
+
+`real_rfft2` / `real_irfft2` 用一维算子组合出二维变换，语义对齐 `torch.fft.rfft2` / `irfft2`，返回值仍为实数 `(real, imag)` 对：
+
+```python
+from oil_gas_ops_prospect.real_fft import real_irfft2, real_rfft2
+
+x = torch.randn(4, 128, 256, device="npu")
+
+# 正向：dim[1] 轴变为 256 // 2 + 1 = 129
+xr, xi = real_rfft2(x, dim=(-2, -1))                 # norm 默认 "backward"
+print(xr.shape)  # torch.Size([4, 128, 129])
+
+# 反向
+y = real_irfft2(xr, xi, s=(128, 256), dim=(-2, -1))
+print(torch.allclose(x, y, rtol=1e-4, atol=1e-4))
+```
+
+约束与说明：
+
+- `norm` 支持 `"backward"`（默认，与 torch 默认一致）与 `"ortho"`；一维入口仍只支持 `"ortho"`。
+- `dim` 必须恰有两个互不相同的轴；`s` 的裁断/零填充语义与 `torch.fft` 一致。
+- 这是组合接口：不新增 kernel，内部复用一维 `real_rfft` / `real_irfft`；非 NPU / 非 `float32` 时回退 `torch.fft`。
+- 非末轴且长度较大时内部会先把轴搬到末轴，调用方不需要感知一维 kernel 的编译长度上限。
+
 ## Triton-Ascend：复数倒数
 
 ```python

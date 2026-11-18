@@ -503,9 +503,11 @@ def collect_fft(ctx: SuiteContext, results: list[JobResult]) -> None:
     fft_dir = REPO_ROOT / "tests" / "triton" / "real_fft"
     verify = fft_dir / "verify_triton_fft_real_128_3d.py"
     bench = fft_dir / "bench_opensource_perf.py"
+    verify_2d = fft_dir / "verify_real_fft2.py"
     fft_jobs = [
         ("fft_npu_verify", [sys.executable, str(verify), "--size", "128", "--rounds", "1"]),
         ("fft_npu_verify_5d", [sys.executable, str(verify), "--run-spectral-3d-smoke", "--rounds", "1"]),
+        ("fft_npu_verify_2d", [sys.executable, str(verify_2d), "--mode", "precision"]),
         ("fft_npu_perf", [sys.executable, str(bench)]),
     ]
     for name, cmd in fft_jobs:

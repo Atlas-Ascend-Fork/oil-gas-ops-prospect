@@ -14,7 +14,7 @@
 # limitations under the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""real_rfft / real_irfft 调用示例。
+"""real_rfft / real_irfft / real_rfft2 / real_irfft2 调用示例。
 
 有 NPU 时走 Triton kernel，无 NPU 时自动回退到 torch.fft，因此在开发容器里也能跑通。
 
@@ -30,11 +30,13 @@ import sys
 import torch
 
 import _bootstrap  # noqa: F401  (side effect: resolve the package from a source checkout)
-from oil_gas_ops_prospect.real_fft import real_irfft, real_rfft
+from oil_gas_ops_prospect.real_fft import real_irfft, real_irfft2, real_rfft, real_rfft2
 
 BATCH = 8
 N = 256
 DIM = -1
+H = 32
+W = 64
 
 
 def pick_device() -> str:
@@ -75,6 +77,19 @@ def main() -> int:
     gr, gi = real_rfft(xg, dim=DIM)
     (gr.pow(2).sum() + gi.pow(2).sum()).backward()
     print(f"[autograd] grad shape={tuple(xg.grad.shape)} finite={bool(torch.isfinite(xg.grad).all())}")
+
+    # ---- 二维：分离式组合，返回实部/虚部两个实数张量 ----
+    x2 = torch.randn(2, H, W, device=device)
+    x2r, x2i = real_rfft2(x2, dim=(-2, -1), norm="backward")
+    ref2 = torch.fft.rfft2(x2.float(), dim=(-2, -1), norm="backward")
+    print(f"[rfft2] {tuple(x2.shape)} -> real{tuple(x2r.shape)} imag{tuple(x2i.shape)}")
+    print(f"[rfft2] vs torch.fft rel_err real={rel_err(x2r, ref2.real):.3e} imag={rel_err(x2i, ref2.imag):.3e}")
+    y2 = real_irfft2(x2r, x2i, s=(H, W), dim=(-2, -1), norm="backward")
+    print(f"[irfft2] round-trip rel_err={rel_err(y2, x2):.3e}")
+
+    o2r, _ = real_rfft2(x2, dim=(-2, -1), norm="ortho")
+    ref2o = torch.fft.rfft2(x2.float(), dim=(-2, -1), norm="ortho")
+    print(f"[rfft2] ortho rel_err real={rel_err(o2r, ref2o.real):.3e}")
 
     # ---- 非法入参 ----
     try:

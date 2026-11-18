@@ -154,6 +154,31 @@ print(x.grad.shape)
 OIL_GAS_OPS_FFT_BLOCK_M=256 python3 your_script.py
 ```
 
+### 2-D Real FFT
+
+`real_rfft2` / `real_irfft2` compose the 1-D operators into a 2-D transform matching `torch.fft.rfft2` / `irfft2`; they still return a real `(real, imag)` pair:
+
+```python
+from oil_gas_ops_prospect.real_fft import real_irfft2, real_rfft2
+
+x = torch.randn(4, 128, 256, device="npu")
+
+# forward: the dim[1] axis becomes 256 // 2 + 1 = 129
+xr, xi = real_rfft2(x, dim=(-2, -1))                 # norm defaults to "backward"
+print(xr.shape)  # torch.Size([4, 128, 129])
+
+# inverse
+y = real_irfft2(xr, xi, s=(128, 256), dim=(-2, -1))
+print(torch.allclose(x, y, rtol=1e-4, atol=1e-4))
+```
+
+Constraints and notes:
+
+- `norm` accepts `"backward"` (default, matching the torch default) and `"ortho"`; the 1-D entry points still accept only `"ortho"`.
+- `dim` must contain exactly two distinct axes; `s` truncates / zero-pads with the same semantics as `torch.fft`.
+- These are composed interfaces: no new kernel, the 1-D `real_rfft` / `real_irfft` are reused; outside an NPU or for non-`float32` inputs they fall back to `torch.fft`.
+- For a long non-last-axis transform the axis is moved to last internally, so callers need not know the compile-time length limit of the 1-D kernels.
+
 ## Triton-Ascend: Complex Reciprocal
 
 ```python

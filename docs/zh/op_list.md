@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/op_list.md)
 
-当前仓库交付 7 个 AscendC/CANN OPP 算子、5 个 Triton-Ascend Python 算子和 2 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
+当前仓库交付 7 个 AscendC/CANN OPP 算子、7 个 Triton-Ascend Python 算子和 2 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
 
@@ -17,6 +17,8 @@
 | `CustomGRUV2` | AscendC | `aclnnCustomGRUV2` / `custom_gru_v2` | [`ascendc/operators/custom_gru_v2/`](../../ascendc/operators/custom_gru_v2/) | 单层 GRU 融合 kernel（gate 行序 [r; z; n] 与 PyTorch nn.GRU 一致，tanh 用 2·sigmoid(2x)−1 稳定形式），单向/双向，反向由 Python autograd 承担 | `float32` / `ND` | Ascend 910B |
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 实数正向 FFT：`x → (xr, xi)` | NPU kernel 为 `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 半谱重建实数：`(xr, xi), n → y` | NPU kernel 为 `float32` | Ascend 910B |
+| `real_rfft2` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft2` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 二维实数正向 FFT：`x → (xr, xi)`（组合接口，无新 kernel） | NPU kernel 为 `float32` | Ascend 910B |
+| `real_irfft2` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft2` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 二维半谱重建实数：`(xr, xi), s → y`（组合接口，无新 kernel） | NPU kernel 为 `float32` | Ascend 910B |
 | `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | 复数倒数 `1/z`（`z` 或 `xr, xi`） | NPU kernel 为 `complex64` | Ascend 910B |
 | `complex_exp` | Triton-Ascend | `oil_gas_ops_prospect.complex_exp.complex_exp` | [`triton-ascend/complex_exp/`](../../triton-ascend/complex_exp/) | 复数指数 `e^z` | NPU kernel 为 `complex64` | Ascend 910B |
 | `interpolate` | Triton-Ascend | `oil_gas_ops_prospect.interpolate.interpolate` | [`triton-ascend/interpolate/`](../../triton-ascend/interpolate/) | 2D/3D 线性插值；5D fp32 走 Cube GEMM，4D 走原生 | 5D `float32`；4D 由原生实现支持 | Ascend 910B |
@@ -352,6 +354,83 @@ y[t] = \sum_{k=0}^{n//2} \bigl( X_r[k]\,\mathrm{irfft\_cos}[t,k] - X_i[k]\,\math
 - 支持 autograd。
 
 `make_basis(n, device, norm)` 是内部辅助，一般不必直接调用；签名见[接口列表](api_list.md#make_basis)。
+
+---
+
+### real_rfft2
+
+二维实数正向 FFT。**组合接口**：不引入新 kernel，语义与 `torch.fft.rfft2` 一致，返回半谱的实部、虚部两个实数张量。
+
+#### 数学定义
+
+\[
+X[k_1,k_2] = \sum_{t_1}\sum_{t_2} x[t_1,t_2]\, e^{-2\pi i (k_1 t_1/h + k_2 t_2/w)},\quad k_2 = 0,\ldots,\lfloor w/2\rfloor
+\]
+
+与 `torch.fft.rfft2(x, dim=(d_1,d_2), norm=norm)` 等价；`d_2` 轴输出长度 \(w//2+1\)，`d_1` 轴保持全谱长度。
+
+实现基于两个只要求「实序列 FFT」的恒等式，全部落在已有的一维 `real_rfft` 上：
+
+\[
+\mathrm{FFT}(a+ib) = \mathrm{FFT}(a) + i\,\mathrm{FFT}(b),\qquad
+\mathrm{IFFT_{ortho}}(z) = \overline{\mathrm{FFT_{ortho}}(\bar z)}
+\]
+
+一维 `real_rfft` 只给半谱，进入恒等式前按 \(X[n-k]=\overline{X[k]}\) 补成全谱，补全长度 \(n-(n//2+1)\)。
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `x` | 实数信号 | 任意 rank；NPU 路径要求 `float32` | `float32` |
+| 输入 | `s` | 两个变换轴的信号长度 | 可选，`None` 沿用输入尺寸 | `int` 序列 |
+| 输入 | `dim` | 两个变换轴 | 必须互不相同，半谱在 `dim[1]` | `int` 序列 |
+| 输入 | `norm` | 归一化 | `"backward"`（默认）或 `"ortho"` | `str` |
+| 输入 | `block_n` / `block_m` / `block_k` | 透传给一维 kernel 的分块参数 | 可选 | `int` |
+| 输出 | `xr`, `xi` | 半谱实部、虚部 | `dim[1]` 变为 \(w//2+1\)，`dim[0]` 保持 | `float32` |
+
+#### 约束
+
+- `norm` 只接受 `"backward"` / `"ortho"`，其他值抛 `ValueError`。
+- `dim` 必须恰有两个互不相同且在下标范围内的元素。
+- `s` 的裁断/零填充语义与 `torch.fft` 一致。
+- 非 NPU / Triton 不可用 / 非 `float32` 时回退 `torch.fft.rfft2`。
+- 内部按 `ortho` 计算，`backward` 通过整体乘 \(\sqrt{hw}\) 换算。
+- 非末轴且长度超过内部阈值（320）时先把轴搬到末轴，避免 strided kernel 编译失败；
+  末轴做半谱补全前也会先把该轴搬到 0，避开 910B 上 stride-1 `flip` 的慢路径。
+- 组合实现 kernel 数多于原生。910B2 实测按行数 `numel/(h*w)` 分档：行数 ≲64 时慢 3~5 倍，
+  约 256 行起反超（N=288 时 1.30×、N=576 时 1.17×）。收益来自实数输出表示与连续布局，
+  不是变换本身更快；详见 [`triton-ascend/real_fft/README.md`](../../triton-ascend/real_fft/README.md)。
+- 支持 autograd。
+
+---
+
+### real_irfft2
+
+二维实数逆 FFT，是 `real_rfft2` 的逆变换，语义与 `torch.fft.irfft2` 一致。
+
+#### 数学定义
+
+按相反顺序组合：先在 `dim[0]` 上做完整复数逆（共轭反转 + 一次正向 + 共轭），再在 `dim[1]` 上做一维 `real_irfft`。`backward` 归一化通过除以 \(\sqrt{hw}\) 换算。
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `xr`, `xi` | 半谱实部、虚部 | 彼此相同；`dim[1]` 为 \(w//2+1\) | `float32` |
+| 输入 | `s` | 重建后的两个轴长度 | 可选；`None` 时由谱形状反推 | `int` 序列 |
+| 输入 | `dim` | 两个变换轴 | 互不相同 | `int` 序列 |
+| 输入 | `norm` | 归一化 | `"backward"`（默认）或 `"ortho"` | `str` |
+| 输入 | `block_k` / `block_m` / `block_n` | 透传给一维 kernel 的分块参数 | 可选 | `int` |
+| 输出 | `y` | 实数信号 | `dim[0]` 为 \(h\)，`dim[1]` 为 \(w\) | 与 `xr` 相同 |
+
+#### 约束
+
+- `xr.shape` 必须等于 `xi.shape`，否则抛 `ValueError`。
+- `dim[1]` 必须是半谱轴；`s` 对半谱轴同样按 torch 语义裁断/零填充。
+- 非 NPU / Triton 不可用 / 非 `float32` 时回退 `torch.fft.irfft2`。
+- 沿途非末轴 `irfft` 也内置搬轴兜底，长度超过阈值不会触发 kernel 编译失败。
+- 支持 autograd。
 
 实现与调试用法详见 [`triton-ascend/real_fft/README.md`](../../triton-ascend/real_fft/README.md)。
 

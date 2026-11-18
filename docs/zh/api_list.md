@@ -10,7 +10,7 @@ oil_gas_ops_prospect
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
 ├── conv3d_gelu           # conv3d_gelu
 ├── custom_gru_v2         # custom_gru_v2, CustomGRU
-├── real_fft              # real_rfft, real_irfft, make_basis
+├── real_fft              # real_rfft, real_irfft, real_rfft2, real_irfft2, make_basis
 ├── complex_reciprocal   # complex_reciprocal（z 或 xr, xi 两种形式）
 ├── complex_exp          # complex_exp
 ├── interpolate           # interpolate, bilinear, trilinear
@@ -262,6 +262,63 @@ def real_irfft(
 | `block_k`、`block_m`、`block_n` | `int` 或 `None` | Triton kernel 分块 |
 
 非 NPU / Triton 不可用时回退 `torch.fft.irfft`。
+
+### `real_rfft2`
+
+```python
+from oil_gas_ops_prospect.real_fft import real_rfft2
+
+def real_rfft2(
+    x: torch.Tensor,
+    s: Sequence[int] | None = None,
+    dim: tuple[int, int] | Sequence[int] = (-2, -1),
+    norm: str = "backward",
+    block_n: int | None = None,
+    block_m: int | None = None,
+    block_k: int | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]
+```
+
+二维实数正向 FFT，语义与 `torch.fft.rfft2(x, s=s, dim=dim, norm=norm)` 一致：`dim[1]` 轴长度变为 `n // 2 + 1`，`dim[0]` 轴保持全谱长度。返回半谱的 `(real, imag)` 两个**实数**张量，不构造 complex dtype。支持 autograd。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `x` | `torch.Tensor` | 输入实数张量；NPU 路径要求 `float32` |
+| `s` | 2 元素序列或 `None` | 两个变换轴的信号长度；`None` 沿用输入尺寸。长度不符时按 `torch.fft` 语义裁断或零填充 |
+| `dim` | 2 元素序列 | 两个变换轴，必须互不相同；半谱落在 `dim[1]` |
+| `norm` | `str` | `"backward"`（默认，与 torch 默认一致）或 `"ortho"` |
+| `block_n`、`block_m`、`block_k` | `int` 或 `None` | 透传给一维 kernel 的分块参数 |
+
+实现是把 `real_rfft` 组合成二维变换（线性 + 共轭反转 + Hermitian 补全），不引入新 kernel。非 NPU、Triton 不可用或输入不是 `float32` 时回退 `torch.fft.rfft2`。
+
+### `real_irfft2`
+
+```python
+from oil_gas_ops_prospect.real_fft import real_irfft2
+
+def real_irfft2(
+    xr: torch.Tensor,
+    xi: torch.Tensor,
+    s: Sequence[int] | None = None,
+    dim: tuple[int, int] | Sequence[int] = (-2, -1),
+    norm: str = "backward",
+    block_k: int | None = None,
+    block_m: int | None = None,
+    block_n: int | None = None,
+) -> torch.Tensor
+```
+
+二维实数逆 FFT：半谱 `(xr, xi)` 重建实数张量。语义与 `torch.fft.irfft2(complex(xr, xi), s=s, dim=dim, norm=norm)` 一致，`s` 对两条谱轴的裁断/零填充行为也与 torch 相同。支持 autograd。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `xr`, `xi` | `torch.Tensor` | 半谱实部、虚部，**shape 必须相同**，否则抛 `ValueError` |
+| `s` | 2 元素序列或 `None` | 重建后的两个轴长度；`None` 时 `s = (xr.shape[dim[0]], (xr.shape[dim[1]] - 1) * 2)` |
+| `dim` | 2 元素序列 | 两个变换轴，必须互不相同；半谱在 `dim[1]` 上 |
+| `norm` | `str` | `"backward"`（默认）或 `"ortho"` |
+| `block_k`、`block_m`、`block_n` | `int` 或 `None` | 透传给一维 kernel 的分块参数 |
+
+非末轴且变换长度较大时，`real_rfft2` / `real_irfft2` 内部会把轴搬到末轴（设备内 transpose），调用方不需要感知一维 kernel 的编译长度上限。
 
 ### `make_basis`
 
@@ -519,7 +576,7 @@ Triton 算子没有 aclnn 入口。
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_CONV3D_GELU` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch |
 | `OIL_GAS_OPS_RECIP_BLOCK` | 正整数（2 的幂） | `2048` | `complex_reciprocal` 的 tile 大小（向下取整到 2 的幂，钳制 `[16, 2048]`）；显式传入的 `block_size` 参数优先 |
 | `OIL_GAS_OPS_INTERPOLATE_IMPL` | `auto` / `triton` / `torch` | `auto` | `interpolate` 的实现选择；`auto` 对大 5D fp32 输出走 Cube，4D/小输出/非 fp32 回退原生 |
-| `OIL_GAS_OPS_FFT_BLOCK_M` | 正整数 | `512` | `real_rfft` / `real_irfft` 的 DFT-matmul 行分块大小，用于性能调优（可扫 128 / 256 / 512）。每进程首次使用时读取一次并缓存，需在启动 Python 前设置 |
+| `OIL_GAS_OPS_FFT_BLOCK_M` | 正整数 | `512` | `real_rfft` / `real_irfft`（以及在其上组合的 `real_rfft2` / `real_irfft2`）的 DFT-matmul 行分块大小，用于性能调优（可扫 128 / 256 / 512）。每进程首次使用时读取一次并缓存，需在启动 Python 前设置 |
 
 ### 构建与产物
 

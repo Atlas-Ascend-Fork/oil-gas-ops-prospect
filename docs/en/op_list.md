@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/op_list.md)
 
-This repository currently delivers 7 AscendC/CANN OPP operators, 5 Triton-Ascend Python operators and 2 Composite-Torch (pure PyTorch) operators. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
+This repository currently delivers 7 AscendC/CANN OPP operators, 7 Triton-Ascend Python operators and 2 Composite-Torch (pure PyTorch) operators. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
 
 ## Overview
 
@@ -17,6 +17,8 @@ This repository currently delivers 7 AscendC/CANN OPP operators, 5 Triton-Ascend
 | `CustomGRUV2` | AscendC | `aclnnCustomGRUV2` / `custom_gru_v2` | [`ascendc/operators/custom_gru_v2/`](../../ascendc/operators/custom_gru_v2/) | single-layer fused GRU kernel (gate order [r; z; n] matches PyTorch nn.GRU, tanh uses the 2·sigmoid(2x)−1 stable form), unidirectional/bidirectional, backward handled by Python autograd | `float32` / `ND` | Ascend 910B |
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | real forward FFT: `x → (xr, xi)` | the NPU kernel is `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | real reconstruction from a half spectrum: `(xr, xi), n → y` | the NPU kernel is `float32` | Ascend 910B |
+| `real_rfft2` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft2` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 2-D real forward FFT: `x → (xr, xi)` (composed interface, no new kernel) | the NPU kernel is `float32` | Ascend 910B |
+| `real_irfft2` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft2` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 2-D real reconstruction from a half spectrum: `(xr, xi), s → y` (composed interface, no new kernel) | the NPU kernel is `float32` | Ascend 910B |
 | `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | complex reciprocal `1/z` (`z` or `xr, xi`) | the NPU kernel is `complex64` | Ascend 910B |
 | `complex_exp` | Triton-Ascend | `oil_gas_ops_prospect.complex_exp.complex_exp` | [`triton-ascend/complex_exp/`](../../triton-ascend/complex_exp/) | complex exponential `e^z` | the NPU kernel is `complex64` | Ascend 910B |
 | `interpolate` | Triton-Ascend | `oil_gas_ops_prospect.interpolate.interpolate` | [`triton-ascend/interpolate/`](../../triton-ascend/interpolate/) | 2D/3D linear interpolation; 5D fp32 uses Cube GEMM, 4D uses the native kernel | `float32` for 5D; 4D is supported by the native path | Ascend 910B |
@@ -352,6 +354,84 @@ y[t] = \sum_{k=0}^{n//2} \bigl( X_r[k]\,\mathrm{irfft\_cos}[t,k] - X_i[k]\,\math
 - autograd is supported.
 
 `make_basis(n, device, norm)` is an internal helper that normally needs no direct call; for its signature see the [API List](api_list.md#make_basis).
+
+---
+
+### real_rfft2
+
+Two-dimensional real forward FFT. This is a **composed interface**: it adds no new kernel, matches `torch.fft.rfft2`, and returns the half spectrum as two real tensors.
+
+#### Mathematical definition
+
+\[
+X[k_1,k_2] = \sum_{t_1}\sum_{t_2} x[t_1,t_2]\, e^{-2\pi i (k_1 t_1/h + k_2 t_2/w)},\quad k_2 = 0,\ldots,\lfloor w/2\rfloor
+\]
+
+Equivalent to `torch.fft.rfft2(x, dim=(d_1,d_2), norm=norm)`: the `d_2` axis has length \(w//2+1\) while `d_1` keeps the full spectrum length.
+
+The implementation is built on two identities that only ever require the FFT of a real sequence, all on the existing 1-D `real_rfft`:
+
+\[
+\mathrm{FFT}(a+ib) = \mathrm{FFT}(a) + i\,\mathrm{FFT}(b),\qquad
+\mathrm{IFFT_{ortho}}(z) = \overline{\mathrm{FFT_{ortho}}(\bar z)}
+\]
+
+A 1-D `real_rfft` returns only a half spectrum, so it is extended to full length with \(X[n-k]=\overline{X[k]}\) before entering the identities; the fill length is \(n-(n//2+1)\).
+
+#### Inputs / outputs
+
+| Direction | Name | Meaning | Shape | dtype |
+|-----------|------|---------|-------|-------|
+| Input | `x` | real signal | any rank; the NPU path requires `float32` | `float32` |
+| Input | `s` | signal lengths of the two transformed axes | optional, `None` keeps the input sizes | `int` sequence |
+| Input | `dim` | the two transformed axes | must be distinct; the half spectrum lives on `dim[1]` | `int` sequence |
+| Input | `norm` | normalization | `"backward"` (default) or `"ortho"` | `str` |
+| Input | `block_n` / `block_m` / `block_k` | tiling forwarded to the 1-D kernels | optional | `int` |
+| Output | `xr`, `xi` | half-spectrum real and imaginary parts | `dim[1]` becomes \(w//2+1\), `dim[0]` unchanged | `float32` |
+
+#### Constraints
+
+- `norm` accepts only `"backward"` / `"ortho"`; other values raise `ValueError`.
+- `dim` must contain exactly two distinct, in-range elements.
+- The truncation / zero-padding semantics of `s` match `torch.fft`.
+- Outside an NPU, without Triton, or for a non-`float32` input it falls back to `torch.fft.rfft2`.
+- It computes in `ortho` internally; `backward` is converted by a global \(\sqrt{hw}\) factor.
+- A non-last-axis transform longer than the internal threshold (320) moves the axis to last first, avoiding a strided-kernel compile failure;
+  the half-spectrum fill on the last axis also moves that axis to 0 first, avoiding the slow stride-1 `flip` path on 910B.
+- The composed implementation issues more kernels than the native one. Measured on 910B2 by row count `numel/(h*w)`:
+  it is 3~5x slower at `rows` up to ~64 and overtakes from about 256 rows (1.30x at N=288, 1.17x at N=576). The gain comes
+  from the real-valued output representation and its contiguous layout, not from a faster transform; see
+  [`triton-ascend/real_fft/README.md`](../../triton-ascend/real_fft/README.md).
+- autograd is supported.
+
+---
+
+### real_irfft2
+
+Two-dimensional real inverse FFT, the inverse of `real_rfft2`, matching `torch.fft.irfft2`.
+
+#### Mathematical definition
+
+The axes are composed in reverse order: a full complex inverse on `dim[0]` (conjugate reversal + one forward transform + conjugation), then a 1-D `real_irfft` on `dim[1]`. The `backward` normalization is converted by dividing by \(\sqrt{hw}\).
+
+#### Inputs / outputs
+
+| Direction | Name | Meaning | Shape | dtype |
+|-----------|------|---------|-------|-------|
+| Input | `xr`, `xi` | half-spectrum real and imaginary parts | identical to each other; `dim[1]` is \(w//2+1\) | `float32` |
+| Input | `s` | output lengths of the two axes | optional; `None` infers them from the spectrum shape | `int` sequence |
+| Input | `dim` | the two transformed axes | distinct | `int` sequence |
+| Input | `norm` | normalization | `"backward"` (default) or `"ortho"` | `str` |
+| Input | `block_k` / `block_m` / `block_n` | tiling forwarded to the 1-D kernels | optional | `int` |
+| Output | `y` | real signal | `dim[0]` is \(h\), `dim[1]` is \(w\) | same as `xr` |
+
+#### Constraints
+
+- `xr.shape` must equal `xi.shape`, otherwise `ValueError` is raised.
+- `dim[1]` must be the half-spectrum axis; `s` truncates / zero-pads that axis with the same torch semantics.
+- Outside an NPU, without Triton, or for a non-`float32` input it falls back to `torch.fft.irfft2`.
+- The non-last-axis `irfft` along the way also has the axis-move fallback, so lengths above the threshold do not trigger a kernel compile failure.
+- autograd is supported.
 
 For implementation and debugging details see [`triton-ascend/real_fft/README.md`](../../triton-ascend/real_fft/README.md) (Chinese).
 

@@ -13,8 +13,13 @@
 # limitations under the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Real-input FFT / iFFT Triton-Ascend operators."""
+"""Real-input FFT / iFFT Triton-Ascend operators.
 
-__all__ = ["make_basis", "real_irfft", "real_rfft"]
+一维入口为 ``real_rfft`` / ``real_irfft``；二维入口 ``real_rfft2`` / ``real_irfft2``
+由它们组合而成（见 ``fft2d.py``），不引入新的 kernel。
+"""
 
+__all__ = ["make_basis", "real_irfft", "real_irfft2", "real_rfft", "real_rfft2"]
+
+from .fft2d import real_irfft2, real_rfft2
 from .triton_fft_real import make_basis, real_irfft, real_rfft

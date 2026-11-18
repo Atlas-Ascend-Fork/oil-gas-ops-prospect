@@ -58,7 +58,7 @@ oil-gas-ops-prospect/
 │   └── _work/                                  #   temporary msopgen project (build output, not version controlled)
 │
 ├── triton-ascend/                              # ★ Triton-Ascend operators (packaged per operator as oil_gas_ops_prospect.<op>)
-│   ├── real_fft/                               #   real_rfft / real_irfft
+│   ├── real_fft/                               #   real_rfft / real_irfft / real_rfft2 / real_irfft2
 │   │   ├── triton_fft_real.py                  #     Triton kernels and autograd wrappers
 │   │   └── README.md
 │   ├── complex_reciprocal/                     #   complex_reciprocal (either z or xr, xi)
@@ -99,7 +99,7 @@ oil-gas-ops-prospect/
 │   ├── composite/conv3d_custom/                #   Conv3d / conv3d CPU precision and performance baseline
 │   ├── composite/complex_addcmul/              #   complex_addcmul CPU/NPU precision and backward
 │   └── triton/
-│       ├── real_fft/                           #   rFFT / iRFFT precision (includes the CPU fallback path)
+│       ├── real_fft/                           #   rFFT / iRFFT / 2-D composed interface precision (includes the CPU fallback path)
 │       ├── complex_reciprocal/                 #   complex reciprocal precision (CPU fallback + NPU verify)
 │       └── complex_exp/                        #   complex exponential precision (CPU fallback + NPU verify + report)
 │
