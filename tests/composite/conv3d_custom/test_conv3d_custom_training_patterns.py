@@ -74,3 +74,139 @@ def test_training_patterns(pattern, dtype):
         padding_mode=padding_mode, dtype=dtype, metric=metric,
     )
     assert_errors(errs, pattern[0], tol)
+
+
+# CPU autocast changes the convolution operands even when its parameters are
+# float32. Check the full public APIs and gradients of the original leaves.
+def _cpu_autocast_result(samples, grad_output, required, *, entry, native, enabled, config):
+    from oil_gas_ops_prospect.conv3d_custom import Conv3d
+    from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
+
+    x, weight, bias = [value.detach().clone() if value is not None else None for value in samples]
+    x.requires_grad_(required[0])
+    if entry == "module":
+        layer_type = torch.nn.Conv3d if native else Conv3d
+        layer = layer_type(x.shape[1], weight.shape[0], weight.shape[2:], bias=bias is not None, **config)
+        layer = layer.to(dtype=x.dtype)
+        with torch.no_grad():
+            layer.weight.copy_(weight)
+            if bias is not None:
+                layer.bias.copy_(bias)
+        layer.weight.requires_grad_(required[1])
+        if layer.bias is not None:
+            layer.bias.requires_grad_(required[2])
+        if not native:
+            layer.use_custom = True  # The documented CPU validation path.
+        leaves = (x, layer.weight, layer.bias)
+    else:
+        weight.requires_grad_(required[1])
+        if bias is not None:
+            bias.requires_grad_(required[2])
+        leaves = (x, weight, bias)
+
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=enabled):
+        if entry == "module":
+            result = layer(x)
+        else:
+            function = torch.nn.functional.conv3d if native else conv3d
+            result = function(x, weight, bias, **config)
+    selected = [value for value in leaves if value is not None and value.requires_grad]
+    grads = torch.autograd.grad(result, selected, grad_output.to(result.dtype)) if selected else ()
+    return result.detach(), tuple(value.detach() for value in grads)
+
+
+_CPU_GRAD_MASKS = [
+    (x, weight, bias)
+    for x in (False, True)
+    for weight in (False, True)
+    for bias in (False, True)
+]
+
+
+@pytest.mark.parametrize("required", _CPU_GRAD_MASKS)
+@pytest.mark.parametrize("entry", ["function", "module"])
+@pytest.mark.parametrize("enabled", [False, True], ids=["ordinary", "autocast"])
+def test_cpu_autocast_uses_effective_quantized_operands(required, entry, enabled):
+    x = torch.tensor([1.001, 1.003]).reshape(1, 1, 1, 1, 2)
+    weight = torch.tensor([1.001, 1.003]).reshape(2, 1, 1, 1, 1)
+    bias = torch.zeros(2)
+    grad_output = torch.tensor([0.75, -0.75, -0.75, 0.75]).reshape(1, 2, 1, 1, 2)
+    args = dict(samples=(x, weight, bias), grad_output=grad_output, required=required,
+                entry=entry, enabled=enabled, config={})
+    expected, expected_grads = _cpu_autocast_result(native=True, **args)
+    actual, actual_grads = _cpu_autocast_result(native=False, **args)
+    assert actual.dtype == expected.dtype
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    assert len(actual_grads) == len(expected_grads)
+    for grad, reference in zip(actual_grads, expected_grads):
+        assert grad.dtype == reference.dtype == torch.float32
+        if enabled:
+            # Both 1.001 and 1.003 round to 1 in bfloat16. Using the original
+            # float32 operands instead leaves an incorrect ~0.0015 residual.
+            assert torch.count_nonzero(reference).item() == 0
+            assert torch.count_nonzero(grad).item() == 0
+        else:
+            torch.testing.assert_close(grad, reference, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("config", [
+    {"padding": 1},
+    {"groups": 2, "stride": (2, 1, 1), "padding": (1, 0, 1)},
+    {"dilation": (2, 1, 2), "padding": (1, 0, 1)},
+])
+def test_cpu_autocast_random_output_and_three_gradients(config):
+    generator = torch.Generator().manual_seed(2026)
+    groups = config.get("groups", 1)
+    x = torch.randn(2, 4, 5, 6, 7, generator=generator)
+    weight = torch.randn(6, 4 // groups, 2, 3, 2, generator=generator)
+    bias = torch.randn(6, generator=generator)
+    shape = torch.nn.functional.conv3d(x, weight, bias, **config).shape
+    grad_output = torch.randn(shape, generator=generator)
+    args = dict(samples=(x, weight, bias), grad_output=grad_output, required=(True, True, True),
+                entry="function", enabled=True, config=config)
+    expected, expected_grads = _cpu_autocast_result(native=True, **args)
+    actual, actual_grads = _cpu_autocast_result(native=False, **args)
+    assert actual.dtype == expected.dtype == torch.bfloat16
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    for grad, reference in zip(actual_grads, expected_grads):
+        assert grad.dtype == reference.dtype == torch.float32
+        error = (grad.double() - reference.double()).norm() / reference.double().norm().clamp_min(1e-30)
+        assert error.item() <= 1e-2, error.item()
+
+
+@pytest.mark.parametrize("entry", ["function", "module"])
+def test_cpu_autocast_preserves_float64(entry):
+    x = torch.tensor([1.001, 1.003], dtype=torch.float64).reshape(1, 1, 1, 1, 2)
+    weight = torch.tensor([1.001, 1.003], dtype=torch.float64).reshape(2, 1, 1, 1, 1)
+    bias = torch.zeros(2, dtype=torch.float64)
+    grad_output = torch.tensor([0.75, -0.75, -0.75, 0.75], dtype=torch.float64).reshape(1, 2, 1, 1, 2)
+    args = dict(samples=(x, weight, bias), grad_output=grad_output, required=(True, True, True),
+                entry=entry, enabled=True, config={})
+    expected, expected_grads = _cpu_autocast_result(native=True, **args)
+    actual, actual_grads = _cpu_autocast_result(native=False, **args)
+    assert actual.dtype == expected.dtype == torch.float64
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    for grad, reference in zip(actual_grads, expected_grads):
+        assert grad.dtype == reference.dtype == torch.float64
+        torch.testing.assert_close(grad, reference, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("enabled", [False, True], ids=["ordinary", "autocast"])
+def test_cpu_autocast_without_bias(enabled):
+    generator = torch.Generator().manual_seed(13)
+    x = torch.randn(1, 2, 4, 4, 4, generator=generator)
+    weight = torch.randn(3, 2, 3, 3, 3, generator=generator)
+    shape = torch.nn.functional.conv3d(x, weight, padding=1).shape
+    grad_output = torch.randn(shape, generator=generator)
+    args = dict(samples=(x, weight, None), grad_output=grad_output, required=(True, True, False),
+                entry="function", enabled=enabled, config={"padding": 1})
+    expected, expected_grads = _cpu_autocast_result(native=True, **args)
+    actual, actual_grads = _cpu_autocast_result(native=False, **args)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    for grad, reference in zip(actual_grads, expected_grads):
+        assert grad.dtype == reference.dtype == torch.float32
+        if enabled:
+            error = (grad.double() - reference.double()).norm() / reference.double().norm().clamp_min(1e-30)
+            assert error.item() <= 1e-2, error.item()
+        else:
+            torch.testing.assert_close(grad, reference, rtol=1e-5, atol=1e-5)

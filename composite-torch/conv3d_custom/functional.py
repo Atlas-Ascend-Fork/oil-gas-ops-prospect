@@ -227,6 +227,18 @@ def _padding_for_string(padding, kernel_size, stride, dilation):
     return (w0, w1, h0, h1, d0, d1)
 
 
+def _cpu_autocast_state():
+    # Generic device getters were added after the public CPU-only getters.
+    get_dtype = getattr(torch, "get_autocast_dtype", None)
+    if get_dtype is not None:
+        return torch.is_autocast_enabled("cpu"), get_dtype("cpu")
+    is_enabled = getattr(torch, "is_autocast_cpu_enabled", None)
+    get_dtype = getattr(torch, "get_autocast_cpu_dtype", None)
+    if is_enabled is None or get_dtype is None:
+        return False, None
+    return is_enabled(), get_dtype()
+
+
 def conv3d(x, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
     """支持参数域内兼容 ``torch.nn.functional.conv3d`` 的函数式入口。
 
@@ -240,4 +252,18 @@ def conv3d(x, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
         if any(explicit_padding):
             x = F.pad(x, explicit_padding)
         padding = 0
+    # Cast before entering Function so its saved operands match the forward,
+    # while the casts retain their gradient edges to the original parameters.
+    if x.device.type == "cpu":
+        autocast_enabled, autocast_dtype = _cpu_autocast_state()
+        if autocast_enabled:
+            x, weight, bias = (
+                value.to(autocast_dtype)
+                if value is not None
+                and value.device.type == "cpu"
+                and value.is_floating_point()
+                and value.dtype != torch.float64
+                else value
+                for value in (x, weight, bias)
+            )
     return _Conv3dFunction.apply(x, weight, bias, stride, padding, dilation, groups)

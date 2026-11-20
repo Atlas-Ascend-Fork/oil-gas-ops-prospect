@@ -600,7 +600,7 @@ where \(\widetilde{\text{grad\_out}}\) is the zero-dilated grad_output (with \(s
 | Direction | Name | Meaning | shape | dtype |
 |-----------|------|---------|-------|-------|
 | input | `x` | input features | \((N, C_{in}, D, H, W)\) or unbatched \((C_{in}, D, H, W)\) | data types supported by the underlying PyTorch backend and tested in this repository |
-| output | `output` | output features | \((N, C_{out}, D_{out}, H_{out}, W_{out})\) or unbatched \((C_{out}, D_{out}, H_{out}, W_{out})\) | same as the input |
+| output | `output` | output features | \((N, C_{out}, D_{out}, H_{out}, W_{out})\) or unbatched \((C_{out}, D_{out}, H_{out}, W_{out})\) | same as the input outside autocast; tested CPU autocast follows the PyTorch target dtype |
 
 `kernel_size`, `stride`, numeric `padding`, and `dilation` accept an `int` or a 3-element sequence (tuple or list), and `groups` is an `int`. The module's `padding_mode` supports `zeros` / `reflect` / `replicate` / `circular`. The string padding values `"same"` / `"valid"` are supported and are converted to explicit padding before the convolution; `"same"` requires a stride of 1, otherwise `ValueError` is raised. The current `Conv3d` constructor does not have the `device` / `dtype` keyword arguments of `nn.Conv3d`.
 
@@ -619,6 +619,7 @@ where \(\widetilde{\text{grad\_out}}\) is the zero-dilated grad_output (with \(s
 
 - Precision / performance cases: [`tests/composite/conv3d_custom/`](../../tests/composite/conv3d_custom/) (the listed parameter combinations, training call patterns, and performance baselines).
 - Existing cases cover selected CPU float64/float32 combinations, specified NPU float32 shapes, and CPU complex128/complex64 plus NPU complex64 ([`test_conv3d_custom_complex.py`](../../tests/composite/conv3d_custom/test_conv3d_custom_complex.py), including double backward via `gradcheck` / `gradgradcheck` on CPU complex128). Conclusions apply only to cases that were actually executed and passed, not to unlisted parameters or data types.
+- With PyTorch 2.7.1+cpu, float32 inputs/parameters under CPU autocast (`dtype=torch.bfloat16`) are compared with native `F.conv3d` for the forward and input/weight/bias gradients; gradients of the original leaves remain float32. This describes only the CPU mode actually tested, not arbitrary low-precision inputs or NPU AMP support. Random gradients in this mode use an L2 relative-error limit of `1e-2`; ordinary float32 acceptance remains `1e-5`.
 - The complex NPU cases run with `torch.npu.conv.allow_hf32 = False` (restored afterwards). Under the default HF32 setting some gradients show a relative error of roughly `2e-4`, which is not accepted against the full fp32 threshold.
 
 For implementation and usage notes see [`composite-torch/conv3d_custom/README.md`](../../composite-torch/conv3d_custom/README.md) (Chinese).

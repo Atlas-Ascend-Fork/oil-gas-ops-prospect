@@ -597,7 +597,7 @@ shape / stride 参数走 `tl.constexpr` 特化。
 | 方向 | 名称 | 含义 | shape | dtype |
 |------|------|------|-------|-------|
 | 输入 | `x` | 输入特征 | \((N, C_{in}, D, H, W)\) 或无 batch 的 \((C_{in}, D, H, W)\) | 底层 PyTorch 后端支持且经本仓测试的 dtype |
-| 输出 | `output` | 输出特征 | \((N, C_{out}, D_{out}, H_{out}, W_{out})\) 或无 batch 的 \((C_{out}, D_{out}, H_{out}, W_{out})\) | 与输入相同 |
+| 输出 | `output` | 输出特征 | \((N, C_{out}, D_{out}, H_{out}, W_{out})\) 或无 batch 的 \((C_{out}, D_{out}, H_{out}, W_{out})\) | 未启用 autocast 时与输入相同；已测 CPU autocast 遵循 PyTorch 目标 dtype |
 
 `kernel_size`、`stride`、数值 `padding`、`dilation` 支持 `int` 或 3 元素序列（元组或列表），`groups` 为 `int`。模块的 `padding_mode` 支持 `zeros` / `reflect` / `replicate` / `circular`。字符串 `padding="same"` / `"valid"` 受支持，会在卷积前换算为显式补边；`"same"` 要求 stride 为 1，否则抛 `ValueError`。当前 `Conv3d` 构造器没有 `nn.Conv3d` 的 `device` / `dtype` 关键字。
 
@@ -616,6 +616,7 @@ shape / stride 参数走 `tl.constexpr` 特化。
 
 - 精度 / 性能用例：[`tests/composite/conv3d_custom/`](../../tests/composite/conv3d_custom/)（仓内列出的参数组合、训练调用形态与性能基准）。
 - 已有用例覆盖 CPU float64/float32 组合、NPU float32 的指定形态，以及 CPU complex128/complex64 与 NPU complex64（[`test_conv3d_custom_complex.py`](../../tests/composite/conv3d_custom/test_conv3d_custom_complex.py)，含 CPU complex128 的 `gradcheck` / `gradgradcheck` 双阶反向）；结论仅适用于实际执行并通过的 case，不代表未列出的参数或 dtype。
+- 在 PyTorch 2.7.1+cpu 中，float32 输入/参数配合 CPU autocast（`dtype=torch.bfloat16`）的前向及输入/权重/偏置梯度与原生 `F.conv3d` 对拍，原叶子梯度保持 float32。此处仅说明实际测试的 CPU 模式，不据此推定任意低精度输入或 NPU AMP 支持。 本模式随机梯度的 L2 相对误差阈值为 `1e-2`，普通 float32 验收仍为 `1e-5`。
 - 复数 NPU 用例在 `torch.npu.conv.allow_hf32 = False` 下执行（结束后恢复原值）。默认 HF32 设置下部分梯度相对误差约 `2e-4`，不按完整 fp32 阈值验收。
 
 实现与使用说明详见 [`composite-torch/conv3d_custom/README.md`](../../composite-torch/conv3d_custom/README.md)。
