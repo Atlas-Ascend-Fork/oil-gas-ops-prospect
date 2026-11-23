@@ -241,11 +241,9 @@ class _FusedAttentionCoreFn(torch.autograd.Function):
             g_logits = torch_fused_softmax_grad(probs, go, v)
 
         if ctx.bias1_shape is not None:
-            dims = tuple(i for i, d in enumerate(ctx.bias1_shape) if d == 1)
-            grad_bias1 = g_logits.clone() if not dims else torch.sum(g_logits, dim=dims, keepdim=True)
+            grad_bias1 = g_logits.sum_to_size(ctx.bias1_shape)
         if ctx.bias2_shape is not None:
-            dims = tuple(i for i, d in enumerate(ctx.bias2_shape) if d == 1)
-            grad_bias2 = g_logits.clone() if not dims else torch.sum(g_logits, dim=dims, keepdim=True)
+            grad_bias2 = g_logits.sum_to_size(ctx.bias2_shape)
 
         grad_q = torch.matmul(g_logits, k)
         grad_k = torch.matmul(q.transpose(-1, -2), g_logits).transpose(-1, -2)

@@ -173,6 +173,8 @@ backward:  grad_v = probs^T @ go                          # 先于 probs 覆写�
 
 返回 `o`，shape `[B, H, Q, D]`。支持 autograd；NPU + `ascendc`/`auto` 时前反向分别走两个融合算子。用法与 openfold 一致：`o = attention_core(q, k, v, mask_bias, triangle_bias)`。
 
+对于 float32 输入的 CPU 参考路径，偏置按 PyTorch 的右对齐广播规则相加，梯度恢复为原始偏置 shape；例如 `[H, 1, S]` 的梯度仍为 `[H, 1, S]`。这不扩大 NPU 融合入口的输入约束，本修改未验证额外的 NPU 偏置形态。
+
 ### 参考实现
 
 ```python

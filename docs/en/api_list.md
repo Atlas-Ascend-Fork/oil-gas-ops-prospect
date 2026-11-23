@@ -173,6 +173,8 @@ backward:  grad_v = probs^T @ go                          # before probs is over
 
 Returns `o` with shape `[B, H, Q, D]`. autograd is supported; on an NPU with `ascendc`/`auto` the forward and backward each use one of the two fused operators. Usage matches openfold: `o = attention_core(q, k, v, mask_bias, triangle_bias)`.
 
+For the CPU reference path with float32 inputs, biases follow PyTorch right-aligned broadcasting and each bias gradient has its original shape; for example, a `[H, 1, S]` bias receives a `[H, 1, S]` gradient. This does not broaden the fused NPU input contract; additional NPU bias shapes have not been validated by this change.
+
 ### Reference Implementations
 
 ```python
