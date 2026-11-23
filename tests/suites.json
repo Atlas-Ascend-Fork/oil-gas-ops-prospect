@@ -60,6 +60,10 @@
       "script": "tests/triton/interpolate/verify_interpolate.py"
     },
     {
+      "op": "spectral_mlp",
+      "script": "tests/triton/spectral_mlp/verify_spectral_mlp.py"
+    },
+    {
       "op": "custom_gru_v2",
       "script": "tests/ascendc/custom_gru_v2/unit/test_forward_precision.py"
     }

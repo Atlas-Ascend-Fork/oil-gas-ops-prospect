@@ -77,6 +77,7 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
         torch_fused_softmax_grad,
     )
     from oil_gas_ops_prospect.interpolate import bilinear, interpolate, trilinear
+    from oil_gas_ops_prospect.spectral_mlp import spectral_mlp
     from oil_gas_ops_prospect.real_fft import real_irfft, real_rfft
 
     assert callable(complex_mul)
@@ -97,6 +98,7 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     assert callable(interpolate)
     assert callable(bilinear)
     assert callable(trilinear)
+    assert callable(spectral_mlp)
 
 
 def test_removed_packages_are_not_in_wheel():

@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/op_list.md)
 
-This repository currently delivers 7 AscendC/CANN OPP operators, 7 Triton-Ascend Python operators and 2 Composite-Torch (pure PyTorch) operators. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
+This repository currently delivers 7 AscendC/CANN OPP operators, 8 Triton-Ascend Python operators and 2 Composite-Torch (pure PyTorch) operators. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
 
 ## Overview
 
@@ -22,6 +22,7 @@ This repository currently delivers 7 AscendC/CANN OPP operators, 7 Triton-Ascend
 | `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | complex reciprocal `1/z` (`z` or `xr, xi`) | the NPU kernel is `complex64` | Ascend 910B |
 | `complex_exp` | Triton-Ascend | `oil_gas_ops_prospect.complex_exp.complex_exp` | [`triton-ascend/complex_exp/`](../../triton-ascend/complex_exp/) | complex exponential `e^z` | the NPU kernel is `complex64` | Ascend 910B |
 | `interpolate` | Triton-Ascend | `oil_gas_ops_prospect.interpolate.interpolate` | [`triton-ascend/interpolate/`](../../triton-ascend/interpolate/) | 2D/3D linear interpolation; 5D fp32 uses Cube GEMM, 4D uses the native kernel | `float32` for 5D; 4D is supported by the native path | Ascend 910B |
+| `spectral_mlp` | Triton-Ascend | `oil_gas_ops_prospect.spectral_mlp.spectral_mlp` | [`triton-ascend/spectral_mlp/`](../../triton-ascend/spectral_mlp/) | Two-layer low-rank gated MLP on real/imag spectral inputs | `float32` for the NPU kernel | Ascend 910B |
 | `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | compatible `nn.Conv3d` / `F.conv3d` implementation within the supported parameter domain (custom forward/backward) | dtypes supported by the underlying PyTorch backend and tested here | supported by the PyTorch backend; tested on CPU / Ascend 910B |
 | `complex_addcmul` | Composite-Torch | `oil_gas_ops_prospect.complex_addcmul.complex_addcmul` | [`composite-torch/complex_addcmul/`](../../composite-torch/complex_addcmul/) | complex three-input elementwise `input + value*tensor1*tensor2`, works around the missing complex dtypes in NPU `torch.addcmul` | `complex64` / `complex128` | supported by the PyTorch backend; tested on Ascend 910B |
 
@@ -570,6 +571,75 @@ fp32 weights exactly.
 - Recorded verification results are under [`tests/triton/interpolate/report/`](../../tests/triton/interpolate/report/).
 
 For implementation, environment variables and debugging notes see [`triton-ascend/interpolate/README.md`](../../triton-ascend/interpolate/README.md).
+
+### spectral_mlp
+
+A two-layer low-rank MLP over the real/imaginary parts of an rFFT spectrum:
+layer 1 maps `d -> rank -> dm` with GELU, layer 2 maps `dm -> rank -> d` without
+activation. The small GEMMs, per-mode gates, biases and GELU of both layers are
+fused into a single kernel; the activation between the layers never round-trips
+through global memory.
+
+#### Mathematical definition
+
+With `x = xr + i·xi` and one weight set per group `g`:
+
+\[
+\begin{aligned}
+X_{1r} &= x_r U_1, & X_{1i} &= x_i U_1 \\
+\text{sum}_1 &= X_{1r}\odot g_{1r} + X_{1i}\odot g_{1i}, &
+\text{diff}_1 &= X_{1r}\odot g_{1r} - X_{1i}\odot g_{1i} \\
+h_{1r} &= \text{diff}_1 V_1 + b_{1r}, & h_{1i} &= \text{sum}_1 V_1 + b_{1i} \\
+o_{1r} &= \mathrm{GELU}(h_{1r}), & o_{1i} &= \mathrm{GELU}(h_{1i}) \\
+X_{2r} &= o_{1r} U_2, & X_{2i} &= o_{1i} U_2 \\
+y_r &= (X_{2r}\odot g_{2r} - X_{2i}\odot g_{2i}) V_2 + b_{2r}, &
+y_i &= (X_{2r}\odot g_{2r} + X_{2i}\odot g_{2i}) V_2 + b_{2i}
+\end{aligned}
+\]
+
+`U1/U2` contract the feature axis and `V1/V2` contract the low-rank axis; the
+gates are indexed by `(L, G, rank)`. GELU uses
+`x / (1 + exp(-1.5957691·(x + 0.044715·x³)))`.
+
+#### Inputs and outputs
+
+| Direction | Name | Meaning | Shape | Dtype |
+|-----------|------|---------|-------|-------|
+| Input | `xr` / `xi` | real / imaginary spectrum | `(B, L, *spatial, G, d)` | `float32` |
+| Input | `up1` | layer-1 up projection | `(G, d, rank)` | `float32` |
+| Input | `down1` | layer-1 down projection | `(G, dm, rank)` | `float32` |
+| Input | `up2` | layer-2 up projection | `(G, dm, rank)` | `float32` |
+| Input | `down2` | layer-2 down projection | `(G, d, rank)` | `float32` |
+| Input | `gate1_r` / `gate1_i` | layer-1 gates | `(L, G, rank)` | `float32` |
+| Input | `gate2_r` / `gate2_i` | layer-2 gates | `(L, G, rank)` | `float32` |
+| Input | `bias1_r` / `bias1_i` | layer-1 biases | `(G, dm)` | `float32` |
+| Input | `bias2_r` / `bias2_i` | layer-2 biases | `(G, d)` | `float32` |
+| Input | `block_m` / `block_m_bwd` | tile size along `S` (power of two, clamped by the UB budget) | scalar | `int` |
+| Output | `yr` / `yi` | output real / imaginary parts | same as `xr` | `float32` |
+
+#### Constraints
+
+- The NPU kernel supports `float32` only. Non-NPU input, missing Triton, or any
+  non-`float32` operand falls back to the equivalent PyTorch implementation
+  (`einsum` with the same GELU approximation).
+- `d / dm / rank` are padded to the next power of two of at least 16 inside the
+  kernel; spatial axes are arbitrary and flattened into `S`.
+- First-order autograd is supported. The forward stores no intermediates; the
+  backward recomputes the layer up-projections and activation from the inputs.
+- **Memory**: the activation between the two layers never round-trips through GM.
+  On the business shape `B=1, L=64, S=128x128, G=8, d=16, dm=16, rank=8` the
+  intermediates that no longer stay resident total `16·B·L·S·G·(rank+dm)` bytes
+  ≈ 3.0 GB (≈ 0.39 GB at `64³`). Training-step peak memory drops from 7.17 GB
+  to 4.12 GB (-3.04 GB, -42.5%; baseline is the native `einsum + npu_gelu`).
+- **Performance**: baseline is the same-device fp32 two-layer `einsum` plus
+  per-mode gates, biases and `npu_gelu`. On that shape the forward goes from
+  28.7 ms to 12.8 ms (2.24x, -55.3%), and forward+backward from 189.1 ms to
+  165.0 ms (1.15x, -12.8%). The forward stores no intermediates; the backward
+  recomputes `x1/h1/o1/x2` from the inputs. Defaults are `block_m=512` and
+  `block_m_bwd=256`.
+- Recorded verification results are under [`tests/triton/spectral_mlp/report/`](../../tests/triton/spectral_mlp/report/).
+
+For implementation and tuning notes see [`triton-ascend/spectral_mlp/README.md`](../../triton-ascend/spectral_mlp/README.md).
 
 ---
 

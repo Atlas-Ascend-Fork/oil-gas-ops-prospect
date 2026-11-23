@@ -121,7 +121,7 @@ Operator precision, performance and device memory on the NPU must be verified on
 
 ## 📖 Supported API List
 
-The current delivery contains 7 AscendC operators, 7 Triton-Ascend operators and 2 Composite-Torch operators:
+The current delivery contains 7 AscendC operators, 8 Triton-Ascend operators and 2 Composite-Torch operators:
 
 | Name / OpType | Backend / Deliverable | Function | dtype / format |
 |---------------|-----------------------|----------|----------------|
@@ -139,6 +139,7 @@ The current delivery contains 7 AscendC operators, 7 Triton-Ascend operators and
 | [`complex_reciprocal`](triton-ascend/complex_reciprocal/) | Triton-Ascend / Python whl | complex reciprocal `1/z` (either `z` or `xr, xi`, with a custom backward) | the NPU kernel is `complex64`; falls back to PyTorch outside an NPU environment |
 | [`complex_exp`](triton-ascend/complex_exp/) | Triton-Ascend / Python whl | complex exponential `e^z` (custom backward) | the NPU kernel is `complex64`; falls back to PyTorch outside an NPU environment |
 | [`interpolate`](triton-ascend/interpolate/) | Triton-Ascend / Python whl | 2D/3D linear interpolation; 5D fp32 uses Cube GEMM, 4D uses the native kernel | `float32` for 5D; 4D is supported by the native path |
+| [`spectral_mlp`](triton-ascend/spectral_mlp/) | Triton-Ascend / Python whl | Two-layer low-rank gated MLP on real/imag spectral inputs, both layers fused into one kernel | `float32` for the NPU kernel; falls back to PyTorch otherwise |
 | [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | compatible with `nn.Conv3d` within the supported parameter domain (custom forward/backward, interoperable state_dict keys) | dtypes supported by the underlying PyTorch backend and tested here |
 | [`complex_addcmul`](composite-torch/complex_addcmul/) | Composite-Torch / Python whl | complex three-input `input + value*t1*t2`, works around the missing complex dtypes in NPU `torch.addcmul` | `complex64` / `complex128` |
 
@@ -162,6 +163,7 @@ oil-gas-ops-prospect/
 │   ├── complex_reciprocal/ #   complex_reciprocal (polymorphic: z or xr, xi)
 │   ├── complex_exp/        #   complex_exp
 │   ├── interpolate/        #   interpolate (5D Cube GEMM, 4D native)
+│   ├── spectral_mlp/       #   two-layer low-rank gated MLP (single fused kernel)
 │   └── tools/              #   AOT compilation check
 ├── composite-torch/        # Composite-Torch operators (pure PyTorch composition, packaged as oil_gas_ops_prospect.<op>)
 │   ├── conv3d_custom/      #   Conv3d (compatible with nn.Conv3d within the supported parameter domain)
@@ -177,6 +179,7 @@ oil-gas-ops-prospect/
 │   ├── triton/complex_reciprocal/ # complex reciprocal precision (CPU fallback + NPU verify)
 │   ├── triton/complex_exp/ # complex exponential precision (CPU fallback + NPU verify)
 │   ├── triton/interpolate/ #   2D/3D interpolation verification (CPU fallback + NPU verify + report)
+│   ├── triton/spectral_mlp/ #  spectral MLP verification
 │   ├── composite/conv3d_custom/   # Conv3d / conv3d precision and performance baseline
 │   └── composite/complex_addcmul/ # complex_addcmul precision and backward
 ├── examples/               # Python examples + C++ samples under examples/aclnn/<op>/

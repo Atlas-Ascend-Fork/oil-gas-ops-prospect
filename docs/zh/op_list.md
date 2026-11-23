@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/op_list.md)
 
-当前仓库交付 7 个 AscendC/CANN OPP 算子、7 个 Triton-Ascend Python 算子和 2 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
+当前仓库交付 7 个 AscendC/CANN OPP 算子、8 个 Triton-Ascend Python 算子和 2 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
 
@@ -22,6 +22,7 @@
 | `complex_reciprocal` | Triton-Ascend | `oil_gas_ops_prospect.complex_reciprocal.complex_reciprocal` | [`triton-ascend/complex_reciprocal/`](../../triton-ascend/complex_reciprocal/) | 复数倒数 `1/z`（`z` 或 `xr, xi`） | NPU kernel 为 `complex64` | Ascend 910B |
 | `complex_exp` | Triton-Ascend | `oil_gas_ops_prospect.complex_exp.complex_exp` | [`triton-ascend/complex_exp/`](../../triton-ascend/complex_exp/) | 复数指数 `e^z` | NPU kernel 为 `complex64` | Ascend 910B |
 | `interpolate` | Triton-Ascend | `oil_gas_ops_prospect.interpolate.interpolate` | [`triton-ascend/interpolate/`](../../triton-ascend/interpolate/) | 2D/3D 线性插值；5D fp32 走 Cube GEMM，4D 走原生 | 5D `float32`；4D 由原生实现支持 | Ascend 910B |
+| `spectral_mlp` | Triton-Ascend | `oil_gas_ops_prospect.spectral_mlp.spectral_mlp` | [`triton-ascend/spectral_mlp/`](../../triton-ascend/spectral_mlp/) | 频域低秩门控两层 MLP（复数，实虚分离） | NPU kernel 为 `float32` | Ascend 910B |
 | `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | 支持参数域内的 `nn.Conv3d` / `F.conv3d` 兼容实现（自定义前/反向） | 底层 PyTorch 后端支持且经本仓测试的 dtype | PyTorch 后端支持；已测 CPU / Ascend 910B |
 | `complex_addcmul` | Composite-Torch | `oil_gas_ops_prospect.complex_addcmul.complex_addcmul` | [`composite-torch/complex_addcmul/`](../../composite-torch/complex_addcmul/) | 复数三输入逐元素 `input + value*tensor1*tensor2`，规避 NPU 上 `torch.addcmul` 缺失复数 dtype | `complex64` / `complex128` | PyTorch 后端支持；已测 Ascend 910B |
 
@@ -567,6 +568,67 @@ shape / stride 参数走 `tl.constexpr` 特化。
 
 实现、环境变量与调试说明详见 [`triton-ascend/interpolate/README.md`](../../triton-ascend/interpolate/README.md)。
 
+
+### spectral_mlp
+
+对 rFFT 之后的实虚分离频谱做两层低秩 MLP：第一层 `d → rank → dm` 带 GELU，
+第二层 `dm → rank → d` 不带激活。两层的矩阵乘、逐模数门控、偏置与 GELU 融合在
+一个 kernel 内完成，两层之间的激活不落 GM。
+
+#### 数学定义
+
+记 `x = xr + i·xi`，`G` 个分组各有一套权重：
+
+\[
+\begin{aligned}
+X_{1r} &= x_r U_1, & X_{1i} &= x_i U_1 \\
+\text{sum}_1 &= X_{1r}\odot g_{1r} + X_{1i}\odot g_{1i}, &
+\text{diff}_1 &= X_{1r}\odot g_{1r} - X_{1i}\odot g_{1i} \\
+h_{1r} &= \text{diff}_1 V_1 + b_{1r}, & h_{1i} &= \text{sum}_1 V_1 + b_{1i} \\
+o_{1r} &= \mathrm{GELU}(h_{1r}), & o_{1i} &= \mathrm{GELU}(h_{1i}) \\
+X_{2r} &= o_{1r} U_2, & X_{2i} &= o_{1i} U_2 \\
+y_r &= (X_{2r}\odot g_{2r} - X_{2i}\odot g_{2i}) V_2 + b_{2r}, &
+y_i &= (X_{2r}\odot g_{2r} + X_{2i}\odot g_{2i}) V_2 + b_{2i}
+\end{aligned}
+\]
+
+`U1/U2` 收缩特征维，`V1/V2` 收缩低秩维，门控按 `(L, G, rank)` 逐模数、逐分组
+生效。GELU 采用 `x / (1 + exp(-1.5957691·(x + 0.044715·x³)))`。
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `xr` / `xi` | 频谱实部 / 虚部 | `(B, L, *spatial, G, d)` | `float32` |
+| 输入 | `up1` | 第 1 层上投影 | `(G, d, rank)` | `float32` |
+| 输入 | `down1` | 第 1 层下投影 | `(G, dm, rank)` | `float32` |
+| 输入 | `up2` | 第 2 层上投影 | `(G, dm, rank)` | `float32` |
+| 输入 | `down2` | 第 2 层下投影 | `(G, d, rank)` | `float32` |
+| 输入 | `gate1_r` / `gate1_i` | 第 1 层门控 | `(L, G, rank)` | `float32` |
+| 输入 | `gate2_r` / `gate2_i` | 第 2 层门控 | `(L, G, rank)` | `float32` |
+| 输入 | `bias1_r` / `bias1_i` | 第 1 层偏置 | `(G, dm)` | `float32` |
+| 输入 | `bias2_r` / `bias2_i` | 第 2 层偏置 | `(G, d)` | `float32` |
+| 输入 | `block_m` / `block_m_bwd` | `S` 方向 tile 大小（取 2 的幂并按 UB 钳制） | 标量 | `int` |
+| 输出 | `yr` / `yi` | 输出实部 / 虚部 | 同 `xr` | `float32` |
+
+#### 约束
+
+- NPU kernel 仅支持 `float32`；非 NPU、Triton 不可用或任一输入不是 `float32`
+  时回退等价的 PyTorch 实现（`einsum` + 同一 GELU 近似）。
+- `d / dm / rank` 在 kernel 内向上取到不小于 16 的 2 的幂；空间维可任意组合，
+  `S` 在内部展平。
+- 支持一阶 autograd；前向不保存中间量，反向从输入重算两层的上投影与激活。
+- **显存**：两层之间的激活不落 GM。业务形态 `B=1, L=64, S=128×128, G=8, d=16, dm=16, rank=8`
+  下，不再同时驻留的中间量为 `16·B·L·S·G·(rank+dm)` 字节 ≈ 3.0 GB（`64³` 时 ≈ 0.39 GB）。
+  前向不保存中间量，训练单步峰值显存 7.17 GB → 4.12 GB（-3.04 GB，-42.5%，基线为原生
+  `einsum + npu_gelu`）。
+- **性能**：基线为同设备 fp32 的两层 `einsum` + 逐点门控 + 偏置 + `npu_gelu`。
+  同形态下前向 28.7 ms → 12.8 ms（2.24×，耗时 -55.3%）；前向+反向
+  189.1 ms → 165.0 ms（1.15×，-12.8%）。前向不保存任何中间量，反向从输入
+  重算 `x1/h1/o1/x2`；默认 `block_m=512` / `block_m_bwd=256`。
+- 验证记录见 [`tests/triton/spectral_mlp/report/`](../../tests/triton/spectral_mlp/report/)。
+
+实现与调优说明详见 [`triton-ascend/spectral_mlp/README.md`](../../triton-ascend/spectral_mlp/README.md)。
 
 ---
 

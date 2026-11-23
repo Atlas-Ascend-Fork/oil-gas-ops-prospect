@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/api_list.md)
 
-对外接口统一由 Python 包 `oil_gas_ops_prospect` 暴露。源码树里没有这个目录：`setup.py` 在打包时把 `ascendc/pybind/`、`triton-ascend/real_fft/`、`triton-ascend/complex_reciprocal/`、`triton-ascend/complex_exp/`、`triton-ascend/interpolate/` 与 `composite-torch/conv3d_custom/`、`composite-torch/complex_addcmul/` 显式映射到同一包名下；直接用仓内源码跑、没装 whl 时，由 `scripts/local_pkg.py` 自动发现并提供同一导入路径。
+对外接口统一由 Python 包 `oil_gas_ops_prospect` 暴露。源码树里没有这个目录：`setup.py` 在打包时把 `ascendc/pybind/`、`triton-ascend/real_fft/`、`triton-ascend/complex_reciprocal/`、`triton-ascend/complex_exp/`、`triton-ascend/interpolate/`、`triton-ascend/spectral_mlp/` 与 `composite-torch/conv3d_custom/`、`composite-torch/complex_addcmul/` 显式映射到同一包名下；直接用仓内源码跑、没装 whl 时，由 `scripts/local_pkg.py` 自动发现并提供同一导入路径。
 
 ```text
 oil_gas_ops_prospect
@@ -14,6 +14,7 @@ oil_gas_ops_prospect
 ├── complex_reciprocal   # complex_reciprocal（z 或 xr, xi 两种形式）
 ├── complex_exp          # complex_exp
 ├── interpolate           # interpolate, bilinear, trilinear
+├── spectral_mlp          # spectral_mlp
 ├── conv3d_custom         # Conv3d；functional 子模块： conv3d
 └── complex_addcmul       # complex_addcmul
 ```
@@ -466,6 +467,56 @@ y3 = trilinear(x3, size=(160, 160, 160))
 - 验证记录见 [`tests/triton/interpolate/report/`](../../tests/triton/interpolate/report/)。
 
 环境变量见[环境变量 · 算子行为](#算子行为)。
+
+---
+
+## `oil_gas_ops_prospect.spectral_mlp`
+
+### `spectral_mlp`
+
+```python
+from oil_gas_ops_prospect.spectral_mlp import spectral_mlp
+
+def spectral_mlp(
+    xr: torch.Tensor,
+    xi: torch.Tensor,
+    up1: torch.Tensor,
+    down1: torch.Tensor,
+    gate1_r: torch.Tensor,
+    gate1_i: torch.Tensor,
+    bias1_r: torch.Tensor,
+    bias1_i: torch.Tensor,
+    up2: torch.Tensor,
+    down2: torch.Tensor,
+    gate2_r: torch.Tensor,
+    gate2_i: torch.Tensor,
+    bias2_r: torch.Tensor,
+    bias2_i: torch.Tensor,
+    *,
+    block_m: int = 512,
+    block_m_bwd: int = 256,
+) -> tuple[torch.Tensor, torch.Tensor]
+```
+
+对 rFFT 之后的实虚分离频谱做两层低秩门控 MLP（第 1 层带 GELU，第 2 层无激活），
+返回 `(yr, yi)`。NPU 上由单个融合 Triton kernel 完成，两层之间的激活不落 GM；
+非 NPU、Triton 不可用或输入不是 `float32` 时回退等价的 PyTorch 实现（含 autograd）。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `xr` / `xi` | `torch.Tensor` | 频谱实部 / 虚部，`(B, L, *spatial, G, d)`，`float32` |
+| `up1` / `down1` | `torch.Tensor` | 第 1 层上/下投影，`(G, d, rank)` / `(G, dm, rank)` |
+| `up2` / `down2` | `torch.Tensor` | 第 2 层上/下投影，`(G, dm, rank)` / `(G, d, rank)` |
+| `gate1_r` / `gate1_i` | `torch.Tensor` | 第 1 层门控，`(L, G, rank)` |
+| `gate2_r` / `gate2_i` | `torch.Tensor` | 第 2 层门控，`(L, G, rank)` |
+| `bias1_r` / `bias1_i` | `torch.Tensor` | 第 1 层偏置，`(G, dm)` |
+| `bias2_r` / `bias2_i` | `torch.Tensor` | 第 2 层偏置，`(G, d)` |
+| `block_m` | `int` | 前向 tile 的 `S` 方向大小，向下取到 2 的幂并按 UB 预算钳制，默认 512 |
+| `block_m_bwd` | `int` | 反向 tile 大小，默认 256 |
+
+返回 `(yr, yi)`，形状同 `xr`，`float32`；全部输入与参数支持一阶 autograd。
+数学定义、约束与验证记录见[算子列表](op_list.md#spectral_mlp)与
+[`tests/triton/spectral_mlp/report/`](../../tests/triton/spectral_mlp/report/)。
 
 ---
 

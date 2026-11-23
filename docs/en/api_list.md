@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/api_list.md)
 
-All public APIs are exposed by the Python package `oil_gas_ops_prospect`. That directory does not exist in the source tree: at packaging time `setup.py` explicitly maps `ascendc/pybind/`, `triton-ascend/real_fft/`, `triton-ascend/complex_reciprocal/`, `triton-ascend/complex_exp/`, `triton-ascend/interpolate/`, `composite-torch/conv3d_custom/`, and `composite-torch/complex_addcmul/` under the same package name, while when running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` discovers them automatically and provides the same import path.
+All public APIs are exposed by the Python package `oil_gas_ops_prospect`. That directory does not exist in the source tree: at packaging time `setup.py` explicitly maps `ascendc/pybind/`, `triton-ascend/real_fft/`, `triton-ascend/complex_reciprocal/`, `triton-ascend/complex_exp/`, `triton-ascend/interpolate/`, `triton-ascend/spectral_mlp/`, `composite-torch/conv3d_custom/`, and `composite-torch/complex_addcmul/` under the same package name, while when running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` discovers them automatically and provides the same import path.
 
 ```text
 oil_gas_ops_prospect
@@ -14,6 +14,7 @@ oil_gas_ops_prospect
 ├── complex_reciprocal    # complex_reciprocal (either z or xr, xi)
 ├── complex_exp           # complex_exp
 ├── interpolate           # interpolate, bilinear, trilinear
+├── spectral_mlp          # spectral_mlp
 ├── conv3d_custom         # Conv3d; functional submodule: conv3d
 └── complex_addcmul       # complex_addcmul
 ```
@@ -466,6 +467,59 @@ y3 = trilinear(x3, size=(160, 160, 160))
 - Recorded verification results are under [`tests/triton/interpolate/report/`](../../tests/triton/interpolate/report/).
 
 See [Environment Variables · Operator Behavior](#operator-behavior) for the public knob.
+
+---
+
+## `oil_gas_ops_prospect.spectral_mlp`
+
+### `spectral_mlp`
+
+```python
+from oil_gas_ops_prospect.spectral_mlp import spectral_mlp
+
+def spectral_mlp(
+    xr: torch.Tensor,
+    xi: torch.Tensor,
+    up1: torch.Tensor,
+    down1: torch.Tensor,
+    gate1_r: torch.Tensor,
+    gate1_i: torch.Tensor,
+    bias1_r: torch.Tensor,
+    bias1_i: torch.Tensor,
+    up2: torch.Tensor,
+    down2: torch.Tensor,
+    gate2_r: torch.Tensor,
+    gate2_i: torch.Tensor,
+    bias2_r: torch.Tensor,
+    bias2_i: torch.Tensor,
+    *,
+    block_m: int = 512,
+    block_m_bwd: int = 256,
+) -> tuple[torch.Tensor, torch.Tensor]
+```
+
+Two-layer low-rank gated MLP over the real/imaginary parts of an rFFT spectrum
+(layer 1 with GELU, layer 2 without activation), returning `(yr, yi)`. On NPU it
+runs as one fused Triton kernel and keeps the inter-layer activation off global
+memory; on CPU, without Triton, or for non-`float32` operands it falls back to
+the equivalent PyTorch implementation (autograd included).
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `xr` / `xi` | `torch.Tensor` | real / imaginary spectrum, `(B, L, *spatial, G, d)`, `float32` |
+| `up1` / `down1` | `torch.Tensor` | layer-1 up/down projection, `(G, d, rank)` / `(G, dm, rank)` |
+| `up2` / `down2` | `torch.Tensor` | layer-2 up/down projection, `(G, dm, rank)` / `(G, d, rank)` |
+| `gate1_r` / `gate1_i` | `torch.Tensor` | layer-1 gates, `(L, G, rank)` |
+| `gate2_r` / `gate2_i` | `torch.Tensor` | layer-2 gates, `(L, G, rank)` |
+| `bias1_r` / `bias1_i` | `torch.Tensor` | layer-1 biases, `(G, dm)` |
+| `bias2_r` / `bias2_i` | `torch.Tensor` | layer-2 biases, `(G, d)` |
+| `block_m` | `int` | forward tile size along `S` (rounded down to a power of two, clamped by the UB budget), default 512 |
+| `block_m_bwd` | `int` | backward tile size, default 256 |
+
+Returns `(yr, yi)` with the same shape as `xr`, `float32`; first-order autograd
+covers every input and parameter. See the [operator list](op_list.md#spectral_mlp)
+and [`tests/triton/spectral_mlp/report/`](../../tests/triton/spectral_mlp/report/)
+for the math, constraints and recorded results.
 
 ---
 

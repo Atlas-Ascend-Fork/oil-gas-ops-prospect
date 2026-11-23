@@ -121,7 +121,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 
 ## 📖 接口支持清单
 
-当前交付 7 个 AscendC 算子、7 个 Triton-Ascend 算子和 2 个 Composite-Torch 算子：
+当前交付 7 个 AscendC 算子、8 个 Triton-Ascend 算子和 2 个 Composite-Torch 算子：
 
 | 名称 / OpType | 后端 / 交付物 | 功能 | dtype / format |
 |---------------|---------------|------|----------------|
@@ -139,6 +139,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 | [`complex_reciprocal`](triton-ascend/complex_reciprocal/) | Triton-Ascend / Python whl | 复数倒数 `1/z`（`z` 或 `xr, xi` 两种形式、自定义反向） | NPU kernel 为 `complex64`，非 NPU 环境回退到 PyTorch |
 | [`complex_exp`](triton-ascend/complex_exp/) | Triton-Ascend / Python whl | 复数指数 `e^z`（自定义反向） | NPU kernel 为 `complex64`，非 NPU 环境回退到 PyTorch |
 | [`interpolate`](triton-ascend/interpolate/) | Triton-Ascend / Python whl | 2D/3D 线性插值；5D fp32 走 Cube GEMM，4D 走原生 | 5D `float32`；4D 由原生实现支持 |
+| [`spectral_mlp`](triton-ascend/spectral_mlp/) | Triton-Ascend / Python whl | 频域低秩门控两层 MLP（复数，实虚分离），两层融合单 kernel | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
 | [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | 支持参数域内兼容 `nn.Conv3d`（自定义前/反向，state_dict key 互通） | 底层 PyTorch 后端支持且经本仓测试的 dtype |
 | [`complex_addcmul`](composite-torch/complex_addcmul/) | Composite-Torch / Python whl | 复数三输入 `input + value*t1*t2`，规避 NPU 上 `torch.addcmul` 缺复数 dtype | `complex64` / `complex128` |
 
@@ -162,6 +163,7 @@ oil-gas-ops-prospect/
 │   ├── complex_reciprocal/ #   complex_reciprocal（多态：z 或 xr,xi）
 │   ├── complex_exp/        #   complex_exp
 │   ├── interpolate/        #   interpolate（5D Cube GEMM，4D 原生）
+│   ├── spectral_mlp/       #   频域低秩门控两层 MLP（单 kernel 融合）
 │   └── tools/              #   AOT 编译检查
 ├── composite-torch/        # Composite-Torch 算子（纯 PyTorch 组合，打包为 oil_gas_ops_prospect.<op>）
 │   ├── conv3d_custom/      #   Conv3d（支持参数域内兼容 nn.Conv3d）
@@ -177,6 +179,7 @@ oil-gas-ops-prospect/
 │   ├── triton/complex_reciprocal/ # 复数倒数精度（CPU 回退 + NPU verify）
 │   ├── triton/complex_exp/ # 复数指数精度（CPU 回退 + NPU verify）
 │   ├── triton/interpolate/ #   2D/3D 插值验证（CPU 回退 + NPU verify + report）
+│   ├── triton/spectral_mlp/ #  频域低秩门控两层 MLP 验证
 │   ├── composite/conv3d_custom/   # Conv3d / conv3d 精度与性能基准
 │   └── composite/complex_addcmul/ # complex_addcmul 精度与反向
 ├── examples/               # Python 示例 + examples/aclnn/<op>/ C++ 样例

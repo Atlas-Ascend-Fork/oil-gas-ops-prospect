@@ -37,7 +37,7 @@ bash build.sh --opensource-report
 | **精度** | Python 对拍 PyTorch / autograd，看相对误差 | `tests/ascendc/<op>/test_*_npu.py --mode precision` | **是** |
 | **pybind 单测** | 封装层不变量（输出别名、输入物化等），monkeypatch 扩展，pytest 直跑 | `tests/ascendc/<op>/test_*_pybind_alias.py` 等 | 否 |
 | **性能** | Python 计时、加速比 | 同上 `--mode perf` | **是** |
-| **Triton CPU** | rFFT / 复数倒数 / 复数指数 / 插值 CPU 回退精度（pytest） | `tests/triton/real_fft/`、`tests/triton/complex_reciprocal/`、`tests/triton/complex_exp/`、`tests/triton/interpolate/` | 否 |
+| **Triton CPU** | rFFT / 复数倒数 / 复数指数 / 插值 / 频域两层 MLP 的 CPU 回退精度（pytest） | `tests/triton/real_fft/`、`tests/triton/complex_reciprocal/`、`tests/triton/complex_exp/`、`tests/triton/interpolate/`、`tests/triton/spectral_mlp/` | 否 |
 | **Composite CPU** | Conv3d / conv3d、complex_addcmul 前反向精度与取值组合（pytest） | `tests/composite/conv3d_custom/`、`tests/composite/complex_addcmul/` | 否 |
 | **Triton AOT** | kernel 分支能编译 | `triton-ascend/tools/aot_compile_check.py` | 否 |
 | **Triton 大形态 / 微基准** | `128^3` 与业务 5D 精度，二维组合接口精度，以及开源报告 5.3 的 FFT 计时 | `tests/triton/real_fft/verify_triton_fft_real_128_3d.py`、`verify_real_fft2.py`、`bench_opensource_perf.py` | **是** |
@@ -130,6 +130,7 @@ tests/
 ├── ascendc/<op>/test_*_pybind_alias.py  # 封装层单测（pytest）
 ├── triton/real_fft/                     # Triton CPU（及可选 NPU verify）
 ├── triton/interpolate/                  # 2D/3D 插值 CPU 回退 + NPU verify
+├── triton/spectral_mlp/                 # 频域两层 MLP CPU 回退 + NPU verify
 │   └── report/                          # 精度/性能结果、机型与复现命令
 ├── composite/conv3d_custom/             # Composite CPU（Conv3d / conv3d）
 └── composite/complex_addcmul/           # Composite CPU/NPU（complex_addcmul 精度与反向）

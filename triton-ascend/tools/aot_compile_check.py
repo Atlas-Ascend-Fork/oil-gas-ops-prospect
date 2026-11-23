@@ -63,6 +63,7 @@ for _p in (
     TRITON_ROOT / "complex_reciprocal",
     TRITON_ROOT / "complex_exp",
     TRITON_ROOT / "interpolate",
+    TRITON_ROOT / "spectral_mlp",
 ):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
@@ -410,18 +411,49 @@ def _interpolate_cases(interp) -> list[tuple[str, object, list[str], dict]]:
     return out
 
 
+
+def _spectral_mlp_cases(sm) -> list[tuple[str, object, list[str], dict]]:
+    """spectral_mlp 的前向（SAVE=0/1 两个分支）与反向 kernel。"""
+    meta_common = dict(
+        B=2, L=4, S=64, G=2, D=16, DM=16, R=8,
+        D_PAD=16, DM_PAD=16, R_PAD=16, BLOCK_M=64,
+    )
+    # 16 个数据指针：xr/xi、两层的 (up, downᵀ, gate_r, gate_i, bias_r, bias_i)、
+    # 输出 yr/yi。前向不保存中间量。
+    fwd_ptrs = p(16)
+    # 31 个数据指针：xr/xi、两层权重/门控/第 1 层偏置（含一份预转置副本）、
+    # gyr/gyi、gxr/gxi、12 个参数梯度缓冲。
+    bwd_ptrs = p(31)
+    return [
+        (
+            "spectral_mlp/fwd",
+            kernel_of(sm, "_spectral_mlp_fwd_kernel"),
+            fwd_ptrs,
+            meta_common,
+        ),
+        (
+            "spectral_mlp/bwd",
+            kernel_of(sm, "_spectral_mlp_bwd_kernel"),
+            bwd_ptrs,
+            {**meta_common, "NUM_SLOTS": 8},
+        ),
+    ]
+
+
 def cases() -> list[tuple[str, object, list[str], dict]]:
     """(用例名, kernel, 指针类型列表, constexpr 字典)，覆盖各算子的主要 IR 分支。"""
     import triton_complex_exp as ce
     import triton_complex_reciprocal as cr
     import triton_fft_real as fft
     import triton_interpolate as interp
+    import triton_spectral_mlp as sm
 
     return (
         _real_fft_cases(fft)
         + _complex_reciprocal_cases(cr)
         + _complex_exp_cases(ce)
         + _interpolate_cases(interp)
+        + _spectral_mlp_cases(sm)
     )
 
 

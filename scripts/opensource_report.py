@@ -210,6 +210,7 @@ class Statuses:
     prec_gelu: str = NA
     prec_interp: str = NA
     prec_cexp: str = NA
+    prec_spectral: str = NA
     prec_caddcmul: str = NA
     perf_cm: str = NA
     perf_fused: str = NA
@@ -218,6 +219,7 @@ class Statuses:
     perf_gelu: str = NA
     perf_interp: str = NA
     perf_cexp: str = NA
+    perf_spectral: str = NA
     perf_caddcmul: str = NA
     fft_v: str = NA
     fft_p: str = NA
@@ -251,6 +253,8 @@ class PerfSummary:
     interp_bwd: list[PerfRow] = field(default_factory=list)
     interp_fwdbwd: list[PerfRow] = field(default_factory=list)
     cexp_fwd: list[PerfRow] = field(default_factory=list)
+    spectral_fwd: list[PerfRow] = field(default_factory=list)
+    spectral_fwdbwd: list[PerfRow] = field(default_factory=list)
     caddcmul_fwd: list[PerfRow] = field(default_factory=list)
     gmean_txt: str = "未解析"
     fft_metric: str = ""
@@ -279,6 +283,7 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
         prec_gelu=job_status(jobs, "conv3d_gelu_precision"),
         prec_interp=job_status(jobs, "interpolate_precision"),
         prec_cexp=job_status(jobs, "complex_exp_precision"),
+        prec_spectral=job_status(jobs, "spectral_mlp_precision"),
         prec_caddcmul=job_status(jobs, "complex_addcmul_precision"),
         perf_cm=job_status(jobs, "complex_mul_perf"),
         perf_fused=job_status(jobs, "fused_bias_softmax_perf"),
@@ -287,6 +292,7 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
         perf_gelu=job_status(jobs, "conv3d_gelu_perf"),
         perf_interp=job_status(jobs, "interpolate_perf"),
         perf_cexp=job_status(jobs, "complex_exp_perf"),
+        perf_spectral=job_status(jobs, "spectral_mlp_perf"),
         perf_caddcmul=job_status(jobs, "complex_addcmul_perf"),
         fft_v=combine(
             job_status(jobs, "fft_npu_verify"), job_status(jobs, "fft_npu_verify_5d")
@@ -318,6 +324,7 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
     gelu_rows = parse_perf_rows(job_log(jobs, "conv3d_gelu_perf"))
     interp_rows = parse_perf_rows(job_log(jobs, "interpolate_perf"))
     cexp_rows = parse_perf_rows(job_log(jobs, "complex_exp_perf"))
+    spectral_rows = parse_perf_rows(job_log(jobs, "spectral_mlp_perf"))
     caddcmul_rows = parse_perf_rows(job_log(jobs, "complex_addcmul_perf"))
     fused_fwd = [r for r in fused_rows if r[0].startswith("fwd ")]
     fused_bwd = [r for r in fused_rows if r[0].startswith("bwd ")]
@@ -349,6 +356,8 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
             r for r in interp_rows if r[0].startswith("interpolate fwd+bwd ")
         ],
         cexp_fwd=[r for r in cexp_rows if r[0].startswith("exp fwd")],
+        spectral_fwd=[r for r in spectral_rows if r[0].startswith("spectral_mlp fwd ")],
+        spectral_fwdbwd=[r for r in spectral_rows if r[0].startswith("spectral_mlp fwd+bwd")],
         caddcmul_fwd=[r for r in caddcmul_rows if r[0].startswith("addcmul fwd")],
         gmean_txt=f"{gmean:.2f}x" if gmean else "未解析",
         fft_metric=fft_metric_text(fft_rows),
@@ -436,6 +445,15 @@ def build_features(st: Statuses) -> list[tuple[str, str, str, str, str, str, str
             combine(st.triton, st.aot, st.prec_cexp),
             st.prec_cexp,
             st.perf_cexp,
+            st.triton,
+            st.install,
+        ),
+        (
+            "spectral_mlp",
+            combine(st.triton, st.aot, st.prec_spectral, st.perf_spectral, st.install),
+            combine(st.triton, st.aot, st.prec_spectral),
+            st.prec_spectral,
+            st.perf_spectral,
             st.triton,
             st.install,
         ),
@@ -668,6 +686,8 @@ def section_overview(cmd: str, ok: bool, rate: str) -> list[str]:
         "| 12 | complex_addcmul | 复数三输入逐元素 `input + value*t1*t2`（纯 PyTorch 组合，"
         "复数乘委托 `ComplexMul`），规避 NPU 上 `torch.addcmul` 缺复数 dtype；"
         "支持广播、实数/复数 `value` 与 autograd |",
+        "| 13 | spectral_mlp | 频域低秩门控两层 MLP：输入 rFFT 后的实虚分离频谱，两层小矩阵乘 + 逐模数门控 + "
+        "偏置 + GELU 融合为单 kernel，层间激活不落 GM；支持一阶 autograd 与 CPU 回退 |",
         "",
         "`attention_core(q, k, v, bias1, bias2)` 为 FusedBiasSoftmax 与 FusedSoftmaxGrad 按 openfold "
         "注意力语义的组合封装，随上述融合算子一并验证。",
@@ -865,6 +885,9 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
         f"前向 {speedup_span(perf.interp_fwd)}，反向 {speedup_span(perf.interp_bwd)}，"
         f"fwd+bwd {speedup_span(perf.interp_fwdbwd)} | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_interp)} | 无 |",
+        "| 算子微基准 | 不涉及 | spectral_mlp | 同设备 `einsum` 拼接的两层参考实现 | "
+        f"前向 {speedup_span(perf.spectral_fwd)}，fwd+bwd {speedup_span(perf.spectral_fwdbwd)} | "
+        f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_spectral)} | 小 shape 上是 launch 开销主导 |",
         "| 算子微基准 | 不涉及 | Conv3DGelu | 同设备 `F.conv3d` + `F.gelu(approximate=\"tanh\")` | "
         f"1×1 直写 {speedup_span(perf.gelu_rows, 'k1_')}；3×3 按输出平面切，速度让给显存 | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_gelu)} | 3×3 单平面路径慢于整幅卷积 |",
@@ -892,6 +915,12 @@ def section_perf_tables(perf: PerfSummary) -> list[str]:
     lines += perf_md_table(
         "complex_reciprocal 端到端融合（相对先构造 complex64 的原始写法）",
         perf.crecip_e2e,
+    )
+    lines += perf_md_table(
+        "spectral_mlp 前向（相对同设备 einsum 参考，业务形态 128³）", perf.spectral_fwd
+    )
+    lines += perf_md_table(
+        "spectral_mlp fwd+bwd（相对同设备 einsum 参考 autograd）", perf.spectral_fwdbwd
     )
     lines += perf_md_table(
         "interpolate 前向（相对同设备 F.interpolate，5D fp32 trilinear）",
