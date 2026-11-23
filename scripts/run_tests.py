@@ -554,7 +554,7 @@ def run_suites(ctx: SuiteContext, wanted: list[str], results: list[JobResult]) -
 
 
 def finalize_reports(paths: ReportPaths, results: list[JobResult], args: argparse.Namespace,
-                     has_npu: bool) -> None:
+                     has_npu: bool) -> int:
     orig = args.orig_argv.split() if args.orig_argv else sys.argv[1:]
     write_results_json(paths.results_json, results, orig, has_npu)
     print(f"[test] results json: {paths.results_json}")
@@ -564,10 +564,11 @@ def finalize_reports(paths: ReportPaths, results: list[JobResult], args: argpars
     print(f"[test] report: {paths.report}")
     print(f"[test] report (latest): {paths.latest}")
     if paths.opensource is None:
-        return
+        return 0
     gen_rc = generate_opensource_report(paths.results_json, paths.opensource)
     if gen_rc != 0:
         print(f"[test] opensource report failed rc={gen_rc}", file=sys.stderr)
+    return gen_rc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -578,18 +579,19 @@ def main(argv: list[str] | None = None) -> int:
                        has_npu=npu_available())
     paths = resolve_report_paths(args)
     results: list[JobResult] = []
+    report_rc = 0
 
     try:
         run_suites(ctx, wanted, results)
     finally:
-        finalize_reports(paths, results, args, ctx.has_npu)
+        report_rc = finalize_reports(paths, results, args, ctx.has_npu)
 
     failed = sum(1 for r in results if r.status == FAIL)
     print(f"[test] done: pass={sum(r.status==PASS for r in results)} "
           f"fail={failed} skip={sum(r.status==SKIP for r in results)}")
     if paths.opensource is not None and not paths.opensource.is_file():
         return 1
-    return 1 if failed else 0
+    return 1 if failed or report_rc != 0 else 0
 
 
 if __name__ == "__main__":
