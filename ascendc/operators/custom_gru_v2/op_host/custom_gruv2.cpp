@@ -14,19 +14,12 @@
  */
 
 #include "custom_gruv2_tiling.h"
-#include "custom_gruv2_ub_footprint.h"
+#include "custom_gruv2_tiling_core.h"
 #include "register/op_def_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 
 namespace optiling {
 namespace {
-
-constexpr uint32_t kDefaultAivCoreNum = 24;
-// Per-core unified buffer byte budget on 910B2 (192KB total minus a 16KB
-// reservation for temporaries and compiler-generated scratch).
-constexpr uint64_t kUbByteBudget = 176 * 1024;
-
-inline uint32_t CeilDivU32(uint32_t dividend, uint32_t divisor) { return (dividend + divisor - 1) / divisor; }
 
 // Reads the optional "bidirectional" attribute (0 or 1). Absent attribute and
 // null attribute storage both fall back to unidirectional (0).
@@ -79,35 +72,14 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
 
-    // Round the hidden width up to a multiple of 8 so that vectorized unit
-    // strides stay aligned during the recurrent scan.
-    const uint32_t hiddenAligned = (hidden + 7U) & ~7U;
-
-    uint32_t aivCoreNum = platform_ascendc::PlatformAscendC(context->GetPlatformInfo()).GetCoreNumAiv();
-    if (aivCoreNum == 0U) {
-        aivCoreNum = kDefaultAivCoreNum;
-    }
-
-    uint32_t blockCount = (batch < aivCoreNum) ? batch : aivCoreNum;
-    if (blockCount == 0U) {
-        blockCount = 1U;
-    }
-    uint32_t batchPerBlock = CeilDivU32(batch, blockCount);
-
-    // Unified-buffer footprint per core: hidden state per sample plus the 8
-    // fixed vector buffers (gates r/z/n, r/z/t1/t2 scratch, and the Div
-    // constant vector introduced by the D2 numeric fix) — derived via
-    // custom_gruv2_ub_footprint.h so host/UT/kernel stay consistent.
-    uint64_t ubBytes = CustomGRUV2Host::UbytesPerBlock(batchPerBlock, hiddenAligned);
-    if (ubBytes > kUbByteBudget) {
-        const uint32_t maxBatchPerBlock = CustomGRUV2Host::MaxBatchPerBlock(hiddenAligned, kUbByteBudget);
-        if (maxBatchPerBlock == 0U) {
-            FailEmptyTiling(context);
-            return ge::GRAPH_FAILED;
-        }
-        blockCount = CeilDivU32(batch, maxBatchPerBlock);
-        batchPerBlock = CeilDivU32(batch, blockCount);
-        ubBytes = CustomGRUV2Host::UbytesPerBlock(batchPerBlock, hiddenAligned);
+    // Keep the CANN adapter thin; the batch split and UB budget calculation are
+    // shared with the platform-independent host unit test.
+    const uint32_t aivCoreNum = platform_ascendc::PlatformAscendC(context->GetPlatformInfo()).GetCoreNumAiv();
+    CustomGRUV2Host::CustomGRUV2TilingPlan plan;
+    if (!CustomGRUV2Host::ComputeCustomGRUV2TilingCore(batch, hidden, aivCoreNum, CustomGRUV2Host::kUbByteBudget,
+                                                       plan)) {
+        FailEmptyTiling(context);
+        return ge::GRAPH_FAILED;
     }
 
     const bool hasBias = (context->GetInputShape(3) != nullptr) && (context->GetInputShape(4) != nullptr);
@@ -120,7 +92,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     tilingData.set_bidirectional(bidirectional);
     tilingData.set_hasBias(hasBias ? 1 : 0);
 
-    context->SetBlockDim(blockCount);
+    context->SetBlockDim(plan.blockDim);
     tilingData.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
     return ge::GRAPH_SUCCESS;
