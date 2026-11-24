@@ -227,6 +227,10 @@ def custom_gru_v2(
 
 同模块另导出 nn.Module `CustomGRU(input_size, hidden_size, bidirectional=False, bias=True)`：`weight_ih` / `weight_hh` 为顶层参数，`forward(x)` 返回 `(y, output_h)`，语义与函数入口一致。
 
+**hidden size 包络说明（D2 数值修复后的 UB 预算，v4 批准项）**：kernel 每 block 的常驻矢量化缓冲为 `(batchPerBlock + 8) * Ha` float（Ha = hidden 向上取 8 对齐；8 = gates r/z/n 3 段 + r/z/t1/t2 4 段 + Div 常量段 1，Div 常量段为数值精度修复新增），Host 以 176KiB（= 45056 个 float 槽）预算判定。单个 batchPerBlock 时，**UB 预算允许至 Ha=5000**（`(1+8)*5000*4 = 45000 B ≤ 176KiB`），`Ha=5008` 及以上被 tiling 拒绝；每核 batch 上限按 `floor(45056 / Ha) - 8` 计算（再受实际 batch 与核数约束）。真机已执行验证至 H=1500（memcheck 双向）与 H=5000（正向冒烟，插桩慢速下 memcheck 超时仅属工具开销）；此前基于 7 固定矢量的更大包络（如 H=5100）在数值精度修复后不再支持。
+
+**双向（`bidirectional=True`）语义注意**：该模块只持有一份 `[3H, F_in]` 权重，双向时按 kernel host 契约把这份权重"同权重复用"（前向/反向两个方向使用同一组参数，方向差异仅体现在时间轴遍历顺序），这与 PyTorch `nn.GRU(bidirectional=True)` 的"两个方向各持独立参数 `[3H, F_in]` ×2"不同。需要标准双向独立参数语义时，请改用函数接口 `custom_gru_v2` 并显式传 `weight_ih/weight_hh` 为 `[2, 3H, F_in]`（或扁平 `[6H, F_in]`，前半 = 前向方向、后半 = 反向方向）。另请知悉：模块 `bidirectional=True` 时每次 `forward` 都会在进入 kernel 前对权重/偏置做一次复制（临时副本约 `6H×(F_in+H)+12H` 个 float），高频/大模型场景请优先直接使用函数接口并自行持久化扁平权重。
+
 ---
 
 ## `oil_gas_ops_prospect.real_fft`

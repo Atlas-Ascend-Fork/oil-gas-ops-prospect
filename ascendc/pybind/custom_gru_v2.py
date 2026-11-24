@@ -49,6 +49,54 @@ def _is_npu_tensor(x: torch.Tensor) -> bool:
     return x.device.type == "npu"
 
 
+def _contract_normalize_weights(
+    weight_ih: torch.Tensor,
+    weight_hh: torch.Tensor,
+    bias_ih: torch.Tensor | None,
+    bias_hh: torch.Tensor | None,
+    hidden_size: int,
+    bidirectional: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    """按 kernel host 侧契约归一化权重 / 偏置（D1 契约缺口修复）。
+
+    kernel host tiling 的合法形态（见 ``op_host/custom_gruv2.cpp`` 的权重
+    维度校验 ``hidden = wi_dim0 / (3 * dirCount)``）：
+
+    - 单向：权重 ``[3H, ·]``、bias ``[3H]``
+    - 双向：权重 ``[6H, ·]``、bias ``[6H]``（前半 = 前向方向，后半 = 反向方向）
+
+    该归一化对 CPU fallback 与 NPU kernel 两条路径等价生效，保证两条路径
+    的双向语义一致（``_torch_gru_forward`` 对 ``[6H]`` 权重按前后半拆分方向，
+    与 kernel 契约一致）：
+
+    - 3D 输入（``[num_dirs, 3H, ·]``，文档公开形态）被扁平化为
+      ``[num_dirs * 3H, ·]``——双向拆分语义不变；
+    - 双向且调用方只给单份 ``[3H, ·]``（历史形态，例如 ``CustomGRU`` 模块）时，
+      复制为两份（同权重复用，与 CPU fallback 历史语义一致）。如需双向
+      独立权重，请显式传 ``[2, 3H, ·]`` 或扁平 ``[6H, ·]``。
+    """
+    if weight_ih.dim() == 3:
+        weight_ih = weight_ih.reshape(-1, weight_ih.shape[2])
+        weight_hh = weight_hh.reshape(-1, weight_hh.shape[2])
+        if bias_ih is not None:
+            bias_ih = bias_ih.reshape(-1)
+        if bias_hh is not None:
+            bias_hh = bias_hh.reshape(-1)
+    if not bidirectional:
+        return weight_ih, weight_hh, bias_ih, bias_hh
+    half = 3 * hidden_size
+    if weight_ih.shape[0] == half:
+        weight_ih = torch.stack((weight_ih, weight_ih), dim=0).reshape(
+            -1, weight_ih.shape[1])
+        weight_hh = torch.stack((weight_hh, weight_hh), dim=0).reshape(
+            -1, weight_hh.shape[1])
+        if bias_ih is not None:
+            bias_ih = torch.stack((bias_ih, bias_ih), dim=0).reshape(-1)
+        if bias_hh is not None:
+            bias_hh = torch.stack((bias_hh, bias_hh), dim=0).reshape(-1)
+    return weight_ih, weight_hh, bias_ih, bias_hh
+
+
 def _torch_gru_forward(
     x: torch.Tensor,
     weight_ih: torch.Tensor,
@@ -203,6 +251,14 @@ def custom_gru_v2(
         hidden_size: Hidden dimension H
         bidirectional: Bidirectional flag (default False)
 
+    双向权重的两种合法形态（会被 ``_contract_normalize_weights`` 归一化成 kernel
+    host 契约要求的扁平 ``[6H, ·]`` / ``[6H]``，前半 = 前向、后半 = 反向）：
+
+    - ``[2, 3H, ·]`` / ``[2, 3H]``（每方向独立权重，PyTorch ``nn.GRU`` 语义）
+    - 扁平 ``[6H, ·]`` / ``[6H]``
+    - 单份 ``[3H, ·]`` / ``[3H]``（历史形态）：按 CPU fallback 一致的
+      "同权重复用" 语义复制成两份
+
     Returns:
         y: Output [num_dirs, B, T, H]
         output_h: Final hidden state [num_dirs, B, H]
@@ -217,6 +273,9 @@ def custom_gru_v2(
             bias_hh = torch.zeros(weight_hh.shape[0], 3 * hidden_size, dtype=x.dtype, device=x.device)
         else:
             bias_hh = torch.zeros(weight_hh.shape[0], dtype=x.dtype, device=x.device)
+
+    weight_ih, weight_hh, bias_ih, bias_hh = _contract_normalize_weights(
+        weight_ih, weight_hh, bias_ih, bias_hh, hidden_size, bidirectional)
 
     if not _is_npu_tensor(x):
         if _require_custom():
@@ -237,7 +296,17 @@ def custom_gru_v2(
 
 
 class CustomGRU(nn.Module):
-    """nn.Module wrapper for CustomGRU v2 fused kernel (single-layer)."""
+    """nn.Module wrapper for CustomGRU v2 fused kernel (single-layer).
+
+    双向说明（契约）：
+
+    - 模块持有一份 ``[3H, ·]`` 权重，``bidirectional=True`` 时由
+      ``_contract_normalize_weights`` 按 CPU fallback 一致的
+      "同权重复用" 语义复制成两份后进入 kernel（前向/反向共用同一组参数，
+      方向差异仅体现在时间轴的遍历顺序）。
+    - 如需 PyTorch ``nn.GRU`` 式的双向独立权重，请直接调用函数接口
+      ``custom_gru_v2`` 并显式传 ``[2, 3H, ·]``（或扁平 ``[6H, ·]``）权重。
+    """
 
     def __init__(
         self,

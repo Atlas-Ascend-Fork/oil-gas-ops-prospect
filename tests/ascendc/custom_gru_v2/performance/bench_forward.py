@@ -33,15 +33,23 @@ import torch
 
 from conftest import maybe_npu_sync, HAS_TORCH_NPU
 
+# 设备标记整改（"假 NPU" 套件重构，见 REMOTE_TEST_RESULTS §10.4）：历史版本
+# 全部使用默认 CPU 张量，计时的是 CPU fallback 而非 NPU kernel。现将
+# 基准强制放到 NPU（无 NPU 环境退回 CPU 并在输出中标注），确保数字含义明确。
+if HAS_TORCH_NPU and torch.npu.is_available():
+    BENCH_DEVICE = "npu:0"
+else:
+    BENCH_DEVICE = "cpu"
+
 
 def _bench_forward(B, T, H, F_in, warmup=2, repeats=5):
     from oil_gas_ops_prospect.custom_gru_v2 import custom_gru_v2
     torch.manual_seed(42)
-    x = torch.randn(B, T, F_in)
-    wi = torch.randn(3 * H, F_in) * 0.1
-    wh = torch.randn(3 * H, H) * 0.1
-    bi = torch.randn(3 * H) * 0.1
-    bh = torch.randn(3 * H) * 0.1
+    x = torch.randn(B, T, F_in, device=BENCH_DEVICE)
+    wi = torch.randn(3 * H, F_in, device=BENCH_DEVICE) * 0.1
+    wh = torch.randn(3 * H, H, device=BENCH_DEVICE) * 0.1
+    bi = torch.randn(3 * H, device=BENCH_DEVICE) * 0.1
+    bh = torch.randn(3 * H, device=BENCH_DEVICE) * 0.1
 
     for _ in range(warmup):
         y, h = custom_gru_v2(x, wi, wh, bi, bh, H, False)
@@ -59,26 +67,27 @@ def _bench_forward(B, T, H, F_in, warmup=2, repeats=5):
     avg_ms = sum(times) / len(times)
     min_ms = min(times)
     throughput = (B * T) / (avg_ms / 1000) if avg_ms > 0 else 0
-    return {"avg_ms": avg_ms, "min_ms": min_ms, "throughput": throughput, "B": B, "T": T}
+    return {"avg_ms": avg_ms, "min_ms": min_ms, "throughput": throughput,
+            "B": B, "T": T, "device": BENCH_DEVICE}
 
 
 def test_perf_fwd_001_single_long_seq():
     result = _bench_forward(1, 1000, 24, 3)
-    print(f"\n[PERF-FWD-001] B=1,T=1000,H=24: avg={result['avg_ms']:.2f}ms, "
+    print(f"\n[PERF-FWD-001] device={result['device']} B=1,T=1000,H=24: avg={result['avg_ms']:.2f}ms, "
           f"min={result['min_ms']:.2f}ms, throughput={result['throughput']:.0f} steps/s")
     assert result["avg_ms"] > 0
 
 
 def test_perf_fwd_002_batch():
     result = _bench_forward(32, 100, 24, 3)
-    print(f"\n[PERF-FWD-002] B=32,T=100,H=24: avg={result['avg_ms']:.2f}ms, "
+    print(f"\n[PERF-FWD-002] device={result['device']} B=32,T=100,H=24: avg={result['avg_ms']:.2f}ms, "
           f"min={result['min_ms']:.2f}ms, throughput={result['throughput']:.0f} steps/s")
     assert result["avg_ms"] > 0
 
 
 def test_perf_fwd_003_throughput():
     result = _bench_forward(1, 1000, 24, 3)
-    print(f"\n[PERF-FWD-003] throughput={result['throughput']:.0f} steps/s (B*T per second)")
+    print(f"\n[PERF-FWD-003] device={result['device']} throughput={result['throughput']:.0f} steps/s (B*T per second)")
     assert result["throughput"] > 0
 
 
@@ -86,12 +95,13 @@ def test_perf_fwd_004_vs_puregru_ratio():
     from oil_gas_ops_prospect.custom_gru_v2 import _torch_gru_forward
     B, T, H, F_in = 1, 100, 8, 3
     torch.manual_seed(42)
-    x = torch.randn(B, T, F_in)
-    wi = torch.randn(3 * H, F_in) * 0.1
-    wh = torch.randn(3 * H, H) * 0.1
-    bi = torch.randn(3 * H) * 0.1
-    bh = torch.randn(3 * H) * 0.1
+    x = torch.randn(B, T, F_in, device=BENCH_DEVICE)
+    wi = torch.randn(3 * H, F_in, device=BENCH_DEVICE) * 0.1
+    wh = torch.randn(3 * H, H, device=BENCH_DEVICE) * 0.1
+    bi = torch.randn(3 * H, device=BENCH_DEVICE) * 0.1
+    bh = torch.randn(3 * H, device=BENCH_DEVICE) * 0.1
 
+    # 同设备参考实现（NPU 场景下该循环也在 NPU 上跑 torch 算子）
     for _ in range(3):
         _torch_gru_forward(x, wi, wh, bi, bh, H, False)
     maybe_npu_sync()
@@ -107,7 +117,7 @@ def test_perf_fwd_004_vs_puregru_ratio():
 
     custom_result = _bench_forward(B, T, H, F_in, repeats=10)
     ratio = custom_result["avg_ms"] / pure_ms if pure_ms > 0 else float("inf")
-    print(f"\n[PERF-FWD-004] custom={custom_result['avg_ms']:.2f}ms vs pure={pure_ms:.2f}ms, "
+    print(f"\n[PERF-FWD-004] device={BENCH_DEVICE} custom={custom_result['avg_ms']:.2f}ms vs pure={pure_ms:.2f}ms, "
           f"ratio={ratio:.2f}x")
     if HAS_TORCH_NPU and torch.npu.is_available():
         try:

@@ -14,6 +14,7 @@
  */
 
 #include "custom_gruv2_tiling.h"
+#include "custom_gruv2_ub_footprint.h"
 #include "register/op_def_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 
@@ -93,23 +94,20 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     }
     uint32_t batchPerBlock = CeilDivU32(batch, blockCount);
 
-    // Unified-buffer footprint per core: hidden state, three gate accumulators
-    // and four scratch vectors, all in fp32.
-    uint64_t ubBytes = static_cast<uint64_t>(batchPerBlock * hiddenAligned + 7U * hiddenAligned) * sizeof(float);
+    // Unified-buffer footprint per core: hidden state per sample plus the 8
+    // fixed vector buffers (gates r/z/n, r/z/t1/t2 scratch, and the Div
+    // constant vector introduced by the D2 numeric fix) — derived via
+    // custom_gruv2_ub_footprint.h so host/UT/kernel stay consistent.
+    uint64_t ubBytes = CustomGRUV2Host::UbytesPerBlock(batchPerBlock, hiddenAligned);
     if (ubBytes > kUbByteBudget) {
-        const uint64_t ubSlots = kUbByteBudget / sizeof(float);
-        const uint64_t fixedSlots = static_cast<uint64_t>(7U) * hiddenAligned;
-        if (ubSlots <= fixedSlots) {
-            FailEmptyTiling(context);
-            return ge::GRAPH_FAILED;
-        }
-        const uint32_t maxBatchPerBlock = static_cast<uint32_t>((ubSlots - fixedSlots) / hiddenAligned);
+        const uint32_t maxBatchPerBlock = CustomGRUV2Host::MaxBatchPerBlock(hiddenAligned, kUbByteBudget);
         if (maxBatchPerBlock == 0U) {
             FailEmptyTiling(context);
             return ge::GRAPH_FAILED;
         }
         blockCount = CeilDivU32(batch, maxBatchPerBlock);
         batchPerBlock = CeilDivU32(batch, blockCount);
+        ubBytes = CustomGRUV2Host::UbytesPerBlock(batchPerBlock, hiddenAligned);
     }
 
     const bool hasBias = (context->GetInputShape(3) != nullptr) && (context->GetInputShape(4) != nullptr);
