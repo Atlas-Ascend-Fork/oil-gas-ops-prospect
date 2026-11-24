@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/api_list.md)
 
-对外接口统一由 Python 包 `oil_gas_ops_prospect` 暴露。源码树里没有这个目录：`setup.py` 在打包时把 `ascendc/pybind/`、`triton-ascend/real_fft/`、`triton-ascend/complex_reciprocal/`、`triton-ascend/complex_exp/`、`triton-ascend/interpolate/`、`triton-ascend/spectral_mlp/` 与 `composite-torch/conv3d_custom/`、`composite-torch/complex_addcmul/` 显式映射到同一包名下；直接用仓内源码跑、没装 whl 时，由 `scripts/local_pkg.py` 自动发现并提供同一导入路径。
+对外接口统一由 Python 包 `oil_gas_ops_prospect` 暴露。源码树里没有这个目录：`setup.py` 在打包时把 `ascendc/pybind/`、`triton-ascend/real_fft/`、`triton-ascend/complex_reciprocal/`、`triton-ascend/complex_exp/`、`triton-ascend/interpolate/`、`triton-ascend/spectral_mlp/` 与 `composite-torch/conv3d_custom/`、`composite-torch/complex_addcmul/`、`composite-torch/complex_index_select/` 显式映射到同一包名下；直接用仓内源码跑、没装 whl 时，由 `scripts/local_pkg.py` 自动发现并提供同一导入路径。
 
 ```text
 oil_gas_ops_prospect
@@ -16,7 +16,8 @@ oil_gas_ops_prospect
 ├── interpolate           # interpolate, bilinear, trilinear
 ├── spectral_mlp          # spectral_mlp
 ├── conv3d_custom         # Conv3d；functional 子模块： conv3d
-└── complex_addcmul       # complex_addcmul
+├── complex_addcmul       # complex_addcmul
+└── complex_index_select  # complex_index_select
 ```
 
 数学定义、shape / dtype 约束与精度阈值见[算子列表](op_list.md)。
@@ -722,3 +723,39 @@ def complex_addcmul(
 
 上游补齐 `aclnnAddcmul` 的复数 dtype 后本算子可移除，相关需求见
 [cann/oil-gas-ops-prospect#29](https://gitcode.com/cann/oil-gas-ops-prospect/issues/29)。
+
+---
+
+## `oil_gas_ops_prospect.complex_index_select`
+
+### `complex_index_select`
+
+```python
+from oil_gas_ops_prospect.complex_index_select import complex_index_select
+
+def complex_index_select(
+    input: torch.Tensor,
+    dim: int,
+    index: torch.Tensor,
+) -> torch.Tensor
+```
+
+复数版 `torch.index_select`：沿 `dim` 按一维 `index` 抽取行，语义等价于 `torch.index_select(input, dim, index)`。纯 PyTorch 组合实现。
+
+用于补齐 NPU 上复数 `index_select` 的两处缺陷：原生反向（`aclnnIndexAdd`）不支持复数 dtype 直接报 `161002`；原生 complex64 前向派发到 AiCPU 标量核（`GatherV2`），大形状比 float32 路径慢两个数量级。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `input` | `torch.Tensor` | 被抽取的复数张量（`complex64` / `complex128`），任意 rank、任意布局（0 维除外） |
+| `dim` | `int` | 抽取的轴，支持负数（与 torch 归一化规则一致） |
+| `index` | `torch.Tensor` | 一维索引张量，`int32` / `int64`，可重复、可为空 |
+
+返回值 shape 为 `input` 的 `dim` 轴替换为 `M = index.numel()`，dtype 与 `input` 相同。
+
+- **只接受复数**：实数 gather 在任何后端都原生可用，请直接用 `torch.index_select`，本算子抛 `TypeError`。
+- **实现路径**：连续输入且 `dim < input.dim() - 1` 走 flat 路径（`view(float)` 后 gather，带宽与 float32 基线一致）；末轴 `dim`（含 1-D）或非连续输入走 real/imag 路径。
+- **autograd**：反向是实数视图上的 `zeros + index_add_`，与原生 `index_select` 反向同构；重复索引按出现次数累加。二阶导不可用，与原生一致。
+- **精度**：对拍 CPU 原生 `torch.index_select`，前向逐位一致；反向最大绝对误差 `complex64` ≤ 1e-5、`complex128` ≤ 2e-14。
+
+上游补齐 `aclnnIndexAdd` 的复数 dtype（并让 complex64 前向离开 AiCPU）后本算子可移除，相关需求见
+[cann/oil-gas-ops-prospect#61](https://gitcode.com/cann/oil-gas-ops-prospect/issues/61)。

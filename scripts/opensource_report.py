@@ -212,6 +212,7 @@ class Statuses:
     prec_cexp: str = NA
     prec_spectral: str = NA
     prec_caddcmul: str = NA
+    prec_cidxsel: str = NA
     perf_cm: str = NA
     perf_fused: str = NA
     perf_conv3d: str = NA
@@ -221,6 +222,7 @@ class Statuses:
     perf_cexp: str = NA
     perf_spectral: str = NA
     perf_caddcmul: str = NA
+    perf_cidxsel: str = NA
     fft_v: str = NA
     fft_p: str = NA
     docs: str = NA
@@ -256,6 +258,7 @@ class PerfSummary:
     spectral_fwd: list[PerfRow] = field(default_factory=list)
     spectral_fwdbwd: list[PerfRow] = field(default_factory=list)
     caddcmul_fwd: list[PerfRow] = field(default_factory=list)
+    cidxsel_fwd: list[PerfRow] = field(default_factory=list)
     gmean_txt: str = "未解析"
     fft_metric: str = ""
 
@@ -285,6 +288,7 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
         prec_cexp=job_status(jobs, "complex_exp_precision"),
         prec_spectral=job_status(jobs, "spectral_mlp_precision"),
         prec_caddcmul=job_status(jobs, "complex_addcmul_precision"),
+        prec_cidxsel=job_status(jobs, "complex_index_select_precision"),
         perf_cm=job_status(jobs, "complex_mul_perf"),
         perf_fused=job_status(jobs, "fused_bias_softmax_perf"),
         perf_conv3d=job_status(jobs, "conv3d_custom_perf"),
@@ -294,6 +298,7 @@ def collect_statuses(jobs: dict[str, dict]) -> Statuses:
         perf_cexp=job_status(jobs, "complex_exp_perf"),
         perf_spectral=job_status(jobs, "spectral_mlp_perf"),
         perf_caddcmul=job_status(jobs, "complex_addcmul_perf"),
+        perf_cidxsel=job_status(jobs, "complex_index_select_perf"),
         fft_v=combine(
             job_status(jobs, "fft_npu_verify"), job_status(jobs, "fft_npu_verify_5d")
         ),
@@ -326,6 +331,7 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
     cexp_rows = parse_perf_rows(job_log(jobs, "complex_exp_perf"))
     spectral_rows = parse_perf_rows(job_log(jobs, "spectral_mlp_perf"))
     caddcmul_rows = parse_perf_rows(job_log(jobs, "complex_addcmul_perf"))
+    cidxsel_rows = parse_perf_rows(job_log(jobs, "complex_index_select_perf"))
     fused_fwd = [r for r in fused_rows if r[0].startswith("fwd ")]
     fused_bwd = [r for r in fused_rows if r[0].startswith("bwd ")]
     gmean = geo_mean(speedup_vals(fft_rows))
@@ -359,6 +365,9 @@ def collect_perf(jobs: dict[str, dict]) -> PerfSummary:
         spectral_fwd=[r for r in spectral_rows if r[0].startswith("spectral_mlp fwd ")],
         spectral_fwdbwd=[r for r in spectral_rows if r[0].startswith("spectral_mlp fwd+bwd")],
         caddcmul_fwd=[r for r in caddcmul_rows if r[0].startswith("addcmul fwd")],
+        cidxsel_fwd=[
+            r for r in cidxsel_rows if r[0].startswith("index_select fwd")
+        ],
         gmean_txt=f"{gmean:.2f}x" if gmean else "未解析",
         fft_metric=fft_metric_text(fft_rows),
     )
@@ -463,6 +472,15 @@ def build_features(st: Statuses) -> list[tuple[str, str, str, str, str, str, str
             st.composite,
             st.prec_caddcmul,
             st.perf_caddcmul,
+            st.composite,
+            st.install,
+        ),
+        (
+            "complex_index_select",
+            combine(st.composite, st.prec_cidxsel, st.perf_cidxsel, st.api, st.install),
+            st.composite,
+            st.prec_cidxsel,
+            st.perf_cidxsel,
             st.composite,
             st.install,
         ),
@@ -585,6 +603,13 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
             "`complex128` 与各梯度路径均覆盖",
         ),
         (
+            "complex_index_select 前反向精度",
+            combine(st.composite, st.prec_cidxsel),
+            "对拍 CPU 原生 `torch.index_select`（flat / real-imag 两条路径、重复索引、int32 索引、"
+            "空索引与负数 dim）：前向纯 gather 逐位一致，反向最大绝对误差 `complex64` <= 1e-5、"
+            "`complex128` <= 2e-14；NPU 原生反向对复数报错，断言其移除信号",
+        ),
+        (
             "Conv3d / conv3d NPU 精度与性能",
             combine(st.prec_conv3d, st.perf_conv3d),
             "测试脚本列出的 NPU float32 形态对拍：支持参数域内的自定义前/反向 vs 原生（L2 相对误差阈值 `1e-5`；"
@@ -616,7 +641,7 @@ def build_cases(st: Statuses) -> list[tuple[str, str, str]]:
         (
             "公开接口冒烟",
             st.api,
-            "`complex_mul` / `fused_bias_softmax` / `fused_softmax_grad` / `conv3d_gelu` / `real_rfft` / `real_irfft` / `complex_addcmul` 可导入；"
+            "`complex_mul` / `fused_bias_softmax` / `fused_softmax_grad` / `conv3d_gelu` / `real_rfft` / `real_irfft` / `complex_addcmul` / `complex_index_select` 可导入；"
             "CPU 回退前反向可跑通",
         ),
         (
@@ -688,6 +713,10 @@ def section_overview(cmd: str, ok: bool, rate: str) -> list[str]:
         "支持广播、实数/复数 `value` 与 autograd |",
         "| 13 | spectral_mlp | 频域低秩门控两层 MLP：输入 rFFT 后的实虚分离频谱，两层小矩阵乘 + 逐模数门控 + "
         "偏置 + GELU 融合为单 kernel，层间激活不落 GM；支持一阶 autograd 与 CPU 回退 |",
+        "| 14 | complex_index_select | 复数版 `torch.index_select`（纯 PyTorch 组合）："
+        "补齐 NPU 反向 `aclnnIndexAdd` 缺复数 dtype 的报错，前向绕开 complex64 的 AiCPU 慢路径"
+        "（flat 路径带宽与 float32 基线一致，末轴 / 1-D / 非连续走 real/imag 路径）；"
+        "支持 `int32` / `int64` 索引、重复索引累加与一阶 autograd |",
         "",
         "`attention_core(q, k, v, bias1, bias2)` 为 FusedBiasSoftmax 与 FusedSoftmaxGrad 按 openfold "
         "注意力语义的组合封装，随上述融合算子一并验证。",
@@ -878,6 +907,10 @@ def section_perf(st: Statuses, perf: PerfSummary, date: str) -> list[str]:
         "（NPU 原生 `torch.addcmul` 对复数报错） | "
         f"前向 {speedup_span(perf.caddcmul_fwd)} | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_caddcmul)} | 多次 torch 小算子组合，非融合 kernel |",
+        "| 算子微基准 | 不涉及 | complex_index_select | 同设备 NPU 原生 `torch.index_select`（complex64，"
+        "前向派发 AiCPU） | "
+        f"前向 {speedup_span(perf.cidxsel_fwd)}；反向原生对复数报错（native=CRASH），本算子 fwd+bwd 计时见 perf 表 | "
+        f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_cidxsel)} | 无 |",
         "| 算子微基准 | 不涉及 | complex_reciprocal | 同设备 torch `1/z`（aclnnReciprocal）与先构造 complex64 的原始写法 | "
         f"前向 {speedup_span(perf.crecip_fwd)}；端到端融合 {speedup_span(perf.crecip_e2e)} | "
         f"Atlas A2 + CANN 9.0.0 | {cell(st.perf_crecip)} | 无 |",
@@ -908,6 +941,10 @@ def section_perf_tables(perf: PerfSummary) -> list[str]:
     )
     lines += perf_md_table(
         "complex_addcmul 前向（相对同设备等价 torch 表达式）", perf.caddcmul_fwd
+    )
+    lines += perf_md_table(
+        "complex_index_select 前向（相对同设备 NPU 原生 torch.index_select，complex64）",
+        perf.cidxsel_fwd,
     )
     lines += perf_md_table(
         "complex_reciprocal 前向（相对同设备 torch 1/z）", perf.crecip_fwd

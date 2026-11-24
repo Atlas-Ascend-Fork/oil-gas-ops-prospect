@@ -67,6 +67,7 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     from oil_gas_ops_prospect.complex_exp import complex_exp
     from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
     from oil_gas_ops_prospect.complex_addcmul import complex_addcmul
+    from oil_gas_ops_prospect.complex_index_select import complex_index_select
     from oil_gas_ops_prospect.conv3d_custom import Conv3d
     from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
     from oil_gas_ops_prospect.fused_bias_softmax import (
@@ -88,6 +89,7 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     assert callable(Conv3d)
     assert callable(conv3d)
     assert callable(complex_addcmul)
+    assert callable(complex_index_select)
     assert callable(fused_bias_softmax)
     assert callable(fused_softmax_grad)
     assert callable(attention_core)
@@ -324,6 +326,47 @@ def test_complex_addcmul_whl_cpu_forward_backward():
         for g, w in zip(got_grads, ref_grads):
             assert g.shape == w.shape
             assert torch.allclose(g, w, rtol=0, atol=tol)
+
+
+def test_complex_index_select_whl_cpu_forward_backward():
+    """CPU 上验证 complex_index_select 前反向接线与数学一致性。
+
+    前向覆盖 flat / real-imag 两条路径，反向含重复索引的累加语义。
+    """
+    from oil_gas_ops_prospect.complex_index_select import complex_index_select
+
+    torch.manual_seed(16)
+
+    def _mk(shape, dtype):
+        rd = torch.float32 if dtype == torch.complex64 else torch.float64
+        return torch.complex(
+            torch.randn(shape, dtype=rd), torch.randn(shape, dtype=rd)
+        )
+
+    for dtype in (torch.complex64, torch.complex128):
+        tol = 1e-5 if dtype == torch.complex64 else 2e-14
+        for shape, dim, idx in (
+            ((8, 5), 0, torch.tensor([0, 3, 3, 7])),   # flat 路径 + 重复索引
+            ((6, 7), 1, torch.tensor([0, 5, 6, 6])),    # 末轴，real/imag 路径
+            ((11,), 0, torch.tensor([2, 2, 9])),        # 1-D，real/imag 路径
+        ):
+            z = _mk(shape, dtype)
+            got = complex_index_select(z, dim, idx)
+            ref = torch.index_select(z, dim, idx)
+            assert got.dtype == dtype and got.shape == ref.shape
+            assert torch.equal(got, ref)
+
+            got_z = z.clone().requires_grad_(True)
+            ref_z = z.clone().requires_grad_(True)
+            g = _mk(got.shape, dtype)
+            got_g = torch.autograd.grad(
+                complex_index_select(got_z, dim, idx), got_z, g
+            )[0]
+            ref_g = torch.autograd.grad(
+                torch.index_select(ref_z, dim, idx), ref_z, g
+            )[0]
+            assert got_g.shape == ref_g.shape
+            assert torch.allclose(got_g, ref_g, rtol=0, atol=tol)
 
 
 def test_complex_mul_npu_extension_import_when_required():

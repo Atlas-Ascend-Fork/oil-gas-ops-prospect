@@ -121,7 +121,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 
 ## 📖 接口支持清单
 
-当前交付 7 个 AscendC 算子、8 个 Triton-Ascend 算子和 2 个 Composite-Torch 算子：
+当前交付 7 个 AscendC 算子、8 个 Triton-Ascend 算子和 3 个 Composite-Torch 算子：
 
 | 名称 / OpType | 后端 / 交付物 | 功能 | dtype / format |
 |---------------|---------------|------|----------------|
@@ -142,6 +142,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 | [`spectral_mlp`](triton-ascend/spectral_mlp/) | Triton-Ascend / Python whl | 频域低秩门控两层 MLP（复数，实虚分离），两层融合单 kernel | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
 | [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | 支持参数域内兼容 `nn.Conv3d`（自定义前/反向，state_dict key 互通） | 底层 PyTorch 后端支持且经本仓测试的 dtype |
 | [`complex_addcmul`](composite-torch/complex_addcmul/) | Composite-Torch / Python whl | 复数三输入 `input + value*t1*t2`，规避 NPU 上 `torch.addcmul` 缺复数 dtype | `complex64` / `complex128` |
+| [`complex_index_select`](composite-torch/complex_index_select/) | Composite-Torch / Python whl | 复数版 `torch.index_select`，补齐 NPU 反向报错并绕开前向 AiCPU 慢路径 | `complex64` / `complex128` |
 
 Python 融合注意力封装提供两种明确语义：无下划线版本始终非原地并支持非连续输入；带下划线版本只接受连续输入并原地更新。
 
@@ -167,7 +168,8 @@ oil-gas-ops-prospect/
 │   └── tools/              #   AOT 编译检查
 ├── composite-torch/        # Composite-Torch 算子（纯 PyTorch 组合，打包为 oil_gas_ops_prospect.<op>）
 │   ├── conv3d_custom/      #   Conv3d（支持参数域内兼容 nn.Conv3d）
-│   └── complex_addcmul/    #   complex_addcmul（复数三输入逐元素）
+│   ├── complex_addcmul/    #   complex_addcmul（复数三输入逐元素）
+│   └── complex_index_select/ # complex_index_select（复数版 index_select）
 ├── tests/                   # UT / ST / Python 精度性能；operators/ 不再放测试
 │   ├── ut/op_host/         #   tiling googletest
 │   ├── st/aclnn<OpType>/   #   两段式 aclnn 系统测试
@@ -181,7 +183,8 @@ oil-gas-ops-prospect/
 │   ├── triton/interpolate/ #   2D/3D 插值验证（CPU 回退 + NPU verify + report）
 │   ├── triton/spectral_mlp/ #  频域低秩门控两层 MLP 验证
 │   ├── composite/conv3d_custom/   # Conv3d / conv3d 精度与性能基准
-│   └── composite/complex_addcmul/ # complex_addcmul 精度与反向
+│   ├── composite/complex_addcmul/ # complex_addcmul 精度与反向
+│   └── composite/complex_index_select/ # complex_index_select 精度与反向
 ├── examples/               # Python 示例 + examples/aclnn/<op>/ C++ 样例
 ├── scripts/                # 辅助脚本
 ├── SKILLS/                 # 可复用的算子开发技能（优化 / 定位 / 修复），按后端拆开

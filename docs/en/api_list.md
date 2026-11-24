@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/api_list.md)
 
-All public APIs are exposed by the Python package `oil_gas_ops_prospect`. That directory does not exist in the source tree: at packaging time `setup.py` explicitly maps `ascendc/pybind/`, `triton-ascend/real_fft/`, `triton-ascend/complex_reciprocal/`, `triton-ascend/complex_exp/`, `triton-ascend/interpolate/`, `triton-ascend/spectral_mlp/`, `composite-torch/conv3d_custom/`, and `composite-torch/complex_addcmul/` under the same package name, while when running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` discovers them automatically and provides the same import path.
+All public APIs are exposed by the Python package `oil_gas_ops_prospect`. That directory does not exist in the source tree: at packaging time `setup.py` explicitly maps `ascendc/pybind/`, `triton-ascend/real_fft/`, `triton-ascend/complex_reciprocal/`, `triton-ascend/complex_exp/`, `triton-ascend/interpolate/`, `triton-ascend/spectral_mlp/`, `composite-torch/conv3d_custom/`, `composite-torch/complex_addcmul/`, and `composite-torch/complex_index_select/` under the same package name, while when running straight from the in-repo sources with no whl installed, `scripts/local_pkg.py` discovers them automatically and provides the same import path.
 
 ```text
 oil_gas_ops_prospect
@@ -16,7 +16,8 @@ oil_gas_ops_prospect
 ├── interpolate           # interpolate, bilinear, trilinear
 ├── spectral_mlp          # spectral_mlp
 ├── conv3d_custom         # Conv3d; functional submodule: conv3d
-└── complex_addcmul       # complex_addcmul
+├── complex_addcmul       # complex_addcmul
+└── complex_index_select  # complex_index_select
 ```
 
 For mathematical definitions, shape / dtype constraints and precision thresholds see the [Operator List](op_list.md).
@@ -723,3 +724,39 @@ Returns the broadcast-shape complex tensor, with dtype promoted via `torch.promo
 
 This operator can be removed once upstream adds complex dtype support to `aclnnAddcmul`; see
 [cann/oil-gas-ops-prospect#29](https://gitcode.com/cann/oil-gas-ops-prospect/issues/29).
+
+---
+
+## `oil_gas_ops_prospect.complex_index_select`
+
+### `complex_index_select`
+
+```python
+from oil_gas_ops_prospect.complex_index_select import complex_index_select
+
+def complex_index_select(
+    input: torch.Tensor,
+    dim: int,
+    index: torch.Tensor,
+) -> torch.Tensor
+```
+
+Complex-valued `torch.index_select`: gathers rows along `dim` by the 1-D `index`, semantically equivalent to `torch.index_select(input, dim, index)`. Implemented purely by composing PyTorch ops.
+
+Fixes two defects of the complex path on NPU: the native backward (`aclnnIndexAdd`) rejects complex dtypes outright with `161002`, and the native complex64 forward is dispatched to the AiCPU scalar kernel (`GatherV2`), two orders of magnitude slower than the float32 path for large shapes.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `input` | `torch.Tensor` | Complex tensor to gather from (`complex64` / `complex128`), any rank, any layout (except 0-dim) |
+| `dim` | `int` | Axis to gather along; negative values allowed (normalized like torch) |
+| `index` | `torch.Tensor` | 1-D index tensor, `int32` / `int64`, may repeat or be empty |
+
+The output shape replaces the `dim` axis of `input` with `M = index.numel()`; the dtype matches `input`.
+
+- **Complex only**: real gathers are natively available on every backend; use `torch.index_select` directly, this operator raises `TypeError`.
+- **Implementation path**: contiguous inputs with `dim < input.dim() - 1` take the flat path (gather on the `view(float)` reinterpretation, bandwidth on par with the float32 baseline); a last-axis `dim` (including 1-D) or a non-contiguous input takes the real/imag path.
+- **autograd**: the backward is `zeros + index_add_` on the real view, isomorphic to the native `index_select` backward; duplicate indices accumulate by occurrence count. Double backward is unavailable, same as the native.
+- **Accuracy**: versus CPU `torch.index_select`, the forward is bit-exact; the max absolute backward error is <= 1e-5 for `complex64` and <= 2e-14 for `complex128`.
+
+This operator can be removed once upstream adds complex dtype support to `aclnnIndexAdd` (and moves the complex64 forward off AiCPU); see
+[cann/oil-gas-ops-prospect#61](https://gitcode.com/cann/oil-gas-ops-prospect/issues/61).

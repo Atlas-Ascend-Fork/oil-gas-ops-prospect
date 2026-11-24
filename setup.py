@@ -36,6 +36,7 @@ from pybind_extensions import build_extensions  # noqa: E402
 #   oil_gas_ops_prospect.complex_reciprocal ← triton-ascend/complex_reciprocal/
 #   oil_gas_ops_prospect.conv3d_custom    ← composite-torch/conv3d_custom/
 #   oil_gas_ops_prospect.complex_addcmul  ← composite-torch/complex_addcmul/
+#   oil_gas_ops_prospect.complex_index_select ← composite-torch/complex_index_select/
 setup(
     name="oil-gas-ops-prospect",
     version="0.1.0",
@@ -49,6 +50,7 @@ setup(
         "oil_gas_ops_prospect.spectral_mlp",
         "oil_gas_ops_prospect.conv3d_custom",
         "oil_gas_ops_prospect.complex_addcmul",
+        "oil_gas_ops_prospect.complex_index_select",
     ],
     package_dir={
         "oil_gas_ops_prospect": "ascendc/pybind",
@@ -59,6 +61,7 @@ setup(
         "oil_gas_ops_prospect.spectral_mlp": "triton-ascend/spectral_mlp",
         "oil_gas_ops_prospect.conv3d_custom": "composite-torch/conv3d_custom",
         "oil_gas_ops_prospect.complex_addcmul": "composite-torch/complex_addcmul",
+        "oil_gas_ops_prospect.complex_index_select": "composite-torch/complex_index_select",
     },
     include_package_data=False,
     exclude_package_data={
@@ -70,6 +73,7 @@ setup(
         "oil_gas_ops_prospect.spectral_mlp": ["README.md"],
         "oil_gas_ops_prospect.conv3d_custom": ["README.md"],
         "oil_gas_ops_prospect.complex_addcmul": ["README.md"],
+        "oil_gas_ops_prospect.complex_index_select": ["README.md"],
     },
     ext_modules=build_extensions(relative_to=ROOT),
     cmdclass={"build_ext": BuildExtension},

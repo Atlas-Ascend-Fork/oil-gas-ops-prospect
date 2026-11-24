@@ -38,7 +38,7 @@ bash build.sh --opensource-report
 | **pybind 单测** | 封装层不变量（输出别名、输入物化等），monkeypatch 扩展，pytest 直跑 | `tests/ascendc/<op>/test_*_pybind_alias.py` 等 | 否 |
 | **性能** | Python 计时、加速比 | 同上 `--mode perf` | **是** |
 | **Triton CPU** | rFFT / 复数倒数 / 复数指数 / 插值 / 频域两层 MLP 的 CPU 回退精度（pytest） | `tests/triton/real_fft/`、`tests/triton/complex_reciprocal/`、`tests/triton/complex_exp/`、`tests/triton/interpolate/`、`tests/triton/spectral_mlp/` | 否 |
-| **Composite CPU** | Conv3d / conv3d、complex_addcmul 前反向精度与取值组合（pytest） | `tests/composite/conv3d_custom/`、`tests/composite/complex_addcmul/` | 否 |
+| **Composite CPU** | Conv3d / conv3d、complex_addcmul、complex_index_select 前反向精度与取值组合（pytest） | `tests/composite/conv3d_custom/`、`tests/composite/complex_addcmul/`、`tests/composite/complex_index_select/` | 否 |
 | **Triton AOT** | kernel 分支能编译 | `triton-ascend/tools/aot_compile_check.py` | 否 |
 | **Triton 大形态 / 微基准** | `128^3` 与业务 5D 精度，二维组合接口精度，以及开源报告 5.3 的 FFT 计时 | `tests/triton/real_fft/verify_triton_fft_real_128_3d.py`、`verify_real_fft2.py`、`bench_opensource_perf.py` | **是** |
 | **开源门禁** | 文档清单与章节关键词、`build.sh -h`、OPP vendor、公开接口 CPU 冒烟 | `tests/opensource_gates.py` | 安装痕迹要 CANN |
@@ -54,7 +54,8 @@ bash build.sh --opensource-report
   `--mode precision` 只查精度并以精度决定退出码，`--mode perf` 只计时且退出码为 0。
   composite 算子经同一协议接入
   （如 `tests/composite/conv3d_custom/bench_conv3d_custom_perf.py`、
-  `tests/composite/complex_addcmul/verify_complex_addcmul.py`）。
+  `tests/composite/complex_addcmul/verify_complex_addcmul.py`、
+  `tests/composite/complex_index_select/verify_complex_index_select.py`）。
   `ACLNN_CACHE_LIMIT=0` 必须在启动 Python 之前设置，不能等 `conv3d_gelu` 被 import 再补。
 - Python 示例 `examples/*.py`、whl 冒烟见文末。Triton 大形态已纳入全量 `-u`。
 
@@ -133,7 +134,8 @@ tests/
 ├── triton/spectral_mlp/                 # 频域两层 MLP CPU 回退 + NPU verify
 │   └── report/                          # 精度/性能结果、机型与复现命令
 ├── composite/conv3d_custom/             # Composite CPU（Conv3d / conv3d）
-└── composite/complex_addcmul/           # Composite CPU/NPU（complex_addcmul 精度与反向）
+├── composite/complex_addcmul/          # Composite CPU/NPU（complex_addcmul 精度与反向）
+└── composite/complex_index_select/     # Composite CPU/NPU（complex_index_select 精度与反向）
 
 examples/aclnn/<op>/                     # UT-device（C++ 两段式小 launch）
 ```

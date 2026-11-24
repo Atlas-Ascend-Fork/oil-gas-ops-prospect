@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/op_list.md)
 
-当前仓库交付 7 个 AscendC/CANN OPP 算子、8 个 Triton-Ascend Python 算子和 2 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
+当前仓库交付 7 个 AscendC/CANN OPP 算子、8 个 Triton-Ascend Python 算子和 3 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
 
@@ -25,6 +25,7 @@
 | `spectral_mlp` | Triton-Ascend | `oil_gas_ops_prospect.spectral_mlp.spectral_mlp` | [`triton-ascend/spectral_mlp/`](../../triton-ascend/spectral_mlp/) | 频域低秩门控两层 MLP（复数，实虚分离） | NPU kernel 为 `float32` | Ascend 910B |
 | `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | 支持参数域内的 `nn.Conv3d` / `F.conv3d` 兼容实现（自定义前/反向） | 底层 PyTorch 后端支持且经本仓测试的 dtype | PyTorch 后端支持；已测 CPU / Ascend 910B |
 | `complex_addcmul` | Composite-Torch | `oil_gas_ops_prospect.complex_addcmul.complex_addcmul` | [`composite-torch/complex_addcmul/`](../../composite-torch/complex_addcmul/) | 复数三输入逐元素 `input + value*tensor1*tensor2`，规避 NPU 上 `torch.addcmul` 缺失复数 dtype | `complex64` / `complex128` | PyTorch 后端支持；已测 Ascend 910B |
+| `complex_index_select` | Composite-Torch | `oil_gas_ops_prospect.complex_index_select.complex_index_select` | [`composite-torch/complex_index_select/`](../../composite-torch/complex_index_select/) | 复数版 `torch.index_select`，补齐 NPU 反向报错并绕开前向 AiCPU 慢路径 | `complex64` / `complex128` | PyTorch 后端支持；已测 Ascend 910B |
 
 命名约定：
 
@@ -716,3 +717,42 @@ y_i &= (X_{2r}\odot g_{2r} + X_{2i}\odot g_{2i}) V_2 + b_{2i}
 
 上游补齐 `aclnnAddcmul` 的复数 dtype 后本算子可移除，相关需求见
 [cann/oil-gas-ops-prospect#29](https://gitcode.com/cann/oil-gas-ops-prospect/issues/29)。
+
+---
+
+### complex_index_select
+
+复数版 `torch.index_select`，纯 PyTorch 组合实现，用于补齐 NPU 上复数路径的两处缺陷：原生反向（`aclnnIndexAdd`）不支持复数 dtype 直接报错；原生 complex64 前向派发到 AiCPU 标量核（`GatherV2`），大形状比 float32 的 `GatherV3` 慢两个数量级。
+
+#### 数学定义
+
+\[
+\text{out}[i_0,\dots,i_{\text{dim}}=k,\dots] = \text{input}[i_0,\dots,i_{\text{dim}}=\text{index}[k],\dots]
+\]
+
+沿 `dim` 按 `index` 抽取行，与 `torch.index_select(input, dim, index)` 数值等价。反向对每个输入位置累加其被选中的梯度：
+
+\[
+\text{grad\_input}[\ldots, j, \ldots] = \sum_{k:\ \text{index}[k]=j} \text{grad\_out}[\ldots, k, \ldots]
+\]
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `input` | 被抽取的复数张量 | 任意 rank（0 维除外）、任意布局 | `complex64` / `complex128` |
+| 输入 | `dim` | 抽取的轴 | 标量 | `int`（支持负数） |
+| 输入 | `index` | 行索引，可重复、可为空 | 一维 `[M]` | `int32` / `int64` |
+| 输出 | — | 抽取结果 | `input` 的 `dim` 轴替换为 `M` | 与 `input` 相同 |
+
+#### 约束
+
+- 输入必须为复数；实数 gather 在任何后端都原生可用，应直接用 `torch.index_select`，本算子抛 `TypeError`。
+- 连续输入且 `dim < input.dim() - 1` 时走 flat 路径：`view(float)` 后行宽翻倍、行数不变，gather 字节访问模式与「复数感知 kernel」相同，带宽与 float32 基线一致；末轴 `dim`（含 1-D 张量）或非连续输入走 real/imag 路径（实部、虚部各 gather 一次再重组），仍远快于原生 AiCPU 路径。
+- 反向是 `zeros + index_add_`（在实数视图上），与原生 `index_select` 的反向同构；重复索引按出现次数累加，一阶梯度与原生一致。二阶导不可用，与原生一致（反向公式不含可微保存张量）。
+- 精度：对拍 CPU 原生 `torch.index_select`，前向为纯 gather 逐位一致；反向最大绝对误差 `complex64` ≤ 1e-5、`complex128` ≤ 2e-14（910B2 实测含重复索引约 2.5e-7）。
+- 性能（910B2 / CANN 9.0.0 / torch_npu 2.7.1，complex64 前向 vs 原生，公开 API 实测口径）：频率体 `(4,64,80,144,144)×dim=1×M=16` 约 115~135×（173~189ms → 1.4ms），行聚合 `(65536,1024)×dim=0×M=16384` 约 124~144×，长条 `(2^20,4)×dim=0×M=2^18` 约 113~124×，中块 `(16384,256)×dim=0×M=8192` 约 30~39×（该规模 Python 派发开销占比高），1-D 兜底 `(2^20,)×M=2^17` 约 22~23×（real/imag 路径）；kernel 级带宽证据（`GatherV3` AiCore 47.3µs vs `GatherV2` AiCPU 9.66ms）见 ISSUE #61。反向（前向+反向合计，原生对复数报错无基准）与同字节量 float32 原生基线对比：大形状（≥268MB 搬移量）实测 0.99~1.00×，中块（33MB）0.68×——差异为常数级 Python 派发与 view 开销（fwd 单独实测 0.112ms vs 0.028ms），随数据量摊薄，非带宽损失；该比值可由 `verify_complex_index_select.py --mode perf` 的 `fwdbwd-baseline` 行复现。
+- 索引值越界 / 为负的行为跟随底层后端，与原生一致。
+- 验证记录见 ISSUE #61 与 `tests/composite/complex_index_select/`。
+
+实现与使用说明详见 [`composite-torch/complex_index_select/README.md`](../../composite-torch/complex_index_select/README.md)。

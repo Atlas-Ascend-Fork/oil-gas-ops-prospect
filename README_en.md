@@ -121,7 +121,7 @@ Operator precision, performance and device memory on the NPU must be verified on
 
 ## 📖 Supported API List
 
-The current delivery contains 7 AscendC operators, 8 Triton-Ascend operators and 2 Composite-Torch operators:
+The current delivery contains 7 AscendC operators, 8 Triton-Ascend operators and 3 Composite-Torch operators:
 
 | Name / OpType | Backend / Deliverable | Function | dtype / format |
 |---------------|-----------------------|----------|----------------|
@@ -142,6 +142,7 @@ The current delivery contains 7 AscendC operators, 8 Triton-Ascend operators and
 | [`spectral_mlp`](triton-ascend/spectral_mlp/) | Triton-Ascend / Python whl | Two-layer low-rank gated MLP on real/imag spectral inputs, both layers fused into one kernel | `float32` for the NPU kernel; falls back to PyTorch otherwise |
 | [`Conv3d`](composite-torch/conv3d_custom/) | Composite-Torch / Python whl | compatible with `nn.Conv3d` within the supported parameter domain (custom forward/backward, interoperable state_dict keys) | dtypes supported by the underlying PyTorch backend and tested here |
 | [`complex_addcmul`](composite-torch/complex_addcmul/) | Composite-Torch / Python whl | complex three-input `input + value*t1*t2`, works around the missing complex dtypes in NPU `torch.addcmul` | `complex64` / `complex128` |
+| [`complex_index_select`](composite-torch/complex_index_select/) | Composite-Torch / Python whl | complex-valued `torch.index_select`, fixes the NPU backward error and bypasses the AiCPU slow forward path | `complex64` / `complex128` |
 
 The Python fused attention wrappers have explicit semantics: the names without a trailing underscore are always out of place and accept non-contiguous inputs; the underscore variants require contiguous inputs and update them in place.
 
@@ -167,7 +168,8 @@ oil-gas-ops-prospect/
 │   └── tools/              #   AOT compilation check
 ├── composite-torch/        # Composite-Torch operators (pure PyTorch composition, packaged as oil_gas_ops_prospect.<op>)
 │   ├── conv3d_custom/      #   Conv3d (compatible with nn.Conv3d within the supported parameter domain)
-│   └── complex_addcmul/    #   complex_addcmul (complex three-input elementwise)
+│   ├── complex_addcmul/    #   complex_addcmul (complex three-input elementwise)
+│   └── complex_index_select/ # complex_index_select (complex-valued index_select)
 ├── tests/                   # UT / ST / Python precision and performance; operators/ no longer holds tests
 │   ├── ut/op_host/         #   tiling googletest
 │   ├── st/aclnn<OpType>/   #   two-phase aclnn system tests
@@ -181,7 +183,8 @@ oil-gas-ops-prospect/
 │   ├── triton/interpolate/ #   2D/3D interpolation verification (CPU fallback + NPU verify + report)
 │   ├── triton/spectral_mlp/ #  spectral MLP verification
 │   ├── composite/conv3d_custom/   # Conv3d / conv3d precision and performance baseline
-│   └── composite/complex_addcmul/ # complex_addcmul precision and backward
+│   ├── composite/complex_addcmul/ # complex_addcmul precision and backward
+│   └── composite/complex_index_select/ # complex_index_select precision and backward
 ├── examples/               # Python examples + C++ samples under examples/aclnn/<op>/
 ├── scripts/                # helper scripts
 ├── SKILLS/                 # reusable operator development skills (optimization / diagnosis / repair), split by backend

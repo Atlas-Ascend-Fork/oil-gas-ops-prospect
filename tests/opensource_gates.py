@@ -108,9 +108,10 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "custom_gru_v2",
             "aclnnCustomGRUV2",
             "complex_addcmul",
+            "complex_index_select",
             "数学定义",
         ),
-        "17 个已交付算子的数学定义、输入输出与约束",
+        "18 个已交付算子的数学定义、输入输出与约束",
     ),
     (
         "docs/zh/api_list.md",
@@ -136,6 +137,7 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "custom_gru_v2",
             "aclnnCustomGRUV2",
             "complex_addcmul",
+            "complex_index_select",
         ),
         "Python 公开接口与 aclnn 两段式入口、环境变量",
     ),
@@ -260,6 +262,7 @@ def check_api() -> int:
     from oil_gas_ops_prospect.complex_reciprocal import complex_reciprocal
     from oil_gas_ops_prospect.interpolate import interpolate
     from oil_gas_ops_prospect.complex_addcmul import complex_addcmul
+    from oil_gas_ops_prospect.complex_index_select import complex_index_select
     from oil_gas_ops_prospect.real_fft import real_irfft, real_irfft2, real_rfft, real_rfft2
 
     zc = torch.randn(2, 3) + 1j * torch.randn(2, 3)
@@ -345,11 +348,24 @@ def check_api() -> int:
     ref = torch.addcmul(za, za, za, value=1 + 2j)
     if zc.shape != ref.shape or not torch.allclose(zc, ref, rtol=0, atol=1e-5):
         return _fail("complex_addcmul cpu forward")
+    za2 = torch.randn(6, 4) + 1j * torch.randn(6, 4)
+    idx = torch.tensor([0, 2, 2, 5])
+    zs = complex_index_select(za2, 0, idx)
+    zs_ref = torch.index_select(za2, 0, idx)
+    if not torch.equal(zs, zs_ref):
+        return _fail("complex_index_select cpu forward")
+    za3 = za2.clone().requires_grad_(True)
+    zr = za2.clone().requires_grad_(True)
+    g = torch.randn(4, 4) + 1j * torch.randn(4, 4)
+    gz = torch.autograd.grad(complex_index_select(za3, 0, idx), za3, g)[0]
+    gz_ref = torch.autograd.grad(torch.index_select(zr, 0, idx), zr, g)[0]
+    if not torch.allclose(gz, gz_ref, rtol=0, atol=1e-5):
+        return _fail("complex_index_select cpu backward")
     print(
         "PASS public API CPU fallback: complex_mul fused_bias_softmax "
         "fused_softmax_grad attention_core real_rfft real_irfft real_rfft2 real_irfft2 "
         "complex_reciprocal complex_exp interpolate Conv3d conv3d conv3d_gelu "
-        "custom_gru_v2 complex_addcmul"
+        "custom_gru_v2 complex_addcmul complex_index_select"
     )
     return 0
 

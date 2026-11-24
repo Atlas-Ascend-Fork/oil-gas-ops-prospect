@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/op_list.md)
 
-This repository currently delivers 7 AscendC/CANN OPP operators, 8 Triton-Ascend Python operators and 2 Composite-Torch (pure PyTorch) operators. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
+This repository currently delivers 7 AscendC/CANN OPP operators, 8 Triton-Ascend Python operators and 3 Composite-Torch (pure PyTorch) operators. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
 
 ## Overview
 
@@ -25,6 +25,7 @@ This repository currently delivers 7 AscendC/CANN OPP operators, 8 Triton-Ascend
 | `spectral_mlp` | Triton-Ascend | `oil_gas_ops_prospect.spectral_mlp.spectral_mlp` | [`triton-ascend/spectral_mlp/`](../../triton-ascend/spectral_mlp/) | Two-layer low-rank gated MLP on real/imag spectral inputs | `float32` for the NPU kernel | Ascend 910B |
 | `Conv3d` / `conv3d` | Composite-Torch | `oil_gas_ops_prospect.conv3d_custom.Conv3d` / `.conv3d` | [`composite-torch/conv3d_custom/`](../../composite-torch/conv3d_custom/) | compatible `nn.Conv3d` / `F.conv3d` implementation within the supported parameter domain (custom forward/backward) | dtypes supported by the underlying PyTorch backend and tested here | supported by the PyTorch backend; tested on CPU / Ascend 910B |
 | `complex_addcmul` | Composite-Torch | `oil_gas_ops_prospect.complex_addcmul.complex_addcmul` | [`composite-torch/complex_addcmul/`](../../composite-torch/complex_addcmul/) | complex three-input elementwise `input + value*tensor1*tensor2`, works around the missing complex dtypes in NPU `torch.addcmul` | `complex64` / `complex128` | supported by the PyTorch backend; tested on Ascend 910B |
+| `complex_index_select` | Composite-Torch | `oil_gas_ops_prospect.complex_index_select.complex_index_select` | [`composite-torch/complex_index_select/`](../../composite-torch/complex_index_select/) | complex-valued `torch.index_select`, fixes the NPU backward error and bypasses the AiCPU slow forward path | `complex64` / `complex128` | supported by the PyTorch backend; tested on Ascend 910B |
 
 Naming conventions:
 
@@ -727,3 +728,42 @@ See [`composite-torch/complex_addcmul/README.md`](../../composite-torch/complex_
 
 The operator can be removed once upstream adds complex dtype support to `aclnnAddcmul`; see
 [cann/oil-gas-ops-prospect#29](https://gitcode.com/cann/oil-gas-ops-prospect/issues/29).
+
+---
+
+### complex_index_select
+
+Complex-valued `torch.index_select`, implemented purely by composing PyTorch ops, to fix two defects of the complex path on NPU: the native backward (`aclnnIndexAdd`) rejects complex dtypes outright, and the native complex64 forward is dispatched to the AiCPU scalar kernel (`GatherV2`), two orders of magnitude slower than the float32 `GatherV3` for large shapes.
+
+#### Definition
+
+\[
+\text{out}[i_0,\dots,i_{\text{dim}}=k,\dots] = \text{input}[i_0,\dots,i_{\text{dim}}=\text{index}[k],\dots]
+\]
+
+Rows are gathered along `dim` by `index`, numerically equivalent to `torch.index_select(input, dim, index)`. The backward accumulates, for each input position, the gradients of all occurrences that selected it:
+
+\[
+\text{grad\_input}[\ldots, j, \ldots] = \sum_{k:\ \text{index}[k]=j} \text{grad\_out}[\ldots, k, \ldots]
+\]
+
+#### Inputs / Output
+
+| Direction | Name | Meaning | Shape | dtype |
+|-----------|------|---------|-------|-------|
+| Input | `input` | Tensor to gather from | any rank (except 0-dim), any layout | `complex64` / `complex128` |
+| Input | `dim` | Axis to gather along | scalar | `int` (negative allowed) |
+| Input | `index` | Row indices, may repeat or be empty | 1-D `[M]` | `int32` / `int64` |
+| Output | — | Gathered result | `input` with the `dim` axis replaced by `M` | same as `input` |
+
+#### Constraints
+
+- The input must be complex; real gathers are natively available on every backend and should use `torch.index_select` directly, this operator raises `TypeError`.
+- Contiguous inputs with `dim < input.dim() - 1` take the flat path: after `view(float)` the row width doubles while the row count is unchanged, so the gather byte pattern matches a "complex-aware kernel" and the bandwidth matches the float32 baseline. A last-axis `dim` (including 1-D tensors) or a non-contiguous input takes the real/imag path (real and imaginary parts gathered separately, then recombined), still far faster than the native AiCPU path.
+- The backward is `zeros + index_add_` (on the real view), isomorphic to the native `index_select` backward; duplicate indices accumulate by occurrence count, and first-order gradients match the native. Double backward is unavailable, same as the native (the backward formula contains no differentiable saved tensors).
+- Accuracy: versus CPU `torch.index_select`, the forward is a pure gather and bit-exact; the max absolute backward error is <= 1e-5 for `complex64` and <= 2e-14 for `complex128` (measured ~2.5e-7 with duplicate indices on 910B2).
+- Performance (910B2 / CANN 9.0.0 / torch_npu 2.7.1, complex64 forward vs native, public-API end-to-end): ~115-135x for the frequency volume `(4,64,80,144,144) x dim=1 x M=16` (173-189ms -> 1.4ms), ~124-144x for the row-gather `(65536,1024) x dim=0 x M=16384`, ~113-124x for the long strip `(2^20,4) x dim=0 x M=2^18`, ~30-39x for the mid-block `(16384,256) x dim=0 x M=8192` (dispatch-overhead-bound at this size), ~22-23x for the 1-D fallback `(2^20,) x M=2^17` (real/imag path); kernel-level bandwidth evidence (`GatherV3` AiCore 47.3µs vs `GatherV2` AiCPU 9.66ms) in ISSUE #61. The backward (forward + backward combined; no native baseline since the native errors out) versus the same-byte float32 native baseline: 0.99-1.00x for large shapes (>= 268MB of movement) and 0.68x for the mid-block (33MB); the gap is a constant Python dispatch/view overhead (fwd alone 0.112ms vs 0.028ms) that amortizes with data size, not a bandwidth loss; the ratio is reproducible via the `fwdbwd-baseline` lines of `verify_complex_index_select.py --mode perf`.
+- Out-of-range or negative index values follow the underlying backend, same as the native.
+- Verification records: ISSUE #61 and `tests/composite/complex_index_select/`.
+
+See [`composite-torch/complex_index_select/README.md`](../../composite-torch/complex_index_select/README.md) for implementation and usage notes (Chinese).

@@ -48,6 +48,10 @@
       "script": "tests/composite/complex_addcmul/verify_complex_addcmul.py"
     },
     {
+      "op": "complex_index_select",
+      "script": "tests/composite/complex_index_select/verify_complex_index_select.py"
+    },
+    {
       "op": "complex_reciprocal",
       "script": "tests/triton/complex_reciprocal/verify_complex_reciprocal.py"
     },
