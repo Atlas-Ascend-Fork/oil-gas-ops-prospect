@@ -70,6 +70,11 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     from oil_gas_ops_prospect.complex_index_select import complex_index_select
     from oil_gas_ops_prospect.conv3d_custom import Conv3d
     from oil_gas_ops_prospect.conv3d_custom.functional import conv3d
+    from oil_gas_ops_prospect.roi_align_rotated import (
+        ROIAlignRotated,
+        roi_align_rotated,
+        torch_roi_align_rotated,
+    )
     from oil_gas_ops_prospect.fused_bias_softmax import (
         attention_core,
         fused_bias_softmax,
@@ -88,6 +93,9 @@ def test_oil_gas_ops_prospect_distribution_and_public_imports():
     assert callable(complex_exp)
     assert callable(Conv3d)
     assert callable(conv3d)
+    assert callable(roi_align_rotated)
+    assert callable(ROIAlignRotated)
+    assert callable(torch_roi_align_rotated)
     assert callable(complex_addcmul)
     assert callable(complex_index_select)
     assert callable(fused_bias_softmax)

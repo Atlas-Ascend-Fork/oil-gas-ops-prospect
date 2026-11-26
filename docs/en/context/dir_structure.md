@@ -46,11 +46,14 @@ oil-gas-ops-prospect/
 │   │   │   └── op_kernel/                      #     kernel implementation
 │   │   ├── complex_mul_grad/                   #   ComplexMulGrad
 │   │   ├── fused_bias_softmax/                 #   FusedBiasSoftmax
-│   │   └── fused_softmax_grad/                 #   FusedSoftmaxGrad
+│   │   ├── fused_softmax_grad/                 #   FusedSoftmaxGrad
+│   │   ├── roi_align_rotated/                  #   ROIAlignRotated (forward)
+│   │   └── roi_align_rotated_grad/             #   ROIAlignRotatedGrad (backward)
 │   ├── pybind/                                 #   packaged as oil_gas_ops_prospect (modules exposed by operator name)
 │   │   ├── __init__.py
 │   │   ├── complex_mul.py                      #     ComplexMul Python API
 │   │   ├── fused_bias_softmax.py               #     FusedBiasSoftmax / FusedSoftmaxGrad
+│   │   ├── roi_align_rotated.py                #     ROIAlignRotated / torch reference
 │   │   └── csrc/                               #     <op_family>/bindings.cpp → <op_family>_npu
 │   ├── pybind_extensions.py                    #   unified C++ extension definitions
 │   ├── pybind_setup.py                         #   in-place build entry
@@ -99,7 +102,8 @@ oil-gas-ops-prospect/
 │   ├── ascendc/
 │   │   ├── ophost/                             #   aggregated ophost_ut build
 │   │   ├── complex_mul/                        #   NPU precision/performance comparison tests
-│   │   └── fused_bias_softmax/                 #   fused attention NPU precision/performance comparison
+│   │   ├── fused_bias_softmax/                 #   fused attention NPU precision/performance comparison
+│   │   └── roi_align_rotated/                  #   rotated ROIAlign NPU precision/perf/independent golden
 │   ├── composite/conv3d_custom/                #   Conv3d / conv3d CPU precision and performance baseline
 │   ├── composite/complex_addcmul/              #   complex_addcmul CPU/NPU precision and backward
 │   ├── composite/complex_index_select/         #   complex_index_select CPU/NPU precision and backward

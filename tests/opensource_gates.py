@@ -107,11 +107,14 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "CustomGRUV2",
             "custom_gru_v2",
             "aclnnCustomGRUV2",
+            "ROIAlignRotated",
+            "ROIAlignRotatedGrad",
+            "aclnnROIAlignRotated",
             "complex_addcmul",
             "complex_index_select",
             "数学定义",
         ),
-        "18 个已交付算子的数学定义、输入输出与约束",
+        "AscendC/Triton/Composite 已交付算子的数学定义、输入输出与约束",
     ),
     (
         "docs/zh/api_list.md",
@@ -136,6 +139,8 @@ DOC_CHECKS: list[tuple[str, str, tuple[str, ...], str]] = [
             "aclnnConv3dGeluCustom",
             "custom_gru_v2",
             "aclnnCustomGRUV2",
+            "roi_align_rotated",
+            "aclnnROIAlignRotated",
             "complex_addcmul",
             "complex_index_select",
         ),
@@ -264,6 +269,7 @@ def check_api() -> int:
     from oil_gas_ops_prospect.complex_addcmul import complex_addcmul
     from oil_gas_ops_prospect.complex_index_select import complex_index_select
     from oil_gas_ops_prospect.real_fft import real_irfft, real_irfft2, real_rfft, real_rfft2
+    from oil_gas_ops_prospect.roi_align_rotated import ROIAlignRotated, roi_align_rotated
 
     zc = torch.randn(2, 3) + 1j * torch.randn(2, 3)
     if not torch.equal(complex_reciprocal(zc), 1 / zc):
@@ -343,6 +349,15 @@ def check_api() -> int:
     if real_irfft2(f2r, f2i, s=(8, 16)).shape != img.shape:
         return _fail("real_irfft2 shape")
 
+    ra_in = torch.randn(1, 1, 5, 5)
+    ra_rois = torch.tensor([[0.0, 2.0, 2.0, 2.0, 2.0, 0.0]])
+    ra_out = roi_align_rotated(ra_in, ra_rois, (4, 4), 1.0, 0)
+    if tuple(ra_out.shape) != (1, 1, 4, 4):
+        return _fail("roi_align_rotated shape")
+    ra_mod = ROIAlignRotated((4, 4), 1.0, 0)
+    if tuple(ra_mod(ra_in, ra_rois).shape) != (1, 1, 4, 4):
+        return _fail("ROIAlignRotated module shape")
+
     za = torch.randn(2, 3) + 1j * torch.randn(2, 3)
     zc = complex_addcmul(za, za, za, value=1 + 2j)
     ref = torch.addcmul(za, za, za, value=1 + 2j)
@@ -365,7 +380,7 @@ def check_api() -> int:
         "PASS public API CPU fallback: complex_mul fused_bias_softmax "
         "fused_softmax_grad attention_core real_rfft real_irfft real_rfft2 real_irfft2 "
         "complex_reciprocal complex_exp interpolate Conv3d conv3d conv3d_gelu "
-        "custom_gru_v2 complex_addcmul complex_index_select"
+        "custom_gru_v2 roi_align_rotated complex_addcmul complex_index_select"
     )
     return 0
 

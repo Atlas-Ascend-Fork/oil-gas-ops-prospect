@@ -2,7 +2,7 @@
 
 English | [简体中文](../zh/op_list.md)
 
-This repository currently delivers 7 AscendC/CANN OPP operators, 8 Triton-Ascend Python operators and 3 Composite-Torch (pure PyTorch) operators. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
+This repository currently delivers 9 AscendC/CANN OPP operators, 8 Triton-Ascend Python operators and 3 Composite-Torch (pure PyTorch) operators. Each operator is documented with its mathematical definition, inputs/outputs and constraints; for Python / aclnn signatures see the [API List](api_list.md).
 
 ## Overview
 
@@ -15,6 +15,8 @@ This repository currently delivers 7 AscendC/CANN OPP operators, 8 Triton-Ascend
 | `Conv3DGelu` | AscendC | `aclnnConv3dGeluCustom` / `conv3d_gelu` | [`ascendc/operators/conv3d_gelu/`](../../ascendc/operators/conv3d_gelu/) | `gelu_tanh(conv3d(x, weight, bias))` | `float32` / `NCDHW` | Ascend 910B |
 | `Conv3DGeluGrad` | AscendC | `aclnnConv3dGeluGrad` (called by `conv3d_gelu` autograd) | [`ascendc/operators/conv3d_gelu_grad/`](../../ascendc/operators/conv3d_gelu_grad/) | recompute conv3d, then GELU backward, then conv3d backward | `float32` / `NCDHW` | Ascend 910B |
 | `CustomGRUV2` | AscendC | `aclnnCustomGRUV2` / `custom_gru_v2` | [`ascendc/operators/custom_gru_v2/`](../../ascendc/operators/custom_gru_v2/) | single-layer fused GRU kernel (gate order [r; z; n] matches PyTorch nn.GRU, tanh uses the 2·sigmoid(2x)−1 stable form), unidirectional/bidirectional, backward handled by Python autograd | `float32` / `ND` | Ascend 910B |
+| `ROIAlignRotated` | AscendC | `aclnnROIAlignRotated` / `roi_align_rotated` | [`ascendc/operators/roi_align_rotated/`](../../ascendc/operators/roi_align_rotated/) | rotated ROIAlign: `input[N,C,H,W] + rois[K,6] -> out[K,C,PH,PW]` | `float32` / `ND` | Ascend 910B |
+| `ROIAlignRotatedGrad` | AscendC | `aclnnROIAlignRotatedGrad` (backward driven by `roi_align_rotated` autograd) | [`ascendc/operators/roi_align_rotated_grad/`](../../ascendc/operators/roi_align_rotated_grad/) | backward of `ROIAlignRotated` | `float32` / `ND` | Ascend 910B |
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | real forward FFT: `x → (xr, xi)` | the NPU kernel is `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | real reconstruction from a half spectrum: `(xr, xi), n → y` | the NPU kernel is `float32` | Ascend 910B |
 | `real_rfft2` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft2` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 2-D real forward FFT: `x → (xr, xi)` (composed interface, no new kernel) | the NPU kernel is `float32` | Ascend 910B |
@@ -263,6 +265,77 @@ h_t &= (1 - z_t) \odot n_t + z_t \odot h_{t-1}
 - Performance quota shapes: `B=1, T=1000, H=24` (single long sequence) and `B=32, T=100, H=24` (batch), see `tests/ascendc/custom_gru_v2/performance/bench_forward.py` (`test_perf_fwd_001_single_long_seq` / `test_perf_fwd_002_batch`).
 - Test entry point: [`tests/ascendc/custom_gru_v2/`](../../tests/ascendc/custom_gru_v2/) (`run_test.sh` / `run_all_tests.sh`).
 - Performance bottleneck analysis and the follow-up optimization plan: [`tests/reports/custom_gru_v2_precision_perf.md`](../../tests/reports/custom_gru_v2_precision_perf.md) (§性能定位与后续优化计划).
+
+---
+
+### ROIAlignRotated
+
+detectron2 rotated ROIAlign. AIV-only; the output is split into 64B-aligned slabs.
+
+#### Mathematical Definition
+
+For ROI \(k\), channel \(c\), output bin \((ph,pw)\):
+
+\[
+\begin{aligned}
+c_x &= x^{ctr}_k s - 0.5,\quad c_y = y^{ctr}_k s - 0.5 \\
+w_r &= w_k s,\quad h_r = h_k s,\quad \theta = a_k\pi/180 \\
+y &= y_y\cos\theta - x_x\sin\theta + c_y \\
+x &= y_y\sin\theta + x_x\cos\theta + c_x
+\end{aligned}
+\]
+
+where \(y_y = -h_r/2 + ph\cdot h_r/PH + (i_y+0.5)h_r/(PH\cdot g_h)\) and \(x_x\) is analogous;
+\(g_h,g_w\) come from `sampling_ratio` (when 0, \(\lceil h_r/PH\rceil\), \(\lceil w_r/PW\rceil\)).
+The result is the average over \(g_h g_w\) bilinear samples. Boundary semantics match
+detectron2 CUDA exactly: return 0 when \(y<-1\) or \(y>H\) or \(x<-1\) or \(x>W\);
+clamp \(y/x<0\) to 0; clamp the low index to \(H-1/W-1\).
+
+#### Inputs and Outputs
+
+| Direction | Name | Meaning | shape | dtype |
+|-----------|------|---------|-------|-------|
+| input | `input` | feature map | `[N,C,H,W]` | `float32` / `ND` |
+| input | `rois` | `(batch_idx, x_ctr, y_ctr, width, height, angle_deg)` | `[K,6]` | `float32` / `ND` |
+| attrs | `spatial_scale` / `pooled_height` / `pooled_width` / `sampling_ratio` | ROI scale and output bins | scalar | — |
+| output | `out` | pooled features | `[K,C,PH,PW]` | `float32` / `ND` |
+
+#### Constraints
+
+- `input` is 4D and `rois.shape[1] == 6`; `pooled_h/pooled_w > 0`, `sampling_ratio >= 0`, `spatial_scale > 0`.
+- AIV-only; output split into 64B slabs, max 16KB per slab.
+- Precision: fp32 `max_abs <= 1e-5`; the independent golden is detectron2 `ROIAlignRotated_cpu.cpp`.
+- Tests: [`tests/ascendc/roi_align_rotated/`](../../tests/ascendc/roi_align_rotated/), [`tests/st/aclnnROIAlignRotated/`](../../tests/st/aclnnROIAlignRotated/).
+
+---
+
+### ROIAlignRotatedGrad
+
+Backward of `ROIAlignRotated`. AIV-only; `grad_input` is split into exclusive 64B slabs.
+
+#### Mathematical Definition
+
+\[
+g_{n,c,y_l,x_l} \mathrel{+}= \frac{g^{out}_{k,c,ph,pw} w_1}{g_h g_w},\quad \ldots
+\]
+
+The four bilinear weights \(w_1..w_4\) are the same as the forward. Out-of-bound indices are
+skipped. No `atomicAdd` is used: every output element belongs to exactly one slab; each core
+accumulates in UB and writes the slab back.
+
+#### Inputs and Outputs
+
+| Direction | Name | Meaning | shape | dtype |
+|-----------|------|---------|-------|-------|
+| input | `grad_output` | \(\partial L/\partial out\) | `[K,C,PH,PW]` | `float32` / `ND` |
+| input | `rois` | same as forward | `[K,6]` | `float32` / `ND` |
+| attrs | `spatial_scale` / `pooled_height` / `pooled_width` / `sampling_ratio` / `batch_size` / `channels` / `height` / `width` | forward shape and attrs | scalar | — |
+| output | `grad_input` | \(\partial L/\partial input\) | `[N,C,H,W]` | `float32` / `ND` |
+
+#### Constraints
+
+- Slab coverage is asserted by ophost UT: every `grad_input` element is handled exactly once.
+- Precision: fp32 `max_abs <= 1e-5`; tests share the forward directory.
 
 ---
 

@@ -2,7 +2,7 @@
 
 简体中文 | [English](../en/op_list.md)
 
-当前仓库交付 7 个 AscendC/CANN OPP 算子、8 个 Triton-Ascend Python 算子和 3 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
+当前仓库交付 9 个 AscendC/CANN OPP 算子、8 个 Triton-Ascend Python 算子和 3 个 Composite-Torch（纯 PyTorch）算子。每个算子单独说明数学定义、输入输出与约束；Python / aclnn 签名见[接口列表](api_list.md)。
 
 ## 总览
 
@@ -15,6 +15,8 @@
 | `Conv3DGelu` | AscendC | `aclnnConv3dGeluCustom` / `conv3d_gelu` | [`ascendc/operators/conv3d_gelu/`](../../ascendc/operators/conv3d_gelu/) | `gelu_tanh(conv3d(x, weight, bias))` | `float32` / `NCDHW` | Ascend 910B |
 | `Conv3DGeluGrad` | AscendC | `aclnnConv3dGeluGrad`（由 `conv3d_gelu` 的反向调用） | [`ascendc/operators/conv3d_gelu_grad/`](../../ascendc/operators/conv3d_gelu_grad/) | `dz = dy * gelu'(z)`。反向先重算 conv3d，再调本算子，再做 conv3d 反向 | `float32` / `ND` | Ascend 910B |
 | `CustomGRUV2` | AscendC | `aclnnCustomGRUV2` / `custom_gru_v2` | [`ascendc/operators/custom_gru_v2/`](../../ascendc/operators/custom_gru_v2/) | 单层 GRU 融合 kernel（gate 行序 [r; z; n] 与 PyTorch nn.GRU 一致，tanh 用 2·sigmoid(2x)−1 稳定形式），单向/双向，反向由 Python autograd 承担 | `float32` / `ND` | Ascend 910B |
+| `ROIAlignRotated` | AscendC | `aclnnROIAlignRotated` / `roi_align_rotated` | [`ascendc/operators/roi_align_rotated/`](../../ascendc/operators/roi_align_rotated/) | 旋转 ROIAlign：`input[N,C,H,W] + rois[K,6] -> out[K,C,PH,PW]` | `float32` / `ND` | Ascend 910B |
+| `ROIAlignRotatedGrad` | AscendC | `aclnnROIAlignRotatedGrad`（反向由 `roi_align_rotated` 的 autograd 调用） | [`ascendc/operators/roi_align_rotated_grad/`](../../ascendc/operators/roi_align_rotated_grad/) | `ROIAlignRotated` 的反向 | `float32` / `ND` | Ascend 910B |
 | `real_rfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 实数正向 FFT：`x → (xr, xi)` | NPU kernel 为 `float32` | Ascend 910B |
 | `real_irfft` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_irfft` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 半谱重建实数：`(xr, xi), n → y` | NPU kernel 为 `float32` | Ascend 910B |
 | `real_rfft2` | Triton-Ascend | `oil_gas_ops_prospect.real_fft.real_rfft2` | [`triton-ascend/real_fft/`](../../triton-ascend/real_fft/) | 二维实数正向 FFT：`x → (xr, xi)`（组合接口，无新 kernel） | NPU kernel 为 `float32` | Ascend 910B |
@@ -263,6 +265,75 @@ h_t &= (1 - z_t) \odot n_t + z_t \odot h_{t-1}
 - 性能定额两 shape：`B=1, T=1000, H=24`（单长序列）与 `B=32, T=100, H=24`（批量），见 `tests/ascendc/custom_gru_v2/performance/bench_forward.py`（`test_perf_fwd_001_single_long_seq` / `test_perf_fwd_002_batch`）。
 - 测试入口：[`tests/ascendc/custom_gru_v2/`](../../tests/ascendc/custom_gru_v2/)（`run_test.sh` / `run_all_tests.sh`）。
 - 性能瓶颈定位与后续优化计划见 [`tests/reports/custom_gru_v2_precision_perf.md`](../../tests/reports/custom_gru_v2_precision_perf.md)（§性能定位与后续优化计划）。
+
+---
+
+### ROIAlignRotated
+
+detectron2 旋转 ROIAlign。AIV-only，前向按输出元素空间 64B slab 切分。
+
+#### 数学定义
+
+对第 \(k\) 个 ROI、通道 \(c\)、输出 bin \((ph,pw)\)：
+
+\[
+\begin{aligned}
+c_x &= x^{ctr}_k s - 0.5,\quad c_y = y^{ctr}_k s - 0.5 \\
+w_r &= w_k s,\quad h_r = h_k s,\quad \theta = a_k\pi/180 \\
+y &= y_y\cos\theta - x_x\sin\theta + c_y \\
+x &= y_y\sin\theta + x_x\cos\theta + c_x
+\end{aligned}
+\]
+
+其中 \(y_y = -h_r/2 + ph\cdot h_r/PH + (i_y+0.5)h_r/(PH\cdot g_h)\)，\(x_x\) 同理；
+\(g_h,g_w\) 为 `sampling_ratio`（0 时取 \(\lceil h_r/PH\rceil\)、\(\lceil w_r/PW\rceil\)）。
+输出为 \(g_h g_w\) 个采样点双线性插值的平均。边界语义严格对齐 detectron2 CUDA：
+\(y<-1\) 或 \(y>H\) 或 \(x<-1\) 或 \(x>W\) 返回 0；\(y/x<0\) 夹到 0；越界低索引夹到 \(H-1/W-1\)。
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `input` | 特征图 | `[N,C,H,W]` | `float32` / `ND` |
+| 输入 | `rois` | `(batch_idx, x_ctr, y_ctr, width, height, angle_deg)` | `[K,6]` | `float32` / `ND` |
+| 属性 | `spatial_scale` / `pooled_height` / `pooled_width` / `sampling_ratio` | ROI 缩放与输出 bin | 标量 | — |
+| 输出 | `out` | pooled 特征 | `[K,C,PH,PW]` | `float32` / `ND` |
+
+#### 约束
+
+- `input` 4D、`rois` 第 2 维为 6；`pooled_h/pooled_w > 0`，`sampling_ratio >= 0`，`spatial_scale > 0`。
+- AIV-only；输出按 64B slab 切分，单 slab 最大 16KB。
+- 精度验收：fp32 `max_abs ≤ 1e-5`；独立 golden 为 detectron2 `ROIAlignRotated_cpu.cpp`。
+- 测试：[`tests/ascendc/roi_align_rotated/`](../../tests/ascendc/roi_align_rotated/)、[`tests/st/aclnnROIAlignRotated/`](../../tests/st/aclnnROIAlignRotated/)。
+
+---
+
+### ROIAlignRotatedGrad
+
+`ROIAlignRotated` 的反向。AIV-only，按 `grad_input` 元素空间 64B slab 独占切分。
+
+#### 数学定义
+
+\[
+g_{n,c,y_l,x_l} \mathrel{+}= \frac{g^{out}_{k,c,ph,pw} w_1}{g_h g_w},\quad \ldots
+\]
+
+四个邻域权重 \(w_1..w_4\) 与前向相同；越界索引直接跳过。反向不使用 `atomicAdd`：
+每个输出元素只属于一个 slab，核内 UB 累加后整片回写，结果确定。
+
+#### 输入输出
+
+| 方向 | 名称 | 含义 | shape | dtype |
+|------|------|------|-------|-------|
+| 输入 | `grad_output` | \(\partial L/\partial out\) | `[K,C,PH,PW]` | `float32` / `ND` |
+| 输入 | `rois` | 同前向 | `[K,6]` | `float32` / `ND` |
+| 属性 | `spatial_scale` / `pooled_height` / `pooled_width` / `sampling_ratio` / `batch_size` / `channels` / `height` / `width` | 前向形状与属性 | 标量 | — |
+| 输出 | `grad_input` | \(\partial L/\partial input\) | `[N,C,H,W]` | `float32` / `ND` |
+
+#### 约束
+
+- 切分覆盖性由 ophost UT 断言：每个 grad_input 元素恰好被一个核处理一次。
+- 精度验收：fp32 `max_abs ≤ 1e-5`；测试同前向目录。
 
 ---
 

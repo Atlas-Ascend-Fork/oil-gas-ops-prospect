@@ -6,3 +6,5 @@ fused_softmax_grad	FusedSoftmaxGrad	fused_softmax_grad.cpp
 conv3d_gelu	Conv3DGelu	conv3d_gelu.cpp
 conv3d_gelu_grad	Conv3DGeluGrad	conv3d_gelu_grad.cpp
 custom_gru_v2	CustomGRUV2	custom_gruv2.cpp
+roi_align_rotated	ROIAlignRotated	roi_align_rotated.cpp
+roi_align_rotated_grad	ROIAlignRotatedGrad	roi_align_rotated_grad.cpp

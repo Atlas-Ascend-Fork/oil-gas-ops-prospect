@@ -30,8 +30,10 @@ class PybindExtensionSelectionTests(unittest.TestCase):
     def test_unfiltered_build_keeps_all_pybind_families(self):
         self.assertEqual(_filter_extension_dirs(EXTENSIONS, None), EXTENSIONS)
 
-    def test_incomplete_complex_mul_family_is_not_built(self):
-        self.assertEqual(_filter_extension_dirs(EXTENSIONS, {"complex_mul"}), [])
+    # 选中 family 中任一算子就要构建该共享扩展；否则 --ops=<forward>
+    # 会漏掉与 grad 共用一个 csrc 目录的扩展。
+    def test_any_complex_mul_family_member_builds_extension(self):
+        self.assertEqual(_filter_extension_dirs(EXTENSIONS, {"complex_mul"}), [Path("complex_mul")])
 
     def test_complete_complex_mul_family_keeps_its_extension(self):
         self.assertEqual(
@@ -39,8 +41,11 @@ class PybindExtensionSelectionTests(unittest.TestCase):
             [Path("complex_mul")],
         )
 
-    def test_incomplete_softmax_family_is_not_built(self):
-        self.assertEqual(_filter_extension_dirs(EXTENSIONS, {"fused_bias_softmax"}), [])
+    def test_any_softmax_family_member_builds_extension(self):
+        self.assertEqual(
+            _filter_extension_dirs(EXTENSIONS, {"fused_bias_softmax"}),
+            [Path("fused_bias_softmax")],
+        )
 
     def test_complete_softmax_family_keeps_its_extension(self):
         self.assertEqual(

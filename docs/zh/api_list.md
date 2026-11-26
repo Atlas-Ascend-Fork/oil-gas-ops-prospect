@@ -10,6 +10,7 @@ oil_gas_ops_prospect
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
 ├── conv3d_gelu           # conv3d_gelu
 ├── custom_gru_v2         # custom_gru_v2, CustomGRU
+├── roi_align_rotated     # roi_align_rotated, ROIAlignRotated, torch_roi_align_rotated
 ├── real_fft              # real_rfft, real_irfft, real_rfft2, real_irfft2, make_basis
 ├── complex_reciprocal   # complex_reciprocal（z 或 xr, xi 两种形式）
 ├── complex_exp          # complex_exp
@@ -619,6 +620,48 @@ CANN 9 会缓存 aclnn 输出地址，换 shape 后可能读到错误结果。`A
 
 ---
 
+## `oil_gas_ops_prospect.roi_align_rotated`
+
+### `roi_align_rotated`
+
+```python
+from oil_gas_ops_prospect.roi_align_rotated import roi_align_rotated
+
+def roi_align_rotated(
+    input: torch.Tensor,
+    rois: torch.Tensor,
+    output_size,
+    spatial_scale: float = 1.0,
+    sampling_ratio: int = 0,
+) -> torch.Tensor
+```
+
+旋转 ROIAlign。`input [N,C,H,W]`，`rois [K,6] = (batch_idx, x_ctr, y_ctr, width, height, angle_deg)`，
+返回 `[K,C,PH,PW]`。`output_size` 支持 `int` 或 `(PH,PW)`。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `input` | `torch.Tensor` | 特征图，`float32`（fp16 输入内部转 fp32 后再转回） |
+| `rois` | `torch.Tensor` | `[K,6]`，`float32`；`batch_idx` 必须在 `[0,N)` |
+| `output_size` | `int` / `tuple` | 输出 bin 数 |
+| `spatial_scale` | `float` | ROI 坐标缩放，必须 > 0 |
+| `sampling_ratio` | `int` | `0` 自适应；`>0` 固定采样 |
+
+**实现选择**：默认 `auto`，NPU + fp32 走 AscendC 融合算子，否则走纯 torch 参考。
+`OIL_GAS_OPS_ROI_ALIGN_ROTATED_IMPL=torch|ascendc|auto`；`OIL_GAS_OPS_REQUIRE_ASCENDC_ROI_ALIGN_ROTATED=1`
+时禁止回退。支持 autograd。
+
+### `ROIAlignRotated`
+
+`nn.Module` 形态：`ROIAlignRotated(output_size, spatial_scale, sampling_ratio)`，
+`forward(input, rois)` 与函数入口语义一致。
+
+### `torch_roi_align_rotated`
+
+纯 torch 参考实现，签名同 `roi_align_rotated`，不走 NPU 自定义算子；用于 CPU/NPU 回退和对拍。
+
+---
+
 ## aclnn 接口
 
 安装 OPP `.run` 包后，CANN 侧走标准两段式入口（`GetWorkspaceSize` + 执行）。仓内 pybind 即按此直调：
@@ -631,6 +674,8 @@ CANN 9 会缓存 aclnn 输出地址，换 shape 后可能读到错误结果。`A
 | `aclnnFusedSoftmaxGrad` / `aclnnFusedSoftmaxGradGetWorkspaceSize` | `FusedSoftmaxGrad` | `probs, gradOutput, values → out` | `out` 可与 `probs` 别名 |
 | `aclnnConv3dGeluCustom` / `aclnnConv3dGeluCustomGetWorkspaceSize` | `Conv3DGelu` | `x, weight, bias, stride, padding, dilation, groups → y` | 输入输出为 `float32` / `NCDHW`；`bias` 可为空 |
 | `aclnnConv3dGeluGrad` / `aclnnConv3dGeluGradGetWorkspaceSize` | `Conv3DGeluGrad` | `dy, x, weight, bias → dx, dW, db` | 先重算 conv3d，再 GELU 反向，再 conv3d 反向 |
+| `aclnnROIAlignRotated` / `aclnnROIAlignRotatedGetWorkspaceSize` | `ROIAlignRotated` | `input, rois, spatial_scale, pooled_height, pooled_width, sampling_ratio → out` | 输出 `[K,C,PH,PW]` |
+| `aclnnROIAlignRotatedGrad` / `aclnnROIAlignRotatedGradGetWorkspaceSize` | `ROIAlignRotatedGrad` | `grad_output, rois, spatial_scale, pooled_height, pooled_width, sampling_ratio, N, C, H, W → grad_input` | 输出 `[N,C,H,W]` |
 
 自定义算子的 opapi 动态库位于 `${ASCEND_HOME_PATH}/opp/vendors/customize/op_api/lib`，调用前需将其加入 `LD_LIBRARY_PATH`。绑定实现见 [`ascendc/pybind/csrc/`](../../ascendc/pybind/csrc/)。
 
@@ -652,6 +697,8 @@ Triton 算子没有 aclnn 入口。
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch，AscendC 调用失败直接抛异常 |
 | `OIL_GAS_OPS_CONV3D_GELU_IMPL` | `torch` / `ascendc` / `auto` | `auto` | `conv3d_gelu` 的实现选择。`auto` 在 NPU 上走融合算子 |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_CONV3D_GELU` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch |
+| `OIL_GAS_OPS_ROI_ALIGN_ROTATED_IMPL` | `torch` / `ascendc` / `auto` | `auto` | `roi_align_rotated` 的实现选择 |
+| `OIL_GAS_OPS_REQUIRE_ASCENDC_ROI_ALIGN_ROTATED` | `0` / `1` | `0` | 置 `1` 时禁止回退到 PyTorch |
 | `OIL_GAS_OPS_RECIP_BLOCK` | 正整数（2 的幂） | `2048` | `complex_reciprocal` 的 tile 大小（向下取整到 2 的幂，钳制 `[16, 2048]`）；显式传入的 `block_size` 参数优先 |
 | `OIL_GAS_OPS_INTERPOLATE_IMPL` | `auto` / `triton` / `torch` | `auto` | `interpolate` 的实现选择；`auto` 对大 5D fp32 输出走 Cube，4D/小输出/非 fp32 回退原生 |
 | `OIL_GAS_OPS_FFT_BLOCK_M` | 正整数 | `512` | `real_rfft` / `real_irfft`（以及在其上组合的 `real_rfft2` / `real_irfft2`）的 DFT-matmul 行分块大小，用于性能调优（可扫 128 / 256 / 512）。每进程首次使用时读取一次并缓存，需在启动 Python 前设置 |

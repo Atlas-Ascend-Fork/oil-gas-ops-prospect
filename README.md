@@ -121,7 +121,7 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 
 ## 📖 接口支持清单
 
-当前交付 7 个 AscendC 算子、8 个 Triton-Ascend 算子和 3 个 Composite-Torch 算子：
+当前交付 9 个 AscendC 算子、8 个 Triton-Ascend 算子和 3 个 Composite-Torch 算子：
 
 | 名称 / OpType | 后端 / 交付物 | 功能 | dtype / format |
 |---------------|---------------|------|----------------|
@@ -132,6 +132,8 @@ bash tests/run_whl_tests.sh                      # 只验证已安装的 whl
 | [`FusedSoftmaxGrad`](ascendc/operators/fused_softmax_grad/) | AscendC / OPP `.run`（可走 MIX） | 注意力 softmax JVP：连续 probs 成功进入融合路径时原地覆写 | `fp32` / `fp16` / `bf16`，`ND` |
 | [`Conv3DGelu`](ascendc/operators/conv3d_gelu/) | AscendC / OPP `.run`（MIX cube+vector） | `gelu_tanh(conv3d(x, weight, bias))`，不保存二者之间的预激活 | `float32` / `NCDHW` |
 | [`Conv3DGeluGrad`](ascendc/operators/conv3d_gelu_grad/) | AscendC / OPP `.run`（AIV + 内置 conv3d 反向） | 重算 conv3d，再 GELU 反向，再 conv3d 反向 | `float32` / `NCDHW` |
+| [`ROIAlignRotated`](ascendc/operators/roi_align_rotated/) | AscendC / OPP `.run`（AIV-only） | 旋转 ROIAlign：`input[N,C,H,W] + rois[K,6] -> out[K,C,PH,PW]`，双线性采样 | `float32` / `ND` |
+| [`ROIAlignRotatedGrad`](ascendc/operators/roi_align_rotated_grad/) | AscendC / OPP `.run`（AIV-only） | `ROIAlignRotated` 的反向 | `float32` / `ND` |
 | [`real_rfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 实数正向 FFT：`x -> (xr, xi)`，频率轴长度 `n // 2 + 1` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
 | [`real_irfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 从实部、虚部半谱重建实数：`(xr, xi), n -> y` | NPU kernel 为 `float32`，非 NPU 环境回退到 PyTorch |
 | [`real_rfft2`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 二维实数正向 FFT：`x -> (xr, xi)`，`dim[1]` 轴长度 `n // 2 + 1`；由 `real_rfft` 组合，无新 kernel | `float32`；非 NPU 环境回退到 PyTorch |

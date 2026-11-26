@@ -10,6 +10,7 @@ oil_gas_ops_prospect
 ├── fused_bias_softmax    # fused_bias_softmax, fused_softmax_grad, attention_core, torch_*
 ├── conv3d_gelu           # conv3d_gelu
 ├── custom_gru_v2         # custom_gru_v2, CustomGRU
+├── roi_align_rotated     # roi_align_rotated, ROIAlignRotated, torch_roi_align_rotated
 ├── real_fft              # real_rfft, real_irfft, real_rfft2, real_irfft2, make_basis
 ├── complex_reciprocal    # complex_reciprocal (either z or xr, xi)
 ├── complex_exp           # complex_exp
@@ -620,6 +621,47 @@ CANN 9 caches aclnn output addresses, so a later shape can read the wrong result
 
 ---
 
+## `oil_gas_ops_prospect.roi_align_rotated`
+
+### `roi_align_rotated`
+
+```python
+from oil_gas_ops_prospect.roi_align_rotated import roi_align_rotated
+
+def roi_align_rotated(
+    input: torch.Tensor,
+    rois: torch.Tensor,
+    output_size,
+    spatial_scale: float = 1.0,
+    sampling_ratio: int = 0,
+) -> torch.Tensor
+```
+
+Rotated ROIAlign. `input [N,C,H,W]`, `rois [K,6] = (batch_idx, x_ctr, y_ctr, width, height, angle_deg)`;
+returns `[K,C,PH,PW]`. `output_size` accepts an `int` or `(PH,PW)`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `input` | `torch.Tensor` | feature map, `float32` (fp16 is cast to fp32 internally and cast back) |
+| `rois` | `torch.Tensor` | `[K,6]`, `float32`; `batch_idx` must be in `[0,N)` |
+| `output_size` | `int` / `tuple` | output bins |
+| `spatial_scale` | `float` | ROI coordinate scale, must be > 0 |
+| `sampling_ratio` | `int` | `0` adaptive; `>0` fixed sampling |
+
+**Implementation selection**: default `auto`; NPU + fp32 uses the AscendC fused operator, otherwise
+the pure torch reference. `OIL_GAS_OPS_ROI_ALIGN_ROTATED_IMPL=torch|ascendc|auto`;
+`OIL_GAS_OPS_REQUIRE_ASCENDC_ROI_ALIGN_ROTATED=1` disables fallback. Autograd is supported.
+
+### `ROIAlignRotated`
+
+`nn.Module` form: `ROIAlignRotated(output_size, spatial_scale, sampling_ratio)`, `forward(input, rois)`.
+
+### `torch_roi_align_rotated`
+
+Pure torch reference with the same signature as `roi_align_rotated`; used for CPU/NPU fallback and tests.
+
+---
+
 ## aclnn APIs
 
 Once the OPP `.run` package is installed, the CANN side uses the standard two-phase entry (`GetWorkspaceSize` + execute). The in-repo pybind bindings call it exactly this way:
@@ -632,6 +674,8 @@ Once the OPP `.run` package is installed, the CANN side uses the standard two-ph
 | `aclnnFusedSoftmaxGrad` / `aclnnFusedSoftmaxGradGetWorkspaceSize` | `FusedSoftmaxGrad` | `probs, gradOutput, values → out` | `out` may alias `probs` |
 | `aclnnConv3dGeluCustom` / `aclnnConv3dGeluCustomGetWorkspaceSize` | `Conv3DGelu` | `x, weight, bias, stride, padding, dilation, groups → y` | inputs and output are `float32` / `NCDHW`; `bias` may be empty |
 | `aclnnConv3dGeluGrad` / `aclnnConv3dGeluGradGetWorkspaceSize` | `Conv3DGeluGrad` | `dy, x, weight, bias → dx, dW, db` | recompute conv3d, then GELU backward, then conv3d backward |
+| `aclnnROIAlignRotated` / `aclnnROIAlignRotatedGetWorkspaceSize` | `ROIAlignRotated` | `input, rois, spatial_scale, pooled_height, pooled_width, sampling_ratio → out` | output `[K,C,PH,PW]` |
+| `aclnnROIAlignRotatedGrad` / `aclnnROIAlignRotatedGradGetWorkspaceSize` | `ROIAlignRotatedGrad` | `grad_output, rois, spatial_scale, pooled_height, pooled_width, sampling_ratio, N, C, H, W → grad_input` | output `[N,C,H,W]` |
 
 The opapi shared library of the custom operators lives in `${ASCEND_HOME_PATH}/opp/vendors/customize/op_api/lib` and must be added to `LD_LIBRARY_PATH` before calling. For the binding implementation see [`ascendc/pybind/csrc/`](../../ascendc/pybind/csrc/).
 
@@ -653,6 +697,8 @@ Custom environment variables all use the `OIL_GAS_OPS_` prefix.
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_FUSED_BIAS_SOFTMAX` | `0` / `1` | `0` | set to `1` to forbid the PyTorch fallback and raise on an AscendC failure |
 | `OIL_GAS_OPS_CONV3D_GELU_IMPL` | `torch` / `ascendc` / `auto` | `auto` | implementation selection for `conv3d_gelu`. `auto` uses the fused operator on NPU |
 | `OIL_GAS_OPS_REQUIRE_ASCENDC_CONV3D_GELU` | `0` / `1` | `0` | set to `1` to forbid the PyTorch fallback |
+| `OIL_GAS_OPS_ROI_ALIGN_ROTATED_IMPL` | `torch` / `ascendc` / `auto` | `auto` | implementation selection for `roi_align_rotated` |
+| `OIL_GAS_OPS_REQUIRE_ASCENDC_ROI_ALIGN_ROTATED` | `0` / `1` | `0` | disallow fallback to PyTorch when set to `1` |
 | `OIL_GAS_OPS_RECIP_BLOCK` | positive integer (power of two) | `2048` | tile size of `complex_reciprocal` (rounded down to a power of two, clamped to `[16, 2048]`); an explicit `block_size` argument takes precedence |
 | `OIL_GAS_OPS_INTERPOLATE_IMPL` | `auto` / `triton` / `torch` | `auto` | implementation choice for `interpolate`; `auto` uses Cube for large 5D fp32 outputs and falls back natively for 4D, small outputs and non-fp32 inputs |
 | `OIL_GAS_OPS_FFT_BLOCK_M` | positive integer | `512` | row tile size of the DFT matmul in `real_rfft` / `real_irfft` (and in `real_rfft2` / `real_irfft2`, which compose them), for performance tuning (sweep 128 / 256 / 512). Read once per process on first use, so set it before starting Python |

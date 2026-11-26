@@ -54,6 +54,7 @@ OP_FILTER_ENV = "OIL_GAS_OPS_ASCENDC_OPS"
 _PYBIND_FAMILY_OPERATORS = {
     "complex_mul": {"complex_mul", "complex_mul_grad"},
     "fused_bias_softmax": {"fused_bias_softmax", "fused_softmax_grad"},
+    "roi_align_rotated": {"roi_align_rotated", "roi_align_rotated_grad"},
 }
 
 ASCEND_DIR = os.environ.get("ASCEND_HOME_PATH", "/usr/local/Ascend/cann-9.0.0")
@@ -121,16 +122,15 @@ def _filter_extension_dirs(
     if unknown:
         raise ValueError(f"operators not present in manifest: {', '.join(sorted(unknown))}")
 
+    known_family_ops = set().union(*_PYBIND_FAMILY_OPERATORS.values()) if _PYBIND_FAMILY_OPERATORS else set()
+    # 选中 family 中任一算子就要构建该扩展；否则 `--ops=<forward>` 会漏掉
+    # 与 grad 共用一个 csrc 目录的扩展。
     selected_families = {
         family
         for family, required_ops in _PYBIND_FAMILY_OPERATORS.items()
-        if required_ops <= selected_ops
+        if required_ops & selected_ops
     }
-    selected_families.update(
-        family
-        for family in selected_ops
-        if family not in _PYBIND_FAMILY_OPERATORS
-    )
+    selected_families.update(op for op in selected_ops if op not in known_family_ops)
     return [op_dir for op_dir in extension_dirs if op_dir.name in selected_families]
 
 

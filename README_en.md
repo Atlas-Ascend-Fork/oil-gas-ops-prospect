@@ -121,7 +121,7 @@ Operator precision, performance and device memory on the NPU must be verified on
 
 ## 📖 Supported API List
 
-The current delivery contains 7 AscendC operators, 8 Triton-Ascend operators and 3 Composite-Torch operators:
+The current delivery contains 9 AscendC operators, 8 Triton-Ascend operators and 3 Composite-Torch operators:
 
 | Name / OpType | Backend / Deliverable | Function | dtype / format |
 |---------------|-----------------------|----------|----------------|
@@ -132,6 +132,8 @@ The current delivery contains 7 AscendC operators, 8 Triton-Ascend operators and
 | [`FusedSoftmaxGrad`](ascendc/operators/fused_softmax_grad/) | AscendC / OPP `.run` (may use MIX) | attention softmax JVP; Python APIs provide out-of-place and in-place forms | `fp32` / `fp16` / `bf16`, `ND` |
 | [`Conv3DGelu`](ascendc/operators/conv3d_gelu/) | AscendC / OPP `.run` (MIX cube+vector) | `gelu_tanh(conv3d(x, weight, bias))`, without retaining the pre-activation between the two ops | `float32` / `NCDHW` |
 | [`Conv3DGeluGrad`](ascendc/operators/conv3d_gelu_grad/) | AscendC / OPP `.run` (AIV + built-in conv3d backward) | recompute conv3d, then GELU backward, then conv3d backward | `float32` / `NCDHW` |
+| [`ROIAlignRotated`](ascendc/operators/roi_align_rotated/) | AscendC / OPP `.run` (AIV-only) | rotated ROIAlign: `input[N,C,H,W] + rois[K,6] -> out[K,C,PH,PW]` with bilinear sampling | `float32` / `ND` |
+| [`ROIAlignRotatedGrad`](ascendc/operators/roi_align_rotated_grad/) | AscendC / OPP `.run` (AIV-only) | backward of `ROIAlignRotated` | `float32` / `ND` |
 | [`real_rfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | real forward FFT: `x -> (xr, xi)`, frequency axis length `n // 2 + 1` | the NPU kernel is `float32`; falls back to PyTorch outside an NPU environment |
 | [`real_irfft`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | reconstructs a real signal from the half-spectrum real and imaginary parts: `(xr, xi), n -> y` | the NPU kernel is `float32`; falls back to PyTorch outside an NPU environment |
 | [`real_rfft2`](triton-ascend/real_fft/) | Triton-Ascend / Python whl | 2-D real forward FFT: `x -> (xr, xi)` with `dim[1]` length `n // 2 + 1`; composed from `real_rfft`, no new kernel | `float32`; falls back to PyTorch outside an NPU environment |

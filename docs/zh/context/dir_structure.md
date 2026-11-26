@@ -46,11 +46,14 @@ oil-gas-ops-prospect/
 │   │   │   └── op_kernel/                      #     kernel 实现
 │   │   ├── complex_mul_grad/                   #   ComplexMulGrad
 │   │   ├── fused_bias_softmax/                 #   FusedBiasSoftmax
-│   │   └── fused_softmax_grad/                 #   FusedSoftmaxGrad
+│   │   ├── fused_softmax_grad/                 #   FusedSoftmaxGrad
+│   │   ├── roi_align_rotated/                  #   ROIAlignRotated（前向）
+│   │   └── roi_align_rotated_grad/             #   ROIAlignRotatedGrad（反向）
 │   ├── pybind/                                 #   打包为 oil_gas_ops_prospect（按算子名暴露模块）
 │   │   ├── __init__.py
 │   │   ├── complex_mul.py                      #     ComplexMul Python API
 │   │   ├── fused_bias_softmax.py               #     FusedBiasSoftmax / FusedSoftmaxGrad
+│   │   ├── roi_align_rotated.py                #     ROIAlignRotated / torch 参考
 │   │   └── csrc/                               #     <op_family>/bindings.cpp → <op_family>_npu
 │   ├── pybind_extensions.py                    #   C++ 扩展统一定义
 │   ├── pybind_setup.py                         #   就地编译入口
@@ -99,7 +102,8 @@ oil-gas-ops-prospect/
 │   ├── ascendc/
 │   │   ├── ophost/                             #   汇总编译 ophost_ut
 │   │   ├── complex_mul/                        #   NPU 精度/性能对比测试
-│   │   └── fused_bias_softmax/                 #   融合注意力 NPU 精度/性能对比
+│   │   ├── fused_bias_softmax/                 #   融合注意力 NPU 精度/性能对比
+│   │   └── roi_align_rotated/                  #   旋转 ROIAlign NPU 精度/性能/独立 golden
 │   ├── composite/conv3d_custom/                #   Conv3d / conv3d CPU 精度与性能基准
 │   ├── composite/complex_addcmul/              #   complex_addcmul CPU/NPU 精度与反向
 │   ├── composite/complex_index_select/         #   complex_index_select CPU/NPU 精度与反向

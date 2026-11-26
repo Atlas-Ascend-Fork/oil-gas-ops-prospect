@@ -38,4 +38,5 @@ if _spec is not None and _spec.loader is not None:
 collect_ignore = [
     "ascendc/complex_mul/test_complex_mul_npu.py",
     "ascendc/fused_bias_softmax/test_fused_bias_softmax_npu.py",
+    "ascendc/roi_align_rotated/test_roi_align_rotated_npu.py",
 ]

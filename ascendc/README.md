@@ -67,6 +67,7 @@ C++ 测试放在仓库根 `tests/ut`、`tests/st`；样例在 `examples/aclnn/`�
 | `tests/ut/op_host/complex_mul_grad/test_complex_mul_grad_tiling.cpp` | 反向 UB 份数（21）与单拍更短 |
 | `tests/ut/op_host/fused_bias_softmax/test_fused_bias_softmax_tiling.cpp` | 对齐 padding、bias 广播/全尺寸 UB 预算、非法输入拒绝 |
 | `tests/ut/op_host/fused_softmax_grad/test_fused_softmax_grad_tiling.cpp` | MIX/VEC 路径分发、V plane 驻留上限、`Q≠S` |
+| `tests/ut/op_host/roi_align_rotated/`、`tests/ut/op_host/roi_align_rotated_grad/` | 64B slab 覆盖性、K=0、aivNum=0、属性/溢出 |
 | `examples/aclnn/<op>/` | 两段式 `aclnn` 小样例（需要 NPU） |
 | `tests/st/aclnn<OpType>/` | 多 case 两段式 `aclnn` + 真值对比（需要 NPU） |
 
@@ -87,7 +88,7 @@ bash build.sh clean
 bash build.sh list-ops
 ```
 
-`--ops` 支持空格分隔或逗号；当前 manifest 包含 `complex_mul`、`complex_mul_grad`、`fused_bias_softmax`、`fused_softmax_grad`、`conv3d_gelu`。
+`--ops` 支持空格分隔或逗号；当前 manifest 包含 9 个算子：`complex_mul`、`complex_mul_grad`、`fused_bias_softmax`、`fused_softmax_grad`、`conv3d_gelu`、`conv3d_gelu_grad`、`custom_gru_v2`、`roi_align_rotated`、`roi_align_rotated_grad`。
 
 等价的 Python 入口：
 
@@ -193,7 +194,7 @@ CANN 内部框架头（`op_host/tiling_base.h`、`op_host/tiling_templates_regis
 
 ## 已集成算子
 
-`operators/manifest.tsv` 当前五行：
+`operators/manifest.tsv` 当前九行：
 
 | 目录名 | OpType | aclnn 接口 | Python | 说明 |
 |--------|--------|-----------|--------|------|
@@ -203,6 +204,9 @@ CANN 内部框架头（`op_host/tiling_base.h`、`op_host/tiling_templates_regis
 | `fused_softmax_grad` | `FusedSoftmaxGrad` | `aclnnFusedSoftmaxGrad` | `oil_gas_ops_prospect.fused_bias_softmax.fused_softmax_grad` | 注意力 softmax JVP；底层 aclnn 可原地覆写传入扩展的连续 `probs` |
 | `conv3d_gelu` | `Conv3DGelu` | `aclnnConv3dGeluCustom` | `oil_gas_ops_prospect.conv3d_gelu.conv3d_gelu` | conv3d + tanh GELU，cube+vector，省掉中间激活 |
 | `conv3d_gelu_grad` | `Conv3DGeluGrad` | `aclnnConv3dGeluGrad` | 由 `conv3d_gelu` 的 autograd 调用 | 重算 conv3d，再 GELU 反向，再 conv3d 反向 |
+| `custom_gru_v2` | `CustomGRUV2` | `aclnnCustomGRUV2` | `oil_gas_ops_prospect.custom_gru_v2.custom_gru_v2` | 自研 GRU fused kernel，单向/双向 |
+| `roi_align_rotated` | `ROIAlignRotated` | `aclnnROIAlignRotated` | `oil_gas_ops_prospect.roi_align_rotated.roi_align_rotated` | 旋转 ROIAlign（AIV-only，64B slab） |
+| `roi_align_rotated_grad` | `ROIAlignRotatedGrad` | `aclnnROIAlignRotatedGrad` | 由 `roi_align_rotated` 的 autograd 调用 | 上者的反向（AIV-only） |
 
 更完整的数学定义、输入输出与约束见 [`docs/zh/op_list.md`](../docs/zh/op_list.md)；Python / aclnn 签名见 [`docs/zh/api_list.md`](../docs/zh/api_list.md)。下面按算子列出本目录实现侧必须守住的规格。
 

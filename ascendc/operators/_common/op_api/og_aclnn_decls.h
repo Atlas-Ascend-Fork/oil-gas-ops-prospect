@@ -99,4 +99,30 @@ aclnnStatus aclnnCustomGRUV2(void* workspace, uint64_t workspaceSize, aclOpExecu
 }
 #endif
 
+#if __has_include("aclnn_roi_align_rotated.h")
+#include "aclnn_roi_align_rotated.h"
+#else
+extern "C" {
+aclnnStatus aclnnROIAlignRotatedGetWorkspaceSize(const aclTensor* input, const aclTensor* rois, double spatialScale,
+                                                 int64_t pooledHeight, int64_t pooledWidth, int64_t samplingRatio,
+                                                 const aclTensor* out, uint64_t* workspaceSize,
+                                                 aclOpExecutor** executor);
+aclnnStatus aclnnROIAlignRotated(void* workspace, uint64_t workspaceSize, aclOpExecutor* executor, aclrtStream stream);
+}
+#endif
+
+#if __has_include("aclnn_roi_align_rotated_grad.h")
+#include "aclnn_roi_align_rotated_grad.h"
+#else
+extern "C" {
+aclnnStatus aclnnROIAlignRotatedGradGetWorkspaceSize(const aclTensor* gradOutput, const aclTensor* rois,
+                                                     double spatialScale, int64_t pooledHeight, int64_t pooledWidth,
+                                                     int64_t samplingRatio, int64_t batchSize, int64_t channels,
+                                                     int64_t height, int64_t width, const aclTensor* out,
+                                                     uint64_t* workspaceSize, aclOpExecutor** executor);
+aclnnStatus aclnnROIAlignRotatedGrad(void* workspace, uint64_t workspaceSize, aclOpExecutor* executor,
+                                     aclrtStream stream);
+}
+#endif
+
 #endif // OG_ACLNN_DECLS_H

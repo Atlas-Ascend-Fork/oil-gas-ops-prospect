@@ -1,0 +1,34 @@
+{
+  "cases": [
+    {
+      "name": "detectron2_5x5_4x4",
+      "shape": [1, 1, 5, 5],
+      "k": 1,
+      "ph": 4,
+      "pw": 4,
+      "sr": 0,
+      "scale": 1.0,
+      "angles": [0.0]
+    },
+    {
+      "name": "multi_roi_3ch_5x5_sr2",
+      "shape": [1, 3, 10, 10],
+      "k": 3,
+      "ph": 5,
+      "pw": 5,
+      "sr": 2,
+      "scale": 1.0,
+      "angles": [0.0, 45.0, 90.0]
+    },
+    {
+      "name": "multi_batch_scale_0.5",
+      "shape": [2, 8, 32, 32],
+      "k": 6,
+      "ph": 7,
+      "pw": 7,
+      "sr": 0,
+      "scale": 0.5,
+      "angles": [0.0, 15.0, 90.0, 135.0, 270.0, -30.0]
+    }
+  ]
+}

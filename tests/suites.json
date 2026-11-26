@@ -24,6 +24,16 @@
       "op": "conv3d_gelu",
       "name": "aclnnConv3dGeluCustom",
       "run": "tests/st/aclnnConv3dGeluCustom/run.sh"
+    },
+    {
+      "op": "roi_align_rotated",
+      "name": "aclnnROIAlignRotated",
+      "run": "tests/st/aclnnROIAlignRotated/run.sh"
+    },
+    {
+      "op": "roi_align_rotated_grad",
+      "name": "aclnnROIAlignRotatedGrad",
+      "run": "tests/st/aclnnROIAlignRotatedGrad/run.sh"
     }
   ],
   "npu_python": [
@@ -70,6 +80,10 @@
     {
       "op": "custom_gru_v2",
       "script": "tests/ascendc/custom_gru_v2/unit/test_forward_precision.py"
+    },
+    {
+      "op": "roi_align_rotated",
+      "script": "tests/ascendc/roi_align_rotated/test_roi_align_rotated_npu.py"
     }
   ],
   "examples": [
@@ -96,6 +110,14 @@
     {
       "op": "custom_gru_v2",
       "run": "examples/aclnn/custom_gru_v2/run.sh"
+    },
+    {
+      "op": "roi_align_rotated",
+      "run": "examples/aclnn/roi_align_rotated/run.sh"
+    },
+    {
+      "op": "roi_align_rotated_grad",
+      "run": "examples/aclnn/roi_align_rotated_grad/run.sh"
     }
   ]
 }
